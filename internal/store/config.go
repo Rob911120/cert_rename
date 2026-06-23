@@ -16,6 +16,12 @@ type Config struct {
 	Autostart   bool   `json:"autostart"`
 	SickanModel string `json:"sickan_model,omitempty"`
 	BNumberMode string `json:"b_number_mode,omitempty"`
+
+	// Monitor ERP (Fas 3). Klartext-lösen i config.json är känd skuld — löses i
+	// auth-planen. Env-varianterna (MONITOR_URL/USER/PASSWORD) har företräde.
+	MonitorURL      string `json:"monitor_url,omitempty"`
+	MonitorUser     string `json:"monitor_user,omitempty"`
+	MonitorPassword string `json:"monitor_password,omitempty"`
 }
 
 func QueueDir(c Config) string     { return filepath.Join(c.InboxDir, "queue") }
@@ -53,6 +59,16 @@ func LoadConfig() Config {
 		log.Printf("📖 config laddad från %s: inbox=%q", p, c.InboxDir)
 	} else {
 		log.Printf("📖 config saknas (%s): %v", p, err)
+	}
+	// Monitor: env har företräde, config.json som fallback.
+	if v := os.Getenv("MONITOR_URL"); v != "" {
+		c.MonitorURL = v
+	}
+	if v := os.Getenv("MONITOR_USER"); v != "" {
+		c.MonitorUser = v
+	}
+	if v := os.Getenv("MONITOR_PASSWORD"); v != "" {
+		c.MonitorPassword = v
 	}
 	return c
 }

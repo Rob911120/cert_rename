@@ -13,6 +13,7 @@ import (
 	"cert-renamer/internal/ai"
 	"cert-renamer/internal/cert"
 	"cert-renamer/internal/eml"
+	"cert-renamer/internal/monitor"
 	"cert-renamer/internal/store"
 )
 
@@ -26,10 +27,13 @@ type Notifier interface {
 }
 
 // Toolbox knyter ihop config + notifier + repo för en chat-session.
+// Monitor är inköps-ERP-klienten (kan vara nil om Monitor inte är konfigurerad
+// eller login misslyckats — verktygen hanterar det gracefully).
 type Toolbox struct {
-	Cfg  store.Config
-	N    Notifier
-	Repo *store.Repository
+	Cfg     store.Config
+	N       Notifier
+	Repo    *store.Repository
+	Monitor *monitor.Client
 }
 
 // ToolDefs returnerar tool-defs som skickas till Claude i varje request.
@@ -48,6 +52,9 @@ func ToolDefs() []anthropic.ToolUnionParam {
 		{OfTool: &archiveReviewTool},
 		{OfTool: &readPdfTool},
 		{OfTool: &listClassifiedMailTool},
+		{OfTool: &monitorFindPurchaseOrderTool},
+		{OfTool: &monitorFindSupplierTool},
+		{OfTool: &monitorFillMissingCertDataTool},
 		{OfTool: &addImprovementTool},
 		{OfTool: &listImprovementsTool},
 		{OfTool: &last},
@@ -93,6 +100,12 @@ func (tb *Toolbox) Dispatch(name string, input json.RawMessage) (DispatchResult,
 		return tb.readPdf(input)
 	case "list_classified_mail":
 		return wrapText(tb.listClassifiedMail(input))
+	case "monitor_find_purchase_order":
+		return wrapText(tb.monitorFindPurchaseOrder(input))
+	case "monitor_find_supplier":
+		return wrapText(tb.monitorFindSupplier(input))
+	case "monitor_fill_missing_cert_data":
+		return wrapText(tb.monitorFillMissingCertData(input))
 	case "promote_review_to_queue":
 		return wrapText(tb.promoteReview(input))
 	case "add_improvement":

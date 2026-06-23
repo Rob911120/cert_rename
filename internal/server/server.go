@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"cert-renamer/internal/monitor"
 	"cert-renamer/internal/store"
 )
 
@@ -32,6 +33,10 @@ type Server struct {
 
 	db   *sql.DB
 	repo *store.Repository
+
+	// mon är Monitor-ERP-klienten (nil tills/om inloggad). Skyddas av mu:
+	// bakgrundsinloggningen i New() skriver under lås, läsare läser under lås.
+	mon *monitor.Client
 
 	costsMu sync.Mutex
 	costs   store.Costs
@@ -71,6 +76,25 @@ func New() *Server {
 				log.Printf("🗄️  Reconciliation: lade till %d, tog bort %d", added, removed)
 			}
 		}
+	}
+
+	// Monitor ERP: logga in lazy i bakgrunden så startup inte blockerar på nätet.
+	// Klienten tilldelas s.mon FÖRST efter login-försöket (under lås), så
+	// session-skrivningen i Login har happens-before mot läsande requests.
+	if url, user, pass := srv.cfg.MonitorURL, srv.cfg.MonitorUser, srv.cfg.MonitorPassword; url != "" {
+		go func() {
+			mc := monitor.New(url)
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if err := mc.Login(ctx, user, pass); err != nil {
+				log.Printf("⚠️  Monitor-login misslyckades: %v (fortsätter utan Monitor)", err)
+			} else {
+				log.Printf("🔌 Monitor inloggad mot %s", url)
+			}
+			srv.mu.Lock()
+			srv.mon = mc
+			srv.mu.Unlock()
+		}()
 	}
 
 	return srv
