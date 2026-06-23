@@ -24,10 +24,11 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Bygg Windows amd64 .exe (CGO-fritt, ren Go)
+      - name: Bygg Windows amd64 .exe (CGO-fritt, ren Go, utan konsolfönster)
         run: |
+          # -H windowsgui = GUI-subsystem → inget svart konsolfönster vid dubbelklick.
           GOOS=windows GOARCH=amd64 CGO_ENABLED=0 \
-            go build -ldflags="-s -w" -o cert-renamer.exe ./cmd/cert-renamer
+            go build -ldflags="-s -w -H windowsgui" -o cert-renamer.exe ./cmd/cert-renamer
           ls -lh cert-renamer.exe
 
       - name: Paketera portabel zip
@@ -46,7 +47,9 @@ jobs:
           %APPDATA%\cert-renamer\ — inte bredvid exe:n. Exe:n är fristående
           (ingen installation, inga beroenden).
 
-          Ett konsolfönster visas medan appen kör — stäng det för att avsluta.
+          Appen kör utan eget fönster (bara webbläsarfliken syns). För att
+          avsluta: Aktivitetshanteraren -> hitta "cert-renamer.exe" -> Avsluta
+          aktivitet. (Servern fortsätter annars köra i bakgrunden.)
           TXT
           cd pkg
           zip -r ../cert-renamer-windows-amd64.zip .
