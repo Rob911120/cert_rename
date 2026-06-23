@@ -1,0 +1,22 @@
+# Build artifacts
+/dist/
+/cert-renamer
+/cert-renamer.exe
+*.app/
+
+# Runtime data (queue/review/approved/arkiverat live under inbox/)
+/inbox/
+
+# Embedded SQLite database (created beside config.json at runtime)
+*.db
+*.db-shm
+*.db-wal
+
+# Local machine config — holds machine paths and (Fas 3+) cleartext Monitor creds
+/config.json
+
+# Tailwind npm toolchain (not embedded in the binary)
+node_modules/
+
+# macOS
+.DS_Store

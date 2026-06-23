@@ -1,0 +1,5 @@
+{
+  "inbox_dir": "/tmp/cert-test/inbox",
+  "output_dir": "/tmp/cert-test/output",
+  "review_dir": "/tmp/cert-test/review"
+}

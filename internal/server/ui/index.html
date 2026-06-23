@@ -1,0 +1,1305 @@
+<!DOCTYPE html>
+<html lang="sv" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<title>Cert Renamer</title>
+<link rel="stylesheet" href="/tailwind.css">
+</head>
+<body class="h-screen flex flex-col">
+
+<div id="dropOverlay" class="drop-overlay hidden">
+  <div class="drop-overlay-inner">
+    <div class="text-2xl font-semibold mb-1">Släpp filer här</div>
+    <div class="text-sm text-slate-300">.pdf körs genom AI · .eml hamnar i inkorgen</div>
+  </div>
+</div>
+<div id="dropToast" class="drop-toast hidden"></div>
+
+<header class="flex items-center justify-between px-6 py-3 bg-white dark:bg-card border-b border-slate-200 dark:border-slate-800">
+  <h1 class="text-base font-semibold text-slate-900 dark:text-white flex items-center gap-2">
+    <span>📑</span> Cert Renamer
+  </h1>
+  <div class="flex items-center gap-2">
+    <span class="badge-blue"   id="statOk">📋 0 i kö</span>
+    <span class="badge-green"  id="statApp">📦 0 klara</span>
+    <span class="badge-red"    id="statRev">❌ 0 review</span>
+    <span class="badge-gray"   id="statArc">📁 0 arkiverade</span>
+    <button class="icon-btn ml-2" onclick="openSettings()" title="Inställningar">⚙️</button>
+  </div>
+</header>
+
+<main class="flex-1 flex flex-col px-6 py-4 gap-3 min-h-0">
+  <div class="flex items-end justify-between border-b border-slate-200 dark:border-slate-800">
+    <div class="flex">
+      <button class="tab-link" data-tab="queue" data-active="true" onclick="switchTab('queue')">Kö</button>
+      <button class="tab-link" data-tab="review" onclick="switchTab('review')">Behöver granskas</button>
+    </div>
+    <div class="flex items-center gap-3 pb-2">
+      <span class="text-xs text-slate-500 dark:text-slate-400" id="queueCount"></span>
+      <input type="search" id="queueFilter" placeholder="Sök charge, B-nummer, material…"
+             autocomplete="off" class="input-field !py-1.5 w-72">
+    </div>
+  </div>
+
+  <div class="flex-1 min-h-0 card overflow-hidden flex flex-col fade-in">
+    <div class="tab-panel flex-1 min-h-0 overflow-auto" data-panel="queue">
+      <table class="w-full text-sm">
+        <thead class="table-head">
+          <tr>
+            <th class="sortable cursor-pointer select-none" data-col="charge">Charge<span class="indicator ml-1 text-accent text-[10px]"></span></th>
+            <th class="sortable cursor-pointer select-none" data-col="product_form">Typ<span class="indicator ml-1 text-accent text-[10px]"></span></th>
+            <th class="sortable cursor-pointer select-none" data-col="dimensions">Mått<span class="indicator ml-1 text-accent text-[10px]"></span></th>
+            <th class="sortable cursor-pointer select-none" data-col="material">Material<span class="indicator ml-1 text-accent text-[10px]"></span></th>
+            <th class="sortable cursor-pointer select-none" data-col="b_numbers">B-nummer<span class="indicator ml-1 text-accent text-[10px]"></span></th>
+            <th class="sortable cursor-pointer select-none" data-col="confidence">Conf<span class="indicator ml-1 text-accent text-[10px]"></span></th>
+            <th class="sortable cursor-pointer select-none" data-col="filename">Filnamn<span class="indicator ml-1 text-accent text-[10px]"></span></th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="queueBody">
+          <tr class="empty-row"><td colspan="8" class="text-center italic text-slate-400 py-6">Ingen kö ännu — starta worker och vänta på .eml</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="tab-panel hidden flex-1 min-h-0 overflow-auto" data-panel="review">
+      <table class="w-full text-sm">
+        <thead class="table-head">
+          <tr>
+            <th>Mejl</th><th>Anledning</th><th>Filer</th><th></th>
+          </tr>
+        </thead>
+        <tbody id="reviewBody">
+          <tr class="empty-row"><td colspan="4" class="text-center italic text-slate-400 py-6">Inga problem-fall</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</main>
+
+<div id="settingsBackdrop" onclick="closeSettings()"
+     class="fixed inset-0 bg-slate-900/40 opacity-0 pointer-events-none transition-opacity duration-200 z-40"></div>
+
+<div id="adjustBackdrop" onclick="closeAdjustModal()"
+     class="fixed inset-0 bg-slate-900/40 opacity-0 pointer-events-none transition-opacity duration-200 z-40"></div>
+<div id="adjustModal" aria-hidden="true"
+     class="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[520px] max-w-[92vw] bg-white dark:bg-card border border-slate-200 dark:border-slate-800 rounded-lg shadow-2xl z-50 hidden flex-col">
+  <div class="flex items-center justify-between px-5 py-4 border-b border-slate-200 dark:border-slate-800">
+    <h2 class="text-base font-semibold text-slate-900 dark:text-white">✏️ Justera och flytta till kö</h2>
+    <button class="icon-btn" onclick="closeAdjustModal()" title="Stäng">×</button>
+  </div>
+  <div class="px-5 py-4 space-y-3 overflow-auto max-h-[70vh]">
+    <div class="text-xs text-slate-500 dark:text-slate-400">
+      <div><span class="font-mono" id="adjustBase"></span></div>
+      <div id="adjustReason" class="italic mt-1"></div>
+      <div class="mt-1"><a id="adjustPdfLink" class="text-accent hover:underline" target="_blank" rel="noopener">Öppna PDF ↗</a></div>
+    </div>
+    <div>
+      <label class="panel-label">PDF i mappen</label>
+      <select id="adjustPdfSelect" class="input-field"></select>
+    </div>
+    <div class="grid grid-cols-2 gap-3">
+      <div>
+        <label class="panel-label">Charge</label>
+        <input id="adjustCharge" class="input-field" placeholder="t.ex. 610042">
+      </div>
+      <div>
+        <label class="panel-label">Material (kort)</label>
+        <input id="adjustMaterial" class="input-field" placeholder="t.ex. S355">
+      </div>
+      <div>
+        <label class="panel-label">Form</label>
+        <select id="adjustForm" class="input-field">
+          <option value="okänt">okänt</option>
+          <option value="rundstång">rundstång</option>
+          <option value="plåt">plåt</option>
+          <option value="fyrkantsrör">fyrkantsrör</option>
+          <option value="rör">rör</option>
+          <option value="stång">stång</option>
+          <option value="profil">profil</option>
+        </select>
+      </div>
+      <div>
+        <label class="panel-label">Dimensioner</label>
+        <input id="adjustDims" class="input-field" placeholder="t.ex. 20x2 eller 5">
+      </div>
+    </div>
+    <div>
+      <label class="panel-label">B-nummer (kommaseparerade)</label>
+      <input id="adjustBnums" class="input-field" placeholder="B127196, B127197">
+    </div>
+    <div id="adjustError" class="text-xs text-red-500 hidden"></div>
+  </div>
+  <div class="flex justify-end gap-2 px-5 py-3 border-t border-slate-200 dark:border-slate-800">
+    <button class="btn-ghost" onclick="closeAdjustModal()">Avbryt</button>
+    <button id="adjustSubmit" class="btn-primary" onclick="submitAdjust()">Flytta till kö</button>
+  </div>
+</div>
+
+<div id="bnumBackdrop" onclick="bnumCancel()"
+     class="fixed inset-0 bg-slate-900/40 opacity-0 pointer-events-none transition-opacity duration-200 z-40"></div>
+<div id="bnumModal" aria-hidden="true"
+     class="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[420px] max-w-[92vw] bg-white dark:bg-card border border-slate-200 dark:border-slate-800 rounded-lg shadow-2xl z-50 hidden flex-col">
+  <div class="flex items-center justify-between px-5 py-4 border-b border-slate-200 dark:border-slate-800">
+    <h2 class="text-base font-semibold text-slate-900 dark:text-white">Ange B-nummer</h2>
+    <button class="icon-btn" onclick="bnumCancel()" title="Stäng">×</button>
+  </div>
+  <div class="px-5 py-4 space-y-3">
+    <p id="bnumSubtitle" class="text-sm text-slate-600 dark:text-slate-400">för N filer</p>
+    <input id="bnumInput" type="text" placeholder="B127196 eller 127196"
+           class="w-full input-field" autocomplete="off">
+    <p id="bnumError" class="text-sm text-red-500 hidden">Format: B127196 eller 127196</p>
+  </div>
+  <div class="flex justify-end gap-2 px-5 py-3 border-t border-slate-200 dark:border-slate-800">
+    <button class="btn-ghost" onclick="bnumSkip()">Fortsätt utan</button>
+    <button class="btn-primary" onclick="bnumSubmit()">Klar</button>
+  </div>
+</div>
+
+<aside id="settingsPanel" aria-hidden="true"
+       class="fixed top-0 bottom-0 right-0 w-[400px] translate-x-full transition-transform duration-200 ease-out bg-white dark:bg-card border-l border-slate-200 dark:border-slate-800 shadow-2xl z-50 flex flex-col">
+  <div class="flex items-center justify-between px-5 py-4 border-b border-slate-200 dark:border-slate-800">
+    <h2 id="panelTitle" class="text-base font-semibold text-slate-900 dark:text-white">⚙️ Inställningar</h2>
+    <button class="icon-btn" onclick="closeSettings()" title="Stäng">×</button>
+  </div>
+  <div class="flex border-b border-slate-200 dark:border-slate-800">
+    <button class="panel-tab tab-link flex-1 text-center" data-panel-tab="settings" data-active="true" onclick="switchPanelTab('settings')">⚙️ Inställningar</button>
+    <button class="panel-tab tab-link flex-1 text-center" data-panel-tab="log" onclick="switchPanelTab('log')">📋 Logg</button>
+  </div>
+  <div class="flex-1 min-h-0 overflow-hidden">
+    <div class="panel-pane h-full overflow-y-auto px-5 py-2" data-panel-pane="settings">
+
+      <div class="panel-section">
+        <div class="panel-label">▶ Worker</div>
+        <div class="segmented" id="runMode" role="tablist">
+          <button data-mode="off" data-active="true" onclick="setRunMode('off')">Av</button>
+          <button data-mode="on" onclick="setRunMode('on')">På</button>
+          <button data-mode="autostart" onclick="setRunMode('autostart')">Autostart</button>
+        </div>
+      </div>
+
+      <div class="panel-section">
+        <div class="panel-label">📁 Inbox-mapp</div>
+        <div class="flex items-center gap-2">
+          <code id="pathInbox" class="path-display empty">(ej vald)</code>
+          <button class="btn-secondary" onclick="pickFolder()">Välj…</button>
+        </div>
+      </div>
+
+      <div class="panel-section">
+        <div class="panel-label">💰 API-kostnader</div>
+        <div class="flex items-center justify-between text-sm py-1">
+          <span class="text-slate-500 dark:text-slate-400">Sonnet</span>
+          <span><strong id="costSonnetUsd" class="text-slate-800 dark:text-white">$0.0000</strong>
+                <span class="text-xs text-slate-400 ml-1" id="costSonnetTokens"></span></span>
+        </div>
+        <div class="flex items-center justify-between text-sm py-1">
+          <span class="text-slate-500 dark:text-slate-400">Haiku</span>
+          <span><strong id="costHaikuUsd" class="text-slate-800 dark:text-white">$0.0000</strong>
+                <span class="text-xs text-slate-400 ml-1" id="costHaikuTokens"></span></span>
+        </div>
+        <div class="flex items-center justify-between text-sm py-1">
+          <span class="text-slate-500 dark:text-slate-400">Opus</span>
+          <span><strong id="costOpusUsd" class="text-slate-800 dark:text-white">$0.0000</strong>
+                <span class="text-xs text-slate-400 ml-1" id="costOpusTokens"></span></span>
+        </div>
+        <div class="flex items-center justify-between text-sm pt-2 mt-2 border-t border-slate-100 dark:border-slate-800">
+          <span class="text-slate-700 dark:text-slate-200">Totalt sedan installation</span>
+          <strong id="costTotalUsd" class="text-slate-900 dark:text-white">$0.0000</strong>
+        </div>
+      </div>
+
+      <div class="panel-section">
+        <div class="panel-label">🔑 Anthropic API-nyckel</div>
+        <div id="apiKeyHint" class="text-xs text-slate-500 dark:text-slate-400 mb-2">…laddas…</div>
+        <div class="flex items-center gap-2">
+          <input type="password" id="apiKeyInput" placeholder="sk-ant-…" autocomplete="off" class="input-field">
+          <button class="btn-primary" onclick="saveApiKey()">Spara</button>
+        </div>
+        <div id="apiKeyNotice" class="text-xs text-accent mt-2 hidden">
+          Stoppa och starta worker för att aktivera ny nyckel.
+        </div>
+      </div>
+
+      <div class="panel-section">
+        <div class="panel-label">🎨 Tema</div>
+        <div class="segmented" id="themeMode">
+          <button data-mode="light" data-active="true" onclick="setTheme('light')">Ljus</button>
+          <button data-mode="dark" onclick="setTheme('dark')">Mörk</button>
+        </div>
+      </div>
+
+      <div class="panel-section">
+        <div class="panel-label">🔢 B-nummer-prompt</div>
+        <div class="segmented" id="bnumModeSeg">
+          <button data-mode="session" data-active="true" onclick="setBNumberMode('session')">Tills sidan laddas om</button>
+          <button data-mode="batch" onclick="setBNumberMode('batch')">Bara denna upladdning</button>
+        </div>
+      </div>
+
+      <div class="panel-section border-b-0">
+        <div class="panel-label">📋 Logg</div>
+        <button class="btn-secondary" onclick="clearLog()">Rensa logg</button>
+      </div>
+    </div>
+    <div class="panel-pane hidden h-full p-4" data-panel-pane="log">
+      <div id="log" class="h-full overflow-y-auto bg-slate-50 dark:bg-main rounded-lg p-3 font-mono text-xs text-slate-700 dark:text-slate-200"></div>
+    </div>
+  </div>
+</aside>
+
+<!-- Sickan: chat overlay -->
+<button id="sickanWatchFab" class="sickan-watch-fab" onclick="toggleSickanWatch()" title="Följ — välj sedan en rad så öppnas Sickan med den"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3" fill="currentColor"/></svg></button>
+<button id="sickanFab" class="sickan-fab" onclick="toggleSickan()" title="Sickan — assistent">
+  <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M21 12a8 8 0 0 1-8 8H8l-5 3 1.5-5A8 8 0 1 1 21 12z"/>
+    <circle cx="9" cy="12" r="1" fill="currentColor"/>
+    <circle cx="13" cy="12" r="1" fill="currentColor"/>
+    <circle cx="17" cy="12" r="1" fill="currentColor"/>
+  </svg>
+</button>
+<aside id="sickanPanel" class="sickan-panel hidden">
+  <header class="flex items-center justify-between px-4 py-3 border-b border-slate-200 dark:border-slate-800">
+    <div class="flex items-center gap-2">
+      <span class="w-7 h-7 rounded-full bg-accent text-white flex items-center justify-center text-xs font-bold">S</span>
+      <div>
+        <div class="text-sm font-semibold text-slate-900 dark:text-white">Sickan</div>
+        <div class="text-[10px] text-slate-400" id="sickanStatus">Klar</div>
+      </div>
+    </div>
+    <div class="flex items-center gap-2">
+      <div class="relative">
+        <button type="button" id="sickanModelToggle" class="btn-ghost btn-sm" title="Välj modell">Sonnet</button>
+        <div id="sickanModelMenu" class="hidden absolute right-0 top-full mt-1 z-[70] flex flex-col text-xs font-medium rounded-md overflow-hidden border border-slate-300 dark:border-slate-700 bg-white dark:bg-card shadow-lg min-w-[5.5rem]">
+          <button type="button" data-model="claude-haiku-4-5-20251001" class="px-3 py-1 text-left text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition" title="Haiku 4.5 — billigast">Haiku</button>
+          <button type="button" data-model="claude-sonnet-4-6"        class="px-3 py-1 text-left text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition border-y border-slate-200 dark:border-slate-800" title="Sonnet 4.6 — default">Sonnet</button>
+          <button type="button" data-model="claude-opus-4-7"          class="px-3 py-1 text-left text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition" title="Opus 4.7 — vassast">Opus</button>
+        </div>
+      </div>
+      <button id="sickanWatchBtn" class="btn-ghost btn-sm" onclick="toggleSickanWatch()" title="Följ — klicka sedan en kö- eller granska-rad"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3" fill="currentColor"/></svg></button>
+      <button class="btn-ghost btn-sm" onclick="resetSickan()" title="Rensa konversation">Clear</button>
+      <button class="icon-btn" onclick="toggleSickan()" title="Stäng">×</button>
+    </div>
+  </header>
+  <div id="sickanLog" class="flex-1 min-h-0 overflow-y-auto px-3 py-3 flex flex-col gap-2 bg-white dark:bg-card"></div>
+  <form id="sickanForm" class="border-t border-slate-200 dark:border-slate-800 p-3 flex flex-col gap-2 bg-white dark:bg-card">
+    <textarea id="sickanInput" rows="2" placeholder="Fråga Sickan, eller klistra in Monitor-rader…"
+      class="input-field font-mono text-xs resize-none" autocomplete="off"></textarea>
+    <div class="flex items-center justify-between">
+      <span class="text-[10px] text-slate-400">Enter = skicka • Shift+Enter = ny rad</span>
+      <button type="submit" id="sickanSend" class="btn-primary btn-sm">Skicka</button>
+    </div>
+  </form>
+</aside>
+
+<script>
+let cfg = { inbox_dir: '', theme: 'light', autostart: false, api_key_set: false, b_number_mode: 'session' };
+let running = false;
+let approvedCount = 0;
+
+function setActiveSegment(groupId, value) {
+  document.querySelectorAll('#' + groupId + ' button[data-mode]').forEach(b => {
+    if (b.dataset.mode === value) b.dataset.active = 'true';
+    else delete b.dataset.active;
+  });
+}
+
+function setActiveTab(selector, attr, value) {
+  document.querySelectorAll(selector).forEach(t => {
+    if (t.dataset[attr] === value) t.dataset.active = 'true';
+    else delete t.dataset.active;
+  });
+}
+
+function setPath(val) {
+  const el = document.getElementById('pathInbox');
+  if (val) { el.textContent = val; el.classList.remove('empty'); }
+  else     { el.textContent = '(ej vald)'; el.classList.add('empty'); }
+}
+
+function postConfig(overrides = {}) {
+  const body = {
+    inbox_dir: cfg.inbox_dir,
+    theme: cfg.theme || 'light',
+    api_key: '',
+    autostart: !!cfg.autostart,
+    b_number_mode: cfg.b_number_mode || 'session',
+    ...overrides,
+  };
+  return fetch('/api/config', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body),
+  });
+}
+
+async function loadConfig() {
+  const r = await fetch('/api/config');
+  const data = await r.json();
+  cfg.inbox_dir = data.inbox_dir || '';
+  cfg.theme = data.theme || 'light';
+  cfg.autostart = !!data.autostart;
+  cfg.api_key_set = !!data.api_key_hint;
+  cfg.b_number_mode = data.b_number_mode || 'session';
+  if (data.sickan_model && sickanModelLabels[data.sickan_model]) {
+    setSickanModel(data.sickan_model);
+  }
+  setPath(cfg.inbox_dir);
+  const hintEl = document.getElementById('apiKeyHint');
+  if (data.api_key_hint) {
+    hintEl.textContent = 'Sparad: ' + data.api_key_hint;
+    hintEl.classList.remove('text-red-500');
+    hintEl.classList.add('text-slate-500', 'dark:text-slate-400');
+  } else {
+    hintEl.textContent = 'Ingen nyckel sparad — krävs för att köra worker';
+    hintEl.classList.add('text-red-500');
+    hintEl.classList.remove('text-slate-500', 'dark:text-slate-400');
+  }
+  document.documentElement.dataset.theme = cfg.theme;
+  setActiveSegment('themeMode', cfg.theme);
+  setActiveSegment('bnumModeSeg', cfg.b_number_mode);
+  updateRunMode();
+  if (!cfg.api_key_set) {
+    openSettings();
+    switchPanelTab('settings');
+  }
+}
+
+async function saveConfig() { await postConfig(); }
+
+async function saveApiKey() {
+  const input = document.getElementById('apiKeyInput');
+  const key = input.value.trim();
+  if (!key) return;
+  const r = await postConfig({api_key: key});
+  if (!r.ok) { alert(await r.text()); return; }
+  input.value = '';
+  if (running) document.getElementById('apiKeyNotice').classList.remove('hidden');
+  loadConfig();
+}
+
+function setTheme(t) {
+  cfg.theme = t;
+  document.documentElement.dataset.theme = t;
+  setActiveSegment('themeMode', t);
+  postConfig();
+}
+
+function setBNumberMode(m) {
+  cfg.b_number_mode = m;
+  setActiveSegment('bnumModeSeg', m);
+  postConfig();
+}
+
+let lastBNumber = '';
+let bnumResolve = null;
+
+function askBNumber(count) {
+  return new Promise((resolve) => {
+    bnumResolve = resolve;
+    document.getElementById('bnumSubtitle').textContent =
+      'för ' + count + ' ' + (count === 1 ? 'fil' : 'filer');
+    const input = document.getElementById('bnumInput');
+    input.value = lastBNumber;
+    document.getElementById('bnumError').classList.add('hidden');
+    const m = document.getElementById('bnumModal');
+    const b = document.getElementById('bnumBackdrop');
+    m.classList.remove('hidden'); m.classList.add('flex');
+    b.classList.remove('opacity-0','pointer-events-none');
+    b.classList.add('opacity-100');
+    setTimeout(() => input.focus(), 50);
+  });
+}
+
+function bnumClose() {
+  const m = document.getElementById('bnumModal');
+  const b = document.getElementById('bnumBackdrop');
+  m.classList.add('hidden'); m.classList.remove('flex');
+  b.classList.add('opacity-0','pointer-events-none');
+  b.classList.remove('opacity-100');
+}
+
+function bnumCancel() { bnumSkip(); }
+
+function bnumSkip() {
+  bnumClose();
+  if (bnumResolve) { bnumResolve(''); bnumResolve = null; }
+}
+
+function bnumSubmit() {
+  const raw = document.getElementById('bnumInput').value.trim();
+  if (raw === '') { bnumSkip(); return; }
+  let normalized = '';
+  if (/^\d{6}$/.test(raw))            normalized = 'B' + raw;
+  else if (/^B\d{6}$/i.test(raw))     normalized = raw.toUpperCase();
+  else if (/B?\d{6}/i.test(raw))      normalized = raw;
+  else {
+    document.getElementById('bnumError').classList.remove('hidden');
+    return;
+  }
+  lastBNumber = normalized;
+  bnumClose();
+  if (bnumResolve) { bnumResolve(normalized); bnumResolve = null; }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  const inp = document.getElementById('bnumInput');
+  if (inp) {
+    inp.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); bnumSubmit(); }
+      else if (e.key === 'Escape') { e.preventDefault(); bnumSkip(); }
+    });
+  }
+});
+
+async function pickFolder() {
+  const r = await fetch('/api/pick-folder?prompt=' + encodeURIComponent('Välj inbox-mapp'));
+  if (!r.ok) { alert(await r.text()); return; }
+  const data = await r.json();
+  if (!data.path) return;
+  cfg.inbox_dir = data.path;
+  await saveConfig();
+  setPath(data.path);
+  loadQueue();
+}
+
+async function setRunMode(mode) {
+  if (mode === 'off') {
+    if (running) await fetch('/api/stop', {method: 'POST'});
+    cfg.autostart = false;
+  } else {
+    if (!running) {
+      const r = await fetch('/api/start', {method: 'POST'});
+      if (!r.ok) {
+        alert(await r.text());
+        openSettings();
+        switchPanelTab('settings');
+        updateRunMode();
+        return;
+      }
+    }
+    cfg.autostart = (mode === 'autostart');
+  }
+  postConfig();
+}
+
+function updateRunMode() {
+  let mode = 'off';
+  if (running && cfg.autostart) mode = 'autostart';
+  else if (running) mode = 'on';
+  setActiveSegment('runMode', mode);
+}
+
+function switchPanelTab(name) {
+  setActiveTab('.panel-tab', 'panelTab', name);
+  document.querySelectorAll('.panel-pane').forEach(p =>
+    p.classList.toggle('hidden', p.dataset.panelPane !== name));
+  const titles = { settings: '⚙️ Inställningar', log: '📋 Logg' };
+  document.getElementById('panelTitle').textContent = titles[name] || titles.settings;
+}
+
+function clearLog() {
+  document.getElementById('log').innerHTML = '';
+}
+
+function openSettings() {
+  const p = document.getElementById('settingsPanel');
+  const b = document.getElementById('settingsBackdrop');
+  p.classList.remove('translate-x-full');
+  b.classList.remove('opacity-0', 'pointer-events-none');
+  b.classList.add('opacity-100');
+  p.setAttribute('aria-hidden', 'false');
+}
+function closeSettings() {
+  const p = document.getElementById('settingsPanel');
+  const b = document.getElementById('settingsBackdrop');
+  p.classList.add('translate-x-full');
+  b.classList.add('opacity-0', 'pointer-events-none');
+  b.classList.remove('opacity-100');
+  p.setAttribute('aria-hidden', 'true');
+}
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeSettings(); });
+
+function escapeHtml(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+async function copyCell(td, text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    td.classList.add('copy-flash');
+    setTimeout(() => td.classList.remove('copy-flash'), 700);
+  } catch (e) { console.warn('clipboard fail', e); }
+}
+
+async function approveRow(filename, btn) {
+  btn.disabled = true;
+  const r = await fetch('/api/approve', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({filename})
+  });
+  if (!r.ok) { btn.disabled = false; alert(await r.text()); return; }
+  approvedCount++;
+  document.getElementById('statApp').textContent = '📦 ' + approvedCount + ' klara';
+}
+
+let queueItems = [];
+let queueFilter = '';
+let queueSort = { col: null, dir: 'asc' };
+const naturalCmp = new Intl.Collator(undefined, {numeric:true, sensitivity:'base'}).compare;
+const confRank = { high: 2, medium: 1, low: 0 };
+
+function applyFilter(items, q) {
+  if (!q) return items;
+  const ql = q.toLowerCase();
+  return items.filter(it => {
+    const hay = [
+      it.charge || '', it.product_form || '', it.dimensions || '',
+      it.material || '', (it.b_numbers || []).join(' '),
+      it.confidence || '', it.filename || '',
+    ].join(' ').toLowerCase();
+    return hay.includes(ql);
+  });
+}
+
+function getSortKey(it, col) {
+  switch (col) {
+    case 'b_numbers':  return (it.b_numbers || []).join(' ');
+    case 'confidence': return confRank[it.confidence] ?? -1;
+    default:           return String(it[col] || '');
+  }
+}
+
+function applySort(items, sort) {
+  if (!sort.col) return items;
+  const dir = sort.dir === 'desc' ? -1 : 1;
+  return [...items].sort((a, b) => {
+    const ka = getSortKey(a, sort.col);
+    const kb = getSortKey(b, sort.col);
+    if (typeof ka === 'number' && typeof kb === 'number') return (ka - kb) * dir;
+    return naturalCmp(String(ka), String(kb)) * dir;
+  });
+}
+
+function renderQueue(items) { queueItems = items || []; redrawQueue(); }
+
+function redrawQueue() {
+  const tbody = document.getElementById('queueBody');
+  tbody.innerHTML = '';
+  document.getElementById('statOk').textContent = '📋 ' + queueItems.length + ' i kö';
+
+  const filtered = applyFilter(queueItems, queueFilter);
+  const sorted   = applySort(filtered, queueSort);
+
+  document.getElementById('queueCount').textContent =
+    queueFilter ? (sorted.length + '/' + queueItems.length + ' visas') : '';
+
+  if (sorted.length === 0) {
+    const msg = queueFilter ? 'Inga träffar' : 'Tom kö';
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="8" class="text-center italic text-slate-400 py-6">' + msg + '</td></tr>';
+    updateSortIndicators();
+    return;
+  }
+  for (const it of sorted) {
+    const tr = document.createElement('tr');
+    tr.className = 'table-row';
+    tr.dataset.watchKind = 'queue';
+    tr.dataset.watchKey = it.filename;
+    const bnums = (it.b_numbers || []).join(' ');
+    const conf = it.confidence || '';
+    const cells = [
+      {v: it.charge || '', copy: true},
+      {v: it.product_form || '', copy: true},
+      {v: it.dimensions || '', copy: true},
+      {v: it.material || '', copy: true},
+      {v: bnums, copy: true},
+      {v: conf, copy: false, cls: conf === 'low' ? 'text-amber-500' : ''},
+      {v: it.filename, copy: false, cls: 'text-slate-400 text-[11px] max-w-[220px] truncate', title: it.filename, href: '/api/file?kind=queue&name=' + encodeURIComponent(it.filename)},
+    ];
+    for (const c of cells) {
+      const td = document.createElement('td');
+      if (c.href) {
+        const a = document.createElement('a');
+        a.href = c.href; a.target = '_blank'; a.rel = 'noopener';
+        a.textContent = c.v; a.className = 'hover:underline';
+        td.appendChild(a);
+      } else {
+        td.textContent = c.v;
+      }
+      if (c.cls) td.className += ' ' + c.cls;
+      if (c.title) td.title = c.title;
+      if (c.copy && c.v) {
+        td.classList.add('cursor-pointer');
+        td.title = 'Klicka för att kopiera';
+        td.addEventListener('click', () => copyCell(td, c.v));
+      }
+      tr.appendChild(td);
+    }
+    const tdBtn = document.createElement('td');
+    const btn = document.createElement('button');
+    btn.className = 'btn-primary btn-sm';
+    btn.textContent = '✓ Klar';
+    btn.addEventListener('click', () => approveRow(it.filename, btn));
+    tdBtn.appendChild(btn);
+    tr.appendChild(tdBtn);
+    tbody.appendChild(tr);
+  }
+  updateSortIndicators();
+}
+
+async function loadQueue() {
+  try {
+    const r = await fetch('/api/queue');
+    if (!r.ok) return;
+    const items = await r.json();
+    renderQueue(items || []);
+  } catch (e) { console.warn(e); }
+}
+
+const logEl = document.getElementById('log');
+const es = new EventSource('/api/events');
+es.addEventListener('log', ev => {
+  const d = JSON.parse(ev.data);
+  const line = document.createElement('div');
+  line.className = 'whitespace-pre-wrap py-0.5';
+  line.innerHTML = '<span class="text-slate-400 mr-2">' + d.ts + '</span>' + escapeHtml(d.text);
+  logEl.appendChild(line);
+  logEl.scrollTop = logEl.scrollHeight;
+});
+es.addEventListener('stats', ev => {
+  const s = JSON.parse(ev.data);
+  document.getElementById('statRev').textContent = '❌ ' + s.review + ' review';
+  document.getElementById('statArc').textContent = '📁 ' + (s.archived || 0) + ' arkiverade';
+});
+es.addEventListener('queue', () => loadQueue());
+es.addEventListener('review', () => loadReview());
+es.addEventListener('costs', ev => renderCosts(JSON.parse(ev.data)));
+
+async function loadCosts() {
+  try { const r = await fetch('/api/costs'); if (r.ok) renderCosts(await r.json()); }
+  catch (e) { /* tyst */ }
+}
+
+function renderCosts(d) {
+  document.getElementById('costSonnetUsd').textContent = fmtUsd(d.sonnet && d.sonnet.usd);
+  document.getElementById('costHaikuUsd').textContent  = fmtUsd(d.haiku  && d.haiku.usd);
+  document.getElementById('costOpusUsd').textContent   = fmtUsd(d.opus   && d.opus.usd);
+  document.getElementById('costTotalUsd').textContent  = fmtUsd(d.total_usd);
+  document.getElementById('costSonnetTokens').textContent = fmtTokens(d.sonnet && d.sonnet.tokens);
+  document.getElementById('costHaikuTokens').textContent  = fmtTokens(d.haiku  && d.haiku.tokens);
+  document.getElementById('costOpusTokens').textContent   = fmtTokens(d.opus   && d.opus.tokens);
+}
+
+function fmtUsd(n) { return '$' + (Number(n) || 0).toFixed(4); }
+function fmtTokens(t) {
+  if (!t) return '';
+  const inTok = (t.input || 0) + (t.cache_creation || 0) + (t.cache_read || 0);
+  if (inTok === 0 && !t.output) return '';
+  return `(${inTok.toLocaleString()} in / ${(t.output || 0).toLocaleString()} ut)`;
+}
+
+function switchTab(name) {
+  setActiveTab('.tab-link[data-tab]', 'tab', name);
+  document.querySelectorAll('.tab-panel').forEach(p =>
+    p.classList.toggle('hidden', p.dataset.panel !== name));
+  if (name === 'review') loadReview();
+}
+
+function renderReview(items) {
+  const tbody = document.getElementById('reviewBody');
+  tbody.innerHTML = '';
+  if (!items || items.length === 0) {
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="4" class="text-center italic text-slate-400 py-6">Inga problem-fall</td></tr>';
+    return;
+  }
+  for (const it of items) {
+    const tr = document.createElement('tr');
+    tr.className = 'table-row';
+    tr.dataset.watchKind = 'review';
+    tr.dataset.watchKey = it.base;
+    const tdBase = document.createElement('td');
+    tdBase.textContent = it.base;
+    tdBase.className = 'truncate max-w-[220px]';
+    tdBase.title = it.base;
+    const tdReason = document.createElement('td');
+    tdReason.textContent = it.reason || '';
+    tdReason.className = 'text-red-500 whitespace-normal max-w-[360px]';
+    const tdFiles = document.createElement('td');
+    tdFiles.className = 'truncate max-w-[260px] text-slate-400';
+    tdFiles.title = (it.files || []).join('\n');
+    const files = it.files || [];
+    files.forEach((f, i) => {
+      const isEml = /\.eml$/i.test(f);
+      const a = document.createElement('a');
+      a.textContent = f;
+      a.className = 'hover:underline';
+      if (isEml) {
+        a.href = '#';
+        a.addEventListener('click', (e) => {
+          e.preventDefault();
+          fetch('/api/open?kind=review&base=' + encodeURIComponent(it.base) + '&name=' + encodeURIComponent(f), {method:'POST'})
+            .then(r => { if (!r.ok) r.text().then(t => alert(t)); });
+        });
+      } else {
+        a.href = '/api/file?kind=review&base=' + encodeURIComponent(it.base) + '&name=' + encodeURIComponent(f);
+        a.target = '_blank'; a.rel = 'noopener';
+      }
+      tdFiles.appendChild(a);
+      if (i < files.length - 1) tdFiles.appendChild(document.createTextNode(', '));
+    });
+    tr.appendChild(tdBase); tr.appendChild(tdReason); tr.appendChild(tdFiles);
+    const tdBtn = document.createElement('td');
+    const btn = document.createElement('button');
+    btn.className = 'btn-ghost btn-sm';
+    btn.textContent = '📦 Arkivera';
+    btn.addEventListener('click', () => archiveRow(it.base, btn));
+    const adj = document.createElement('button');
+    adj.className = 'btn-secondary btn-sm';
+    adj.textContent = '✏️ Justera';
+    adj.style.marginRight = '6px';
+    adj.addEventListener('click', () => openAdjustModal(it));
+    tdBtn.appendChild(adj);
+    tdBtn.appendChild(btn);
+    tr.appendChild(tdBtn);
+    tbody.appendChild(tr);
+  }
+}
+
+let adjustItem = null;
+function openAdjustModal(it) {
+  adjustItem = it;
+  document.getElementById('adjustBase').textContent = it.base;
+  document.getElementById('adjustReason').textContent = it.reason || '';
+  document.getElementById('adjustError').classList.add('hidden');
+  const pdfs = (it.files || []).filter(f => /\.pdf$/i.test(f));
+  const sel = document.getElementById('adjustPdfSelect');
+  sel.innerHTML = '';
+  if (pdfs.length === 0) {
+    const opt = document.createElement('option');
+    opt.textContent = '— ingen PDF i mappen —';
+    opt.value = '';
+    sel.appendChild(opt);
+  } else {
+    pdfs.forEach(f => {
+      const opt = document.createElement('option');
+      opt.value = f; opt.textContent = f;
+      sel.appendChild(opt);
+    });
+  }
+  const updatePdfLink = () => {
+    const link = document.getElementById('adjustPdfLink');
+    if (sel.value) {
+      link.href = '/api/file?kind=review&base=' + encodeURIComponent(it.base) + '&name=' + encodeURIComponent(sel.value);
+      link.style.display = '';
+    } else {
+      link.style.display = 'none';
+    }
+  };
+  sel.onchange = updatePdfLink;
+  updatePdfLink();
+  ['adjustCharge','adjustMaterial','adjustDims','adjustBnums'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('adjustForm').value = 'okänt';
+  const m = document.getElementById('adjustModal');
+  const b = document.getElementById('adjustBackdrop');
+  m.classList.remove('hidden'); m.classList.add('flex');
+  b.classList.remove('opacity-0','pointer-events-none');
+}
+function closeAdjustModal() {
+  const m = document.getElementById('adjustModal');
+  const b = document.getElementById('adjustBackdrop');
+  m.classList.add('hidden'); m.classList.remove('flex');
+  b.classList.add('opacity-0','pointer-events-none');
+  adjustItem = null;
+}
+async function submitAdjust() {
+  if (!adjustItem) return;
+  const err = document.getElementById('adjustError');
+  err.classList.add('hidden');
+  const pdf = document.getElementById('adjustPdfSelect').value;
+  if (!pdf) { err.textContent = 'välj PDF'; err.classList.remove('hidden'); return; }
+  const bnums = document.getElementById('adjustBnums').value
+    .split(',').map(s => s.trim()).filter(Boolean);
+  const body = {
+    base: adjustItem.base,
+    pdf_filename: pdf,
+    charge: document.getElementById('adjustCharge').value.trim(),
+    material: document.getElementById('adjustMaterial').value.trim(),
+    product_form: document.getElementById('adjustForm').value,
+    dimensions: document.getElementById('adjustDims').value.trim(),
+    b_numbers: bnums,
+  };
+  const btn = document.getElementById('adjustSubmit');
+  btn.disabled = true;
+  try {
+    const r = await fetch('/api/promote-review', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) { err.textContent = await r.text(); err.classList.remove('hidden'); btn.disabled = false; return; }
+    closeAdjustModal();
+    loadReview(); loadQueue();
+  } catch (e) {
+    err.textContent = String(e); err.classList.remove('hidden'); btn.disabled = false;
+  }
+}
+
+async function archiveRow(base, btn) {
+  btn.disabled = true;
+  const r = await fetch('/api/archive', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({base})
+  });
+  if (!r.ok) { btn.disabled = false; alert(await r.text()); return; }
+  loadReview();
+}
+
+async function loadReview() {
+  try {
+    const r = await fetch('/api/review');
+    if (!r.ok) return;
+    const items = await r.json();
+    renderReview(items || []);
+  } catch (e) { console.warn(e); }
+}
+
+es.addEventListener('state', ev => {
+  const s = JSON.parse(ev.data);
+  running = s.running;
+  updateRunMode();
+});
+
+document.querySelectorAll('th.sortable').forEach(th => {
+  th.addEventListener('click', () => {
+    const col = th.dataset.col;
+    if (queueSort.col === col) queueSort.dir = queueSort.dir === 'asc' ? 'desc' : 'asc';
+    else queueSort = { col, dir: 'asc' };
+    redrawQueue();
+  });
+});
+
+document.getElementById('queueFilter').addEventListener('input', e => {
+  queueFilter = e.target.value;
+  redrawQueue();
+});
+
+function updateSortIndicators() {
+  document.querySelectorAll('th.sortable .indicator').forEach(el => el.textContent = '');
+  if (queueSort.col) {
+    const th = document.querySelector('th.sortable[data-col="' + queueSort.col + '"]');
+    if (th) th.querySelector('.indicator').textContent = queueSort.dir === 'asc' ? '▲' : '▼';
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Sickan — chat-overlay
+// ---------------------------------------------------------------------------
+const sickanSession = (() => {
+  let s = localStorage.getItem('sickan.session');
+  if (!s) { s = 's_' + Math.random().toString(36).slice(2, 10); localStorage.setItem('sickan.session', s); }
+  return s;
+})();
+let sickanOpen = false;
+let sickanBusy = false;
+let sickanCurrentBot = null;
+let sickanTyping = null;
+let sickanModel = localStorage.getItem('sickan.model') || 'claude-sonnet-4-6';
+
+const sickanModelLabels = {
+  'claude-haiku-4-5-20251001': 'Haiku',
+  'claude-sonnet-4-6': 'Sonnet',
+  'claude-opus-4-7': 'Opus',
+};
+function setSickanModel(m) {
+  sickanModel = m;
+  localStorage.setItem('sickan.model', m);
+  const toggle = document.getElementById('sickanModelToggle');
+  if (toggle) toggle.textContent = sickanModelLabels[m] || m;
+  document.querySelectorAll('#sickanModelMenu button').forEach(b => {
+    const active = b.dataset.model === m;
+    b.classList.toggle('bg-accent', active);
+    b.classList.toggle('text-white', active);
+    b.classList.toggle('text-slate-700', !active);
+    b.classList.toggle('dark:text-slate-200', !active);
+  });
+}
+function toggleSickanModelMenu(force) {
+  const menu = document.getElementById('sickanModelMenu');
+  const open = force !== undefined ? force : menu.classList.contains('hidden');
+  menu.classList.toggle('hidden', !open);
+}
+document.getElementById('sickanModelToggle').addEventListener('click', e => {
+  e.stopPropagation();
+  toggleSickanModelMenu();
+});
+document.querySelectorAll('#sickanModelMenu button').forEach(b => {
+  b.addEventListener('click', () => {
+    setSickanModel(b.dataset.model);
+    toggleSickanModelMenu(false);
+    fetch('/api/sickan/model', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({session: sickanSession, model: b.dataset.model}),
+    }).catch(() => {});
+  });
+});
+document.addEventListener('click', e => {
+  const menu = document.getElementById('sickanModelMenu');
+  if (!menu.classList.contains('hidden') && !e.target.closest('#sickanModelMenu') && e.target.id !== 'sickanModelToggle') {
+    toggleSickanModelMenu(false);
+  }
+});
+setSickanModel(sickanModel);
+
+function toggleSickan() {
+  sickanOpen = !sickanOpen;
+  document.getElementById('sickanPanel').classList.toggle('hidden', !sickanOpen);
+  if (sickanOpen) setTimeout(() => document.getElementById('sickanInput').focus(), 50);
+}
+
+let sickanWatch = false;
+function setSickanWatch(on) {
+  sickanWatch = on;
+  document.body.classList.toggle('sickan-watching', on);
+  const btn = document.getElementById('sickanWatchBtn');
+  if (btn) {
+    btn.classList.toggle('bg-accent', on);
+    btn.classList.toggle('text-white', on);
+    btn.title = on ? 'Aktivt — klicka en rad för att fokusera Sickan' : 'Följ — klicka sedan en kö- eller granska-rad';
+  }
+  const fab = document.getElementById('sickanWatchFab');
+  if (fab) fab.classList.toggle('active', on);
+  const status = document.getElementById('sickanStatus');
+  if (status && on) status.textContent = '👁 väntar på en rad…';
+}
+function toggleSickanWatch() { setSickanWatch(!sickanWatch); }
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    if (sickanWatch) { setSickanWatch(false); return; }
+    if (sickanOpen) toggleSickan();
+    return;
+  }
+  if (e.key === 'Shift' && !e.repeat && !sickanWatch) {
+    const t = e.target;
+    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+    sickanShiftHold = true;
+    setSickanWatch(true);
+  }
+});
+let sickanShiftHold = false;
+document.addEventListener('keyup', (e) => {
+  if (e.key === 'Shift' && sickanShiftHold) {
+    sickanShiftHold = false;
+    if (sickanWatch) setSickanWatch(false);
+  }
+});
+
+// ---- Drag-and-drop upload ----
+let dropDepth = 0;
+function dropOverlayEl() { return document.getElementById('dropOverlay'); }
+function dropToastEl()   { return document.getElementById('dropToast'); }
+function showDropOverlay(on) {
+  const el = dropOverlayEl();
+  if (el) el.classList.toggle('hidden', !on);
+}
+const dropToastItems = new Map();
+let dropToastSeq = 0;
+function dropToastShow(id, msg) {
+  const toast = dropToastEl();
+  if (!toast) return;
+  toast.classList.remove('hidden');
+  let row = dropToastItems.get(id);
+  if (!row) {
+    row = document.createElement('div');
+    row.className = 'drop-toast-row';
+    toast.appendChild(row);
+    dropToastItems.set(id, row);
+  }
+  row.textContent = msg;
+}
+function dropToastDone(id, finalMsg) {
+  const row = dropToastItems.get(id);
+  if (row) row.textContent = finalMsg;
+  setTimeout(() => {
+    const r = dropToastItems.get(id);
+    if (r) { r.remove(); dropToastItems.delete(id); }
+    if (dropToastItems.size === 0) dropToastEl()?.classList.add('hidden');
+  }, 4000);
+}
+
+window.addEventListener('dragenter', (e) => {
+  if (!e.dataTransfer || !Array.from(e.dataTransfer.types).includes('Files')) return;
+  dropDepth++;
+  showDropOverlay(true);
+});
+window.addEventListener('dragover', (e) => {
+  if (e.dataTransfer && Array.from(e.dataTransfer.types).includes('Files')) e.preventDefault();
+});
+window.addEventListener('dragleave', () => {
+  dropDepth = Math.max(0, dropDepth - 1);
+  if (dropDepth === 0) showDropOverlay(false);
+});
+window.addEventListener('drop', async (e) => {
+  if (!e.dataTransfer || !e.dataTransfer.files || e.dataTransfer.files.length === 0) return;
+  e.preventDefault();
+  dropDepth = 0;
+  showDropOverlay(false);
+  const files = Array.from(e.dataTransfer.files);
+  const pdfCount = files.filter(f => /\.pdf$/i.test(f.name)).length;
+  let bNumber = '';
+  if (pdfCount > 0) {
+    bNumber = await askBNumber(pdfCount);
+  }
+  for (const f of files) uploadOneFile(f, bNumber);
+  if (cfg.b_number_mode === 'batch') lastBNumber = '';
+});
+
+async function uploadOneFile(file, bNumber) {
+  const id = ++dropToastSeq;
+  const ext = (file.name.match(/\.[^.]+$/) || [''])[0].toLowerCase();
+  if (ext !== '.pdf' && ext !== '.eml') {
+    dropToastShow(id, `⚠️ ${file.name} (bara .pdf och .eml)`);
+    dropToastDone(id, `⚠️ ${file.name} (bara .pdf och .eml)`);
+    return;
+  }
+  dropToastShow(id, `⬆️ ${file.name}…`);
+  const fd = new FormData();
+  fd.append('file', file, file.name);
+  if (bNumber) fd.append('b_number', bNumber);
+  try {
+    const r = await fetch('/api/upload', { method: 'POST', body: fd });
+    const text = await r.text();
+    if (!r.ok) throw new Error(text || ('HTTP ' + r.status));
+    let msg = `✅ ${file.name}`;
+    try {
+      const j = JSON.parse(text);
+      if (j.verdict) msg = `✅ ${file.name} — ${j.verdict}`;
+      else if (j.kind === 'eml') msg = `📨 ${j.name} → inkorg`;
+    } catch (_) {}
+    dropToastDone(id, msg);
+  } catch (err) {
+    dropToastDone(id, `❌ ${file.name}: ${err.message || err}`);
+  }
+}
+
+document.addEventListener('click', (e) => {
+  if (!sickanWatch) return;
+  const tr = e.target.closest('tr[data-watch-kind]');
+  if (!tr) return;
+  const kind = tr.dataset.watchKind;
+  const key = tr.dataset.watchKey;
+  if (!kind || !key) return;
+  e.preventDefault();
+  e.stopPropagation();
+  setSickanWatch(false);
+  if (!sickanOpen) toggleSickan();
+  const msg = kind === 'queue'
+    ? `Berätta om kö-posten "${key}". Använd analyze_queue_item och föreslå nästa steg.`
+    : `Berätta om review-posten "${key}". Använd analyze_review_item och föreslå nästa steg.`;
+  sendSickan(msg);
+}, true);
+
+function sickanAppend(node) {
+  const log = document.getElementById('sickanLog');
+  log.appendChild(node);
+  log.scrollTop = log.scrollHeight;
+}
+
+function sickanBubble(role, text) {
+  const div = document.createElement('div');
+  div.className = role === 'user' ? 'sickan-bubble-user' : 'sickan-bubble-bot';
+  div.textContent = text;
+  return div;
+}
+
+function sickanTypingBubble() {
+  const div = document.createElement('div');
+  div.className = 'sickan-typing';
+  div.innerHTML = '<span></span><span></span><span></span>';
+  return div;
+}
+
+function sickanToolCard(label) {
+  const div = document.createElement('div');
+  div.className = 'sickan-tool-card';
+  div.textContent = '▸ ' + label;
+  return div;
+}
+
+function sickanErrorCard(msg) {
+  const div = document.createElement('div');
+  div.className = 'sickan-error';
+  div.textContent = '⚠ ' + msg;
+  return div;
+}
+
+function setSickanStatus(text) {
+  document.getElementById('sickanStatus').textContent = text;
+}
+
+async function resetSickan() {
+  await fetch('/api/sickan/reset', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({session: sickanSession}),
+  });
+  document.getElementById('sickanLog').innerHTML = '';
+}
+
+function sickanToolLabel(name, payload) {
+  try {
+    const p = JSON.parse(payload);
+    const r = p.result ? p.result : null;
+    switch (p.name) {
+      case 'list_queue':         return r ? `Listade ${r.count} i kön` : 'Listar kön…';
+      case 'list_review':        return r ? `Listade ${r.count} i granskning` : 'Listar granskning…';
+      case 'apply_queue_order':  return r ? `Tillämpade ordning (${r.applied})` : 'Sätter kö-ordning…';
+      case 'analyze_review_item': return r ? `Analyserade ${(p.input && p.input.base) || ''}` : 'Analyserar…';
+      case 'analyze_queue_item': return r ? `Analyserade ${(p.input && p.input.filename) || ''}` : 'Analyserar köpost…';
+      case 'update_queue_item':  return r ? `Döpte om → ${r.new_filename}` : 'Uppdaterar post…';
+      case 'approve_queue_item': return r ? `Godkände ${(p.input && p.input.filename) || ''}` : 'Godkänner…';
+      case 'archive_review_item': return r ? `Arkiverade ${(p.input && p.input.base) || ''}` : 'Arkiverar…';
+      case 'archive_queue_item': return r ? `Arkiverade ${(p.input && p.input.filename) || ''}` : 'Arkiverar köpost…';
+      case 'read_pdf': return p.summary || (r ? `Läste ${(p.input && p.input.filename) || 'PDF'}` : 'Läser PDF…');
+      case 'add_improvement':   return r ? '✅ Lagd på förbättringslistan' : 'Skickar till förbättringslistan…';
+      case 'list_improvements': return r ? `Hämtade ${r.count} poster` : 'Läser förbättringslistan…';
+      default: return p.name;
+    }
+  } catch (e) { return name; }
+}
+
+async function sendSickan(text) {
+  if (sickanBusy) return;
+  sickanBusy = true;
+  document.getElementById('sickanSend').disabled = true;
+  setSickanStatus('Sickan tänker…');
+  sickanAppend(sickanBubble('user', text));
+  sickanCurrentBot = null;
+  sickanTyping = sickanTypingBubble();
+  sickanAppend(sickanTyping);
+
+  // Pending tool cards keyed by tool_use id, so we can update on result
+  const pendingTools = new Map();
+
+  try {
+    const resp = await fetch('/api/sickan/stream', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({session: sickanSession, text, model: sickanModel}),
+    });
+    if (!resp.ok || !resp.body) {
+      sickanAppend(sickanErrorCard(await resp.text()));
+      return;
+    }
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    while (true) {
+      const {value, done} = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, {stream: true});
+      // Parse SSE frames: blocks separated by \n\n
+      let idx;
+      while ((idx = buf.indexOf('\n\n')) >= 0) {
+        const frame = buf.slice(0, idx);
+        buf = buf.slice(idx + 2);
+        const lines = frame.split('\n');
+        let ev = '', data = '';
+        for (const ln of lines) {
+          if (ln.startsWith('event: ')) ev = ln.slice(7);
+          else if (ln.startsWith('data: ')) data += ln.slice(6);
+        }
+        if (!ev) continue;
+        let payload = '';
+        try { payload = JSON.parse(data); } catch (e) { payload = data; }
+        handleSickanEvent(ev, payload, pendingTools);
+      }
+    }
+  } catch (e) {
+    sickanAppend(sickanErrorCard(String(e)));
+  } finally {
+    sickanBusy = false;
+    document.getElementById('sickanSend').disabled = false;
+    setSickanStatus('Klar');
+    sickanCurrentBot = null;
+    if (sickanTyping) { sickanTyping.remove(); sickanTyping = null; }
+  }
+}
+
+function handleSickanEvent(kind, payload, pendingTools) {
+  if (sickanTyping && (kind === 'text' || kind === 'tool_call' || kind === 'error')) {
+    sickanTyping.remove();
+    sickanTyping = null;
+  }
+  switch (kind) {
+    case 'text': {
+      if (!sickanCurrentBot) {
+        sickanCurrentBot = sickanBubble('bot', '');
+        sickanAppend(sickanCurrentBot);
+      }
+      sickanCurrentBot.textContent += payload;
+      const log = document.getElementById('sickanLog');
+      log.scrollTop = log.scrollHeight;
+      break;
+    }
+    case 'tool_call': {
+      sickanCurrentBot = null;
+      const card = sickanToolCard(sickanToolLabel('?', payload));
+      try { pendingTools.set(JSON.parse(payload).id, card); } catch (e) {}
+      sickanAppend(card);
+      break;
+    }
+    case 'tool_result': {
+      try {
+        const p = JSON.parse(payload);
+        const card = pendingTools.get(p.id);
+        if (card) card.textContent = '▸ ' + sickanToolLabel(p.name, payload);
+      } catch (e) {}
+      break;
+    }
+    case 'tool_error': {
+      try {
+        const p = JSON.parse(payload);
+        const card = pendingTools.get(p.id);
+        if (card) {
+          card.classList.remove('sickan-tool-card');
+          card.classList.add('sickan-error');
+          card.textContent = '⚠ ' + p.name + ': ' + p.error;
+        }
+      } catch (e) {}
+      break;
+    }
+    case 'error': {
+      sickanAppend(sickanErrorCard(payload));
+      break;
+    }
+    case 'done': {
+      // text-stream slut; nästa runda börjar nytt bot-bubbla
+      sickanCurrentBot = null;
+      break;
+    }
+  }
+}
+
+document.getElementById('sickanForm').addEventListener('submit', e => {
+  e.preventDefault();
+  const ta = document.getElementById('sickanInput');
+  const text = ta.value.trim();
+  if (!text) return;
+  ta.value = '';
+  sendSickan(text);
+});
+
+document.getElementById('sickanInput').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    document.getElementById('sickanForm').requestSubmit();
+  }
+});
+
+loadConfig().then(() => { loadQueue(); loadReview(); loadCosts(); });
+</script>
+</body>
+</html>
