@@ -1,0 +1,83 @@
+name: Bygg Windows .exe + portabel zip
+
+# Kör manuellt (Actions-fliken → "Run workflow") för en rullande "latest"-release,
+# eller pusha en tagg v* (t.ex. v0.2.0) för en versionerad release.
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write   # krävs för att skapa/uppdatera Releases
+
+jobs:
+  windows-exe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checka ut koden
+        uses: actions/checkout@v4
+
+      - name: Sätt upp Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Bygg Windows amd64 .exe (CGO-fritt, ren Go)
+        run: |
+          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 \
+            go build -ldflags="-s -w" -o cert-renamer.exe ./cmd/cert-renamer
+          ls -lh cert-renamer.exe
+
+      - name: Paketera portabel zip
+        run: |
+          mkdir -p pkg
+          cp cert-renamer.exe pkg/
+          cat > "pkg/LÄS-MIG.txt" <<'TXT'
+          Cert Renamer — portabel (Windows x64)
+
+          1. Packa upp denna zip var som helst (t.ex. Skrivbordet eller en USB-sticka).
+          2. Dubbelklicka cert-renamer.exe. En webbläsare öppnas mot appen (loopback).
+          3. Första gången: öppna Inställningar (kugghjulet) och klistra in din
+             Anthropic API-nyckel + välj inbox-mapp.
+
+          Inställningar och databasen (cert-renamer.db) sparas i
+          %APPDATA%\cert-renamer\ — inte bredvid exe:n. Exe:n är fristående
+          (ingen installation, inga beroenden).
+
+          Ett konsolfönster visas medan appen kör — stäng det för att avsluta.
+          TXT
+          cd pkg
+          zip -r ../cert-renamer-windows-amd64.zip .
+          cd ..
+          ls -lh cert-renamer-windows-amd64.zip
+
+      - name: Bestäm release-tagg
+        id: meta
+        run: |
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            echo "tag=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=latest" >> "$GITHUB_OUTPUT"
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publicera Release med exe + zip
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ steps.meta.outputs.tag }}"
+          # Rullande "latest": ta bort gammal release + tagg så assets uppdateras.
+          if [ "$TAG" = "latest" ]; then
+            gh release delete latest --yes --cleanup-tag || true
+          fi
+          ARGS=(--title "cert-renamer $TAG" --target "$GITHUB_SHA"
+                --notes "Automatisk Windows-build. Ladda ner **cert-renamer-windows-amd64.zip**, packa upp och dubbelklicka cert-renamer.exe. (Bygg-SHA: ${GITHUB_SHA:0:7})")
+          if [ "${{ steps.meta.outputs.prerelease }}" = "true" ]; then
+            ARGS+=(--prerelease)
+          fi
+          gh release create "$TAG" cert-renamer-windows-amd64.zip cert-renamer.exe "${ARGS[@]}"
+          echo "Release-URL:"
+          gh release view "$TAG" --json url -q .url
