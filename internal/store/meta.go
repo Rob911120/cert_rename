@@ -9,20 +9,35 @@ import (
 
 // PdfMeta är de fält vi bäddar in i PDF-metadatan ("CertRenamer"-property).
 type PdfMeta struct {
-	Charge           string   `json:"charge"`
-	Material         string   `json:"material"`
-	ProductForm      string   `json:"product_form,omitempty"`
-	Dimensions       string   `json:"dimensions"`
-	BNumbers         []string `json:"b_numbers"`
-	Confidence       string   `json:"confidence"`
-	Issues           []string `json:"issues"`
-	OriginalFilename string   `json:"original_filename"`
-	ExtractedAt      string   `json:"extracted_at"`
-	Schema           int      `json:"schema"`
-	EmailRaw         string   `json:"email_raw,omitempty"`
-	Verdict          string   `json:"verdict,omitempty"`
-	Status           string   `json:"status,omitempty"`
-	Hash             string   `json:"hash,omitempty"`
+	// Certifikatfält
+	Charge         string   `json:"charge"`
+	Material       string   `json:"material"`
+	MaterialShort  string   `json:"material_short"`
+	ProductForm    string   `json:"product_form,omitempty"`
+	Dimensions     string   `json:"dimensions"`
+	BNumbers       []string `json:"b_numbers"`
+	Confidence     string   `json:"confidence"`
+	Issues         []string `json:"issues"`
+
+	// Email-kontext (separata fält)
+	EmailSubject   string   `json:"email_subject"`
+	EmailFrom      string   `json:"email_from"`
+	EmailDate      string   `json:"email_date"`
+	EmailBody      string   `json:"email_body"`
+
+	// Per-attachment token-räkning
+	ModelUsed      string   `json:"model_used"`
+	TokensInput    int64    `json:"tokens_input"`
+	TokensOutput   int64    `json:"tokens_output"`
+	ProcessingMs   int64    `json:"processing_ms"`
+
+	// Befintliga fält
+	OriginalFilename string `json:"original_filename"`
+	ExtractedAt      string `json:"extracted_at"`
+	Hash             string `json:"hash,omitempty"`
+	Schema           int    `json:"schema"`
+	Status           string `json:"status,omitempty"`
+	Verdict          string `json:"verdict,omitempty"`
 }
 
 // MetaSidecarPath returnerar sidecar-JSON-sökvägen för en given PDF.

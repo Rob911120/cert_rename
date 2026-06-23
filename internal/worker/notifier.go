@@ -1,6 +1,9 @@
 package worker
 
-import "cert-renamer/internal/ai"
+import (
+	"cert-renamer/internal/ai"
+	"cert-renamer/internal/store"
+)
 
 // Notifier är hela kontaktytan worker har mot omvärlden för logging,
 // stats och UI-broadcasting. Server (server-paketet) implementerar denna;
@@ -12,4 +15,5 @@ type Notifier interface {
 	BroadcastStats()
 	BroadcastQueue()
 	BroadcastReview()
+	Repo() *store.Repository
 }

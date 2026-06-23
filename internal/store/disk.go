@@ -87,14 +87,18 @@ func MoveToReview(cfg Config, emlPath string, content *eml.Content, att *eml.Att
 				BNumbers:         bNums,
 				OriginalFilename: att.Filename,
 				ExtractedAt:      time.Now().Format(time.RFC3339),
-				Schema:           4,
-				EmailRaw:         EmailRawText(content),
+				Schema:           5,
+				EmailSubject:     content.Subject,
+				EmailFrom:        content.From,
+				EmailDate:        content.Date,
+				EmailBody:        content.Body,
 				Verdict:          reason,
 				Status:           "review",
 			}
 			if ext != nil {
 				meta.Charge = ext.Charge
-				meta.Material = ext.MaterialShort
+				meta.Material = ext.Material
+				meta.MaterialShort = ext.MaterialShort
 				meta.Dimensions = ext.Dimensions
 				meta.Confidence = ext.Confidence
 				meta.Issues = ext.Issues
@@ -186,19 +190,6 @@ func PromoteReviewToQueue(cfg Config, base, pdfFilename string, ext *cert.Extrac
 		return "", fmt.Errorf("validering: %s", strings.Join(fails, "; "))
 	}
 
-	var emailRaw string
-	if entries, err := os.ReadDir(reviewItemDir); err == nil {
-		for _, e := range entries {
-			if e.IsDir() || !strings.EqualFold(filepath.Ext(e.Name()), ".eml") {
-				continue
-			}
-			if c, perr := eml.Parse(filepath.Join(reviewItemDir, e.Name())); perr == nil {
-				emailRaw = EmailRawText(c)
-			}
-			break
-		}
-	}
-
 	name := cert.BuildFilename(ext, bNums)
 	if err := os.MkdirAll(QueueDir(cfg), 0755); err != nil {
 		return "", err
@@ -209,7 +200,8 @@ func PromoteReviewToQueue(cfg Config, base, pdfFilename string, ext *cert.Extrac
 	}
 	meta := PdfMeta{
 		Charge:           ext.Charge,
-		Material:         ext.MaterialShort,
+		Material:         ext.Material,
+		MaterialShort:    ext.MaterialShort,
 		ProductForm:      ext.ProductForm,
 		Dimensions:       ext.Dimensions,
 		BNumbers:         bNums,
@@ -217,9 +209,23 @@ func PromoteReviewToQueue(cfg Config, base, pdfFilename string, ext *cert.Extrac
 		Issues:           ext.Issues,
 		OriginalFilename: pdfFilename,
 		ExtractedAt:      time.Now().Format(time.RFC3339),
-		Schema:           4,
-		EmailRaw:         emailRaw,
+		Schema:           5,
 		Status:           "queue",
+	}
+	// Försök läsa email-innehåll från .eml-fil om den finns
+	if entries, err := os.ReadDir(reviewItemDir); err == nil {
+		for _, e := range entries {
+			if e.IsDir() || !strings.EqualFold(filepath.Ext(e.Name()), ".eml") {
+				continue
+			}
+			if c, perr := eml.Parse(filepath.Join(reviewItemDir, e.Name())); perr == nil {
+				meta.EmailSubject = c.Subject
+				meta.EmailFrom = c.From
+				meta.EmailDate = c.Date
+				meta.EmailBody = c.Body
+			}
+			break
+		}
 	}
 	if err := EmbedMetadata(dst, meta); err != nil {
 		log.Printf("⚠️  kunde inte bädda in metadata i %s: %v", dst, err)

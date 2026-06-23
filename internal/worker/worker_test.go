@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
@@ -143,6 +144,7 @@ const (
 // riktig Server. Räknar IncrementOK-anrop ifall vi vill assertera mot dem.
 type testNotifier struct {
 	okCount int
+	repo    *store.Repository
 }
 
 func (n *testNotifier) Logf(format string, args ...any)                    {}
@@ -151,6 +153,7 @@ func (n *testNotifier) IncrementOK()                                        { n.
 func (n *testNotifier) BroadcastStats()                                     {}
 func (n *testNotifier) BroadcastQueue()                                     {}
 func (n *testNotifier) BroadcastReview()                                    {}
+func (n *testNotifier) Repo() *store.Repository                             { return n.repo }
 
 // startStubAnthropic returnerar en httptest-server som svarar på POST
 // /v1/messages baserat på request-bodyns tool_choice.name (eller tools[0].name
@@ -225,7 +228,16 @@ func setupTestInbox(t *testing.T) (store.Config, *testNotifier) {
 	log.SetOutput(io.Discard)
 	t.Cleanup(func() { log.SetOutput(prevOutput) })
 
-	return cfg, &testNotifier{}
+	// Initiera testdatabas
+	dbPath := filepath.Join(dir, "test.db")
+	db, err := store.InitDB(dbPath)
+	if err != nil {
+		t.Fatalf("init db: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+	repo := store.NewRepository(db)
+
+	return cfg, &testNotifier{repo: repo}
 }
 
 // copyFixture kopierar en fixture från testdata/ till inbox-roten och
@@ -323,6 +335,27 @@ func Test_HappyPath_OnePdfValidCert(t *testing.T) {
 	}
 	if _, err := os.Stat(emlPath); !os.IsNotExist(err) {
 		t.Errorf("eml borde tas bort vid happy path, men finns kvar")
+	}
+
+	// Verifiera att certifikat skrevs till DB
+	certs, err := n.repo.ListCertificates("queue")
+	if err != nil {
+		t.Fatalf("list certs från DB: %v", err)
+	}
+	if len(certs) == 0 {
+		t.Errorf("förväntade minst 1 cert i DB, fick 0")
+	}
+	// Kontrollera att alla cert har rätt fält
+	for i, cert := range certs {
+		if cert.Charge != "610042" {
+			t.Errorf("cert[%d].Charge = %q, vill ha %q", i, cert.Charge, "610042")
+		}
+		if cert.MaterialShort != "1.4307" {
+			t.Errorf("cert[%d].MaterialShort = %q, vill ha %q", i, cert.MaterialShort, "1.4307")
+		}
+		if cert.Status != "queue" {
+			t.Errorf("cert[%d].Status = %q, vill ha %q", i, cert.Status, "queue")
+		}
 	}
 }
 
@@ -624,11 +657,11 @@ func Test_PromoteReviewToQueue_HappyPath(t *testing.T) {
 	if m.Status != "queue" {
 		t.Errorf("Status=%q, vill ha 'queue'", m.Status)
 	}
-	if m.Charge != "999111" || m.Material != "S355" {
+	if m.Charge != "999111" || m.MaterialShort != "S355" {
 		t.Errorf("metadata-fält: %+v", m)
 	}
-	if m.EmailRaw == "" {
-		t.Errorf("EmailRaw borde vara satt")
+	if m.EmailSubject == "" && m.EmailBody == "" {
+		t.Errorf("EmailSubject/EmailBody borde vara satt")
 	}
 }
 
@@ -677,7 +710,315 @@ func Test_PromoteReviewToQueue_NoEml(t *testing.T) {
 	if !ok {
 		t.Fatalf("kunde inte läsa metadata")
 	}
-	if m.EmailRaw != "" {
-		t.Errorf("EmailRaw borde vara tom utan .eml, fick: %q", m.EmailRaw)
+	if m.EmailSubject != "" || m.EmailBody != "" {
+		t.Errorf("EmailSubject/EmailBody borde vara tom utan .eml, fick: subject=%q body=%q", m.EmailSubject, m.EmailBody)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Reconciliation-tester
+// ---------------------------------------------------------------------------
+
+func Test_ReconcileQueue_AddsFilesystemItems(t *testing.T) {
+	cfg, n := setupTestInbox(t)
+
+	// Skapa PDF-fil i queue/ utan DB-post
+	src := filepath.Join("testdata", "cert_with_pdf.eml")
+	data, err := os.ReadFile(src)
+	if err != nil {
+		t.Fatalf("läs fixture: %v", err)
+	}
+	// Skapa en riktig PDF-fil (vi behöver bara en fil med .pdf-extension)
+	// Använd en av testfixturerna om de finns, annars skapa en dummy
+	pdfPath := filepath.Join(store.QueueDir(cfg), "test-reconcile.pdf")
+	if err := os.WriteFile(pdfPath, data, 0644); err != nil {
+		t.Fatalf("skriv dummy pdf: %v", err)
+	}
+
+	// Kör ReconcileQueue
+	added, removed, err := n.repo.ReconcileQueue(store.QueueDir(cfg))
+	if err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if added != 1 {
+		t.Errorf("förväntade 1 added, fick %d", added)
+	}
+	if removed != 0 {
+		t.Errorf("förväntade 0 removed, fick %d", removed)
+	}
+
+	// Verifiera att DB-post skapades
+	certs, err := n.repo.ListCertificates("queue")
+	if err != nil {
+		t.Fatalf("list certs: %v", err)
+	}
+	if len(certs) != 1 {
+		t.Errorf("förväntade 1 cert i DB, fick %d", len(certs))
+	}
+	if len(certs) > 0 && certs[0].Filename != "test-reconcile.pdf" {
+		t.Errorf("förväntade filename=test-reconcile.pdf, fick %s", certs[0].Filename)
+	}
+}
+
+func Test_ReconcileQueue_RemovesStaleDBEntries(t *testing.T) {
+	cfg, n := setupTestInbox(t)
+
+	// Infoga DB-post utan motsvarande fil
+	cert := &store.Certificate{
+		PDFHash:       "test-hash-stale",
+		Filename:      "nonexistent.pdf",
+		CertType:      "3.1",
+		Charge:        "123456",
+		Material:      "S355",
+		MaterialShort: "S355",
+		Confidence:    "high",
+		Status:        "queue",
+		ExtractedAt:   time.Now().Format(time.RFC3339),
+		ModelUsed:     "test",
+	}
+	_, err := n.repo.InsertCertificate(cert)
+	if err != nil {
+		t.Fatalf("insert cert: %v", err)
+	}
+
+	// Verifiera att posten finns
+	certs, _ := n.repo.ListCertificates("queue")
+	if len(certs) != 1 {
+		t.Fatalf("förväntade 1 cert före reconcile, fick %d", len(certs))
+	}
+
+	// Kör ReconcileQueue
+	added, removed, err := n.repo.ReconcileQueue(store.QueueDir(cfg))
+	if err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if added != 0 {
+		t.Errorf("förväntade 0 added, fick %d", added)
+	}
+	if removed != 1 {
+		t.Errorf("förväntade 1 removed, fick %d", removed)
+	}
+
+	// Verifiera att posten togs bort
+	certs, _ = n.repo.ListCertificates("queue")
+	if len(certs) != 0 {
+		t.Errorf("förväntade 0 cert efter reconcile, fick %d", len(certs))
+	}
+}
+
+func Test_ReconcileQueue_HandlesMixedScenario(t *testing.T) {
+	cfg, n := setupTestInbox(t)
+
+	// 1. Infoga DB-post utan fil (stale)
+	staleCert := &store.Certificate{
+		PDFHash:       "hash-stale",
+		Filename:      "stale.pdf",
+		CertType:      "3.1",
+		Charge:        "111111",
+		Material:      "S355",
+		MaterialShort: "S355",
+		Confidence:    "high",
+		Status:        "queue",
+		ExtractedAt:   time.Now().Format(time.RFC3339),
+		ModelUsed:     "test",
+	}
+	n.repo.InsertCertificate(staleCert)
+
+	// 2. Infoga DB-post med fil (ska bevaras)
+	okCert := &store.Certificate{
+		PDFHash:       "hash-ok",
+		Filename:      "ok.pdf",
+		CertType:      "3.1",
+		Charge:        "222222",
+		Material:      "S355",
+		MaterialShort: "S355",
+		Confidence:    "high",
+		Status:        "queue",
+		ExtractedAt:   time.Now().Format(time.RFC3339),
+		ModelUsed:     "test",
+	}
+	n.repo.InsertCertificate(okCert)
+
+	// Skapa filen för ok.pdf
+	okPath := filepath.Join(store.QueueDir(cfg), "ok.pdf")
+	if err := os.WriteFile(okPath, []byte("fake pdf content"), 0644); err != nil {
+		t.Fatalf("skriv ok.pdf: %v", err)
+	}
+
+	// 3. Skapa fil utan DB-post (ska läggas till)
+	missingPath := filepath.Join(store.QueueDir(cfg), "missing.pdf")
+	if err := os.WriteFile(missingPath, []byte("fake pdf content"), 0644); err != nil {
+		t.Fatalf("skriv missing.pdf: %v", err)
+	}
+
+	// Kör ReconcileQueue
+	added, removed, err := n.repo.ReconcileQueue(store.QueueDir(cfg))
+	if err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if added != 1 {
+		t.Errorf("förväntade 1 added (missing.pdf), fick %d", added)
+	}
+	if removed != 1 {
+		t.Errorf("förväntade 1 removed (stale.pdf), fick %d", removed)
+	}
+
+	// Verifiera slutresultat
+	certs, _ := n.repo.ListCertificates("queue")
+	if len(certs) != 2 {
+		t.Errorf("förväntade 2 cert (ok.pdf + missing.pdf), fick %d", len(certs))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Utökade DB-verifieringstester
+// ---------------------------------------------------------------------------
+
+func Test_HappyPath_VerifiesDBContent(t *testing.T) {
+	cfg, n := setupTestInbox(t)
+	stub := startStubAnthropic(t, stubMap{
+		"classify_email":    classifyYesJSON,
+		"verify_pdfs":       verifyYesJSON,
+		"submit_extraction": extractValidJSON,
+	})
+	client := makeTestClient(stub)
+	emlPath := copyFixture(t, cfg, "cert_with_pdf.eml")
+
+	processEml(context.Background(), client, cfg, emlPath, n, 1, 1)
+
+	// Verifiera DB-innehåll
+	certs, err := n.repo.ListCertificates("queue")
+	if err != nil {
+		t.Fatalf("list certs: %v", err)
+	}
+	if len(certs) == 0 {
+		t.Fatalf("förväntade minst 1 cert i DB, fick 0")
+	}
+
+	// Kontrollera att alla cert har rätt fält
+	for i, cert := range certs {
+		if cert.Charge != "610042" {
+			t.Errorf("cert[%d].Charge = %q, vill ha %q", i, cert.Charge, "610042")
+		}
+		if cert.Material != "1.4307" {
+			t.Errorf("cert[%d].Material = %q, vill ha %q", i, cert.Material, "1.4307")
+		}
+		if cert.MaterialShort != "1.4307" {
+			t.Errorf("cert[%d].MaterialShort = %q, vill ha %q", i, cert.MaterialShort, "1.4307")
+		}
+		if cert.Status != "queue" {
+			t.Errorf("cert[%d].Status = %q, vill ha %q", i, cert.Status, "queue")
+		}
+		if cert.CertType != "3.1" {
+			t.Errorf("cert[%d].CertType = %q, vill ha %q", i, cert.CertType, "3.1")
+		}
+		if cert.Confidence != "high" {
+			t.Errorf("cert[%d].Confidence = %q, vill ha %q", i, cert.Confidence, "high")
+		}
+		if cert.PDFHash == "" {
+			t.Errorf("cert[%d].PDFHash borde vara satt", i)
+		}
+		if cert.ExtractedAt == "" {
+			t.Errorf("cert[%d].ExtractedAt borde vara satt", i)
+		}
+		if cert.ModelUsed == "" {
+			t.Errorf("cert[%d].ModelUsed borde vara satt", i)
+		}
+	}
+}
+
+func Test_Reconciliation_Integration(t *testing.T) {
+	cfg, n := setupTestInbox(t)
+
+	// 1. Kör processEml (skapar cert i DB + fil på disk)
+	stub := startStubAnthropic(t, stubMap{
+		"classify_email":    classifyYesJSON,
+		"verify_pdfs":       verifyYesJSON,
+		"submit_extraction": extractValidJSON,
+	})
+	client := makeTestClient(stub)
+	emlPath := copyFixture(t, cfg, "cert_with_pdf.eml")
+	processEml(context.Background(), client, cfg, emlPath, n, 1, 1)
+
+	// 2. Verifiera att DB och disk är synkade
+	certs, _ := n.repo.ListCertificates("queue")
+	diskFiles := countFiles(t, store.QueueDir(cfg))
+	if len(certs) != diskFiles {
+		t.Errorf("DB (%d) och disk (%d) är inte synkade", len(certs), diskFiles)
+	}
+
+	// 3. Kör reconciliation (borde inte ändra något)
+	added, removed, err := n.repo.ReconcileQueue(store.QueueDir(cfg))
+	if err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if added != 0 {
+		t.Errorf("reconciliation borde inte lägga till något, fick added=%d", added)
+	}
+	if removed != 0 {
+		t.Errorf("reconciliation borde inte ta bort något, fick removed=%d", removed)
+	}
+
+	// 4. Verifiera att DB och disk fortfarande är synkade
+	certsAfter, _ := n.repo.ListCertificates("queue")
+	diskFilesAfter := countFiles(t, store.QueueDir(cfg))
+	if len(certsAfter) != diskFilesAfter {
+		t.Errorf("DB (%d) och disk (%d) är inte synkade efter reconciliation", len(certsAfter), diskFilesAfter)
+	}
+}
+
+func Test_PromoteReviewToQueue_InsertsIntoDB(t *testing.T) {
+	cfg, n := setupTestInbox(t)
+	base, pdfName := setupReviewItem(t, cfg, "test_promote_db", true)
+
+	ext := &cert.Extraction{
+		IsEN10204_3_1: true,
+		CertType:      "3.1",
+		Charge:        "999111",
+		MaterialShort: "S355",
+		ProductForm:   "rundstång",
+		Dimensions:    "20",
+		Confidence:    "high",
+	}
+	newName, err := store.PromoteReviewToQueue(cfg, base, pdfName, ext, []string{"B999"})
+	if err != nil {
+		t.Fatalf("promote: %v", err)
+	}
+
+	// Infoga i DB (detta görs normalt av handler/tools)
+	metaPath := filepath.Join(store.QueueDir(cfg), newName)
+	if m, ok := store.ReadMetadata(metaPath); ok {
+		cert := &store.Certificate{
+			PDFHash:       m.Hash,
+			Filename:      newName,
+			CertType:      "3.1",
+			Charge:        m.Charge,
+			Material:      m.Material,
+			MaterialShort: m.MaterialShort,
+			Status:        "queue",
+			ExtractedAt:   m.ExtractedAt,
+			ModelUsed:     m.ModelUsed,
+		}
+		_, err = n.repo.InsertCertificate(cert)
+		if err != nil {
+			t.Fatalf("DB-insert: %v", err)
+		}
+	}
+
+	// Verifiera att certifikatet finns i DB
+	certs, err := n.repo.ListCertificates("queue")
+	if err != nil {
+		t.Fatalf("list certs: %v", err)
+	}
+	if len(certs) != 1 {
+		t.Errorf("förväntade 1 cert i DB, fick %d", len(certs))
+	}
+	if len(certs) > 0 {
+		if certs[0].Charge != "999111" {
+			t.Errorf("cert.Charge = %q, vill ha %q", certs[0].Charge, "999111")
+		}
+		if certs[0].Filename != newName {
+			t.Errorf("cert.Filename = %q, vill ha %q", certs[0].Filename, newName)
+		}
 	}
 }

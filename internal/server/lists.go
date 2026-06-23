@@ -6,62 +6,74 @@ import (
 	"path/filepath"
 	"strings"
 
-	"cert-renamer/internal/sickan"
 	"cert-renamer/internal/store"
 )
 
-// listQueue läser queue-mappen och returnerar QueueItem för varje PDF, med
-// metadata-fält ifyllda från PDF-properties, sidekick-JSON, eller filnamn.
+// listQueue läser från databasen och returnerar QueueItem för varje certifikat
+// med status "queue". Om en PDF finns på disk men inte i DB läggs den till.
 func (s *Server) listQueue() []store.QueueItem {
 	s.mu.Lock()
 	c := s.cfg
 	s.mu.Unlock()
-	if c.InboxDir == "" {
-		return []store.QueueItem{}
-	}
-	entries, err := os.ReadDir(store.QueueDir(c))
-	if err != nil {
-		s.Logf("⚠️  listQueue: ReadDir(%s): %v", store.QueueDir(c), err)
-		return []store.QueueItem{}
-	}
+
 	out := []store.QueueItem{}
-	skipped := 0
-	for _, e := range entries {
-		if e.IsDir() || !strings.EqualFold(filepath.Ext(e.Name()), ".pdf") {
-			skipped++
-			continue
+	seen := map[string]bool{}
+
+	// 1. Hämta från DB
+	if s.repo != nil {
+		certs, err := s.repo.ListCertificates("queue")
+		if err == nil {
+			for _, cert := range certs {
+				item := store.QueueItem{
+					Filename:    cert.Filename,
+					Charge:      cert.Charge,
+					Material:    cert.Material,
+					ProductForm: cert.ProductForm,
+					Dimensions:  cert.Dimensions,
+					Confidence:  cert.Confidence,
+				}
+				if cert.BNumbers != "" {
+					_ = json.Unmarshal([]byte(cert.BNumbers), &item.BNumbers)
+				}
+				if cert.Issues != "" {
+					_ = json.Unmarshal([]byte(cert.Issues), &item.Issues)
+				}
+				out = append(out, item)
+				seen[cert.Filename] = true
+			}
 		}
-		item := store.QueueItem{Filename: e.Name()}
-		pdfPath := filepath.Join(store.QueueDir(c), e.Name())
-		if m, ok := store.ReadMetadata(pdfPath); ok {
-			item.Charge = m.Charge
-			item.Material = m.Material
-			item.ProductForm = m.ProductForm
-			item.Dimensions = m.Dimensions
-			item.BNumbers = m.BNumbers
-			item.Confidence = m.Confidence
-			item.Issues = m.Issues
-		} else if data, err := os.ReadFile(pdfPath + ".json"); err == nil {
-			var m store.PdfMeta
-			if json.Unmarshal(data, &m) == nil {
+	}
+
+	// 2. Skanna filsystem och lägg till saknade
+	if c.InboxDir != "" {
+		entries, _ := os.ReadDir(store.QueueDir(c))
+		for _, e := range entries {
+			if e.IsDir() || !strings.EqualFold(filepath.Ext(e.Name()), ".pdf") {
+				continue
+			}
+			if seen[e.Name()] {
+				continue
+			}
+			item := store.QueueItem{Filename: e.Name()}
+			pdfPath := filepath.Join(store.QueueDir(c), e.Name())
+			if m, ok := store.ReadMetadata(pdfPath); ok {
 				item.Charge = m.Charge
 				item.Material = m.Material
 				item.ProductForm = m.ProductForm
 				item.Dimensions = m.Dimensions
-				item.BNumbers = m.BNumbers
 				item.Confidence = m.Confidence
+				item.BNumbers = m.BNumbers
 				item.Issues = m.Issues
 			}
-		} else {
-			s.Logf("⚠️  listQueue: %s saknar både inbäddad metadata och sidecar — visar bara filnamn", e.Name())
+			out = append(out, item)
 		}
-		out = append(out, item)
 	}
-	s.Logf("📋 listQueue: %s — %d entries, %d ej-pdf, returnerar %d", store.QueueDir(c), len(entries), skipped, len(out))
-	return sickan.Apply(c, out)
+
+	return out
 }
 
-// listReview läser review-mappens undermappar och returnerar ReviewItem för var och en.
+// listReview läser från filsystemet (review-mappen) och returnerar ReviewItem.
+// Review-items sparas inte i DB än — de behåller filbaserad lagring.
 func (s *Server) listReview() []store.ReviewItem {
 	s.mu.Lock()
 	c := s.cfg
@@ -96,7 +108,7 @@ func (s *Server) listReview() []store.ReviewItem {
 	return out
 }
 
-// scanOverview loggar översikt över alla cert-renamer-mappar.
+// scanOverview loggar översikt över alla cert-renamer-mappar + DB-statistik.
 func (s *Server) scanOverview() {
 	s.mu.Lock()
 	c := s.cfg
@@ -138,5 +150,13 @@ func (s *Server) scanOverview() {
 		}
 		s.Logf("📂 %-12s %s — pdf=%d eml=%d json=%d annat=%d undermappar=%d",
 			d.name, d.path, pdfs, emls, jsons, other, sub)
+	}
+
+	// DB-statistik
+	if s.repo != nil {
+		queue, approved, review, archived, err := s.repo.CountCertificates()
+		if err == nil {
+			s.Logf("🗄️  DB: queue=%d approved=%d review=%d archived=%d", queue, approved, review, archived)
+		}
 	}
 }

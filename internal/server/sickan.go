@@ -186,7 +186,7 @@ func (s *Server) handleSickanStream(w http.ResponseWriter, r *http.Request) {
 	})
 
 	client := anthropic.NewClient(option.WithAPIKey(c.ApiKey))
-	tb := &sickan.Toolbox{Cfg: c, N: s}
+	tb := &sickan.Toolbox{Cfg: c, N: s, Repo: s.repo}
 
 	updated, err := sickan.Run(r.Context(), &client, tb, s, model, history, emit)
 	if err != nil {

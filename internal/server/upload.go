@@ -23,6 +23,11 @@ import (
 
 const maxUploadBytes = 64 * 1024 * 1024 // 64 MB per fil
 
+func marshalJSON(v any) string {
+	data, _ := json.Marshal(v)
+	return string(data)
+}
+
 func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", 405)
@@ -163,6 +168,31 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		}
 		s.Logf("   ✅ %s", filepath.Base(dst))
 		s.IncrementOK()
+
+		// Skapa DB-post för uppladdad PDF
+		if s.repo != nil {
+			cert := &store.Certificate{
+				PDFHash:          hash,
+				Filename:         filepath.Base(dst),
+				OriginalFilename: name,
+				CertType:         extr.CertType,
+				Charge:           extr.Charge,
+				Material:         extr.Material,
+				MaterialShort:    extr.MaterialShort,
+				ProductForm:      extr.ProductForm,
+				Dimensions:       extr.Dimensions,
+				BNumbers:         marshalJSON(bNums),
+				Confidence:       extr.Confidence,
+				Issues:           marshalJSON(extr.Issues),
+				ModelUsed:        "claude-sonnet-4-5",
+				Status:           "queue",
+				ExtractedAt:      time.Now().Format(time.RFC3339),
+			}
+			if _, insertErr := s.repo.InsertCertificate(cert); insertErr != nil {
+				s.Logf("⚠️  DB-insert misslyckades: %v", insertErr)
+			}
+		}
+
 		s.BroadcastStats()
 		s.BroadcastQueue()
 		writeJSON(w, map[string]any{"kind": "pdf", "verdict": "kö: " + filepath.Base(dst)})

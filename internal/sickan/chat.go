@@ -24,7 +24,6 @@ Verktyg du har:
 - read_pdf: bifogar själva PDF-filen så du kan läsa innehåll (text + bilder)
 - apply_queue_order: sätter UI:ts kö-ordning till en lista filnamn
 - update_queue_item: ändrar fält + döper om enligt namnkonventionen
-- approve_queue_item: flyttar fil till approved/
 - archive_review_item: arkiverar en review-post till arkiverat/
 - list_improvements: läser förbättringslistan (Robs "borde-fixas"-anteckningsblock)
 - add_improvement: lägger till en post i förbättringslistan

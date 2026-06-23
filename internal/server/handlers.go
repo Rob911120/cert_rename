@@ -233,6 +233,16 @@ func (s *Server) handleApprove(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 500)
 		return
 	}
+	// Uppdatera status i DB
+	if s.repo != nil {
+		if cert, err := s.repo.GetCertificateByFilename(name); err == nil {
+			if err := s.repo.UpdateCertificateStatus(cert.ID, "approved"); err != nil {
+				s.Logf("⚠️  DB-status-update misslyckades för %s: %v", name, err)
+			}
+		} else {
+			s.Logf("⚠️  Kunde inte hitta %s i DB: %v", name, err)
+		}
+	}
 	s.BroadcastQueue()
 	w.WriteHeader(204)
 }
@@ -321,6 +331,34 @@ func (s *Server) handlePromoteReview(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 400)
 		return
 	}
+
+	// Infoga i DB
+	if s.repo != nil {
+		metaPath := filepath.Join(store.QueueDir(c), newName)
+		if m, ok := store.ReadMetadata(metaPath); ok {
+			cert := &store.Certificate{
+				PDFHash:          m.Hash,
+				Filename:         newName,
+				OriginalFilename: m.OriginalFilename,
+				CertType:         "3.1",
+				Charge:           m.Charge,
+				Material:         m.Material,
+				MaterialShort:    m.MaterialShort,
+				ProductForm:      m.ProductForm,
+				Dimensions:       m.Dimensions,
+				BNumbers:         marshalJSON(m.BNumbers),
+				Confidence:       m.Confidence,
+				Issues:           marshalJSON(m.Issues),
+				ModelUsed:        m.ModelUsed,
+				Status:           "queue",
+				ExtractedAt:      m.ExtractedAt,
+			}
+			if _, insertErr := s.repo.InsertCertificate(cert); insertErr != nil {
+				s.Logf("⚠️  DB-insert vid promote misslyckades: %v", insertErr)
+			}
+		}
+	}
+
 	s.BroadcastQueue()
 	s.BroadcastReview()
 	s.BroadcastStats()

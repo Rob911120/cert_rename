@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -27,16 +28,48 @@ const MailPause = 5 * time.Second
 
 func processEml(ctx context.Context, client *anthropic.Client, cfg store.Config, emlPath string, n Notifier, idx, total int) {
 	n.Logf("📧 [%d/%d] %s", idx, total, filepath.Base(emlPath))
+
+	repo := n.Repo()
+
+	// Skapa email-post i DB
+	email := &store.Email{
+		Filename:    filepath.Base(emlPath),
+		Status:      "processing",
+		ProcessedAt: time.Now().Format(time.RFC3339),
+	}
+	emailID, err := repo.InsertEmail(email)
+	if err != nil {
+		n.Logf("   ⚠️  kunde inte spara email i DB: %v", err)
+	}
+
 	content, err := eml.Parse(emlPath)
 	if err != nil {
 		n.Logf("   ❌ kunde inte parsa: %v", err)
+		if emailID > 0 {
+			repo.UpdateEmailStatus(emailID, "error")
+		}
 		store.MoveToReview(cfg, emlPath, nil, nil, nil, nil, fmt.Sprintf("parse error: %v", err))
 		n.BroadcastStats()
 		n.BroadcastReview()
 		return
 	}
+
+	// Uppdatera email med innehåll
+	if emailID > 0 {
+		email.Subject = content.Subject
+		email.FromAddr = content.From
+		email.Date = content.Date
+		email.Body = content.Body
+		// Uppdatera email-posten med innehållet
+		_, _ = repo.DB().Exec(`UPDATE emails SET subject = ?, from_addr = ?, date = ?, body = ? WHERE id = ?`,
+			content.Subject, content.From, content.Date, content.Body, emailID)
+	}
+
 	if len(content.Attachments) == 0 {
 		n.Logf("   📦 arkiverat: inga PDF-bilagor")
+		if emailID > 0 {
+			repo.UpdateEmailStatus(emailID, "archived")
+		}
 		store.MoveToArchive(cfg, emlPath, "inga PDF-bilagor")
 		n.BroadcastStats()
 		_ = os.Remove(emlPath)
@@ -52,6 +85,20 @@ func processEml(ctx context.Context, client *anthropic.Client, cfg store.Config,
 		n.Logf("   ⚠️  classify-fel, fortsätter med verify: %v", cerr)
 	}
 
+	// Spara classify-beslut i DB
+	if emailID > 0 && cls != nil {
+		decision := &store.AIDecision{
+			EmailID:   &emailID,
+			Step:      "classify",
+			Model:     "claude-haiku-4-5-20251001",
+			Success:   cerr == nil,
+		}
+		if cerr != nil {
+			decision.ErrorMessage = cerr.Error()
+		}
+		repo.InsertAIDecision(decision)
+	}
+
 	ver, verr := ai.Verify(ctx, n, client, content)
 	if verr != nil {
 		n.Logf("   ⚠️  verify-fel, faller igenom till Sonnet: %v", verr)
@@ -59,6 +106,9 @@ func processEml(ctx context.Context, client *anthropic.Client, cfg store.Config,
 		if cls != nil && cls.IsCertMail {
 			n.Logf("   📨 classify sa ja men verify sa nej: %s", ver.Reason)
 			n.Logf("   🚫 inte cert-mejl: %s", ver.Reason)
+			if emailID > 0 {
+				repo.UpdateEmailStatus(emailID, "review")
+			}
 			store.MoveToReview(cfg, emlPath, content, nil, nil, nil,
 				"inte ett cert-mejl: "+ver.Reason)
 			n.BroadcastReview()
@@ -67,6 +117,9 @@ func processEml(ctx context.Context, client *anthropic.Client, cfg store.Config,
 				n.Logf("   🤔 text-classify sa nej (%s): %s", cls.Confidence, cls.Reason)
 			}
 			n.Logf("   📦 arkiverat: %s", ver.Reason)
+			if emailID > 0 {
+				repo.UpdateEmailStatus(emailID, "archived")
+			}
 			store.MoveToArchive(cfg, emlPath, "inte ett cert-mejl: "+ver.Reason)
 		}
 		n.BroadcastStats()
@@ -78,8 +131,26 @@ func processEml(ctx context.Context, client *anthropic.Client, cfg store.Config,
 		}
 	}
 
+	// Spara verify-beslut i DB
+	if emailID > 0 && ver != nil {
+		decision := &store.AIDecision{
+			EmailID:   &emailID,
+			Step:      "verify",
+			Model:     "claude-haiku-4-5-20251001",
+			Success:   verr == nil,
+		}
+		if verr != nil {
+			decision.ErrorMessage = verr.Error()
+		}
+		repo.InsertAIDecision(decision)
+	}
+
 	if !runFullFlow {
 		return
+	}
+
+	if emailID > 0 {
+		repo.UpdateEmailStatus(emailID, "certificates_found")
 	}
 
 	anyFail := false
@@ -87,10 +158,24 @@ func processEml(ctx context.Context, client *anthropic.Client, cfg store.Config,
 		if ctx.Err() != nil {
 			return
 		}
+		startTime := time.Now()
 		bNums := eml.ExtractBNumbers(content.Subject, content.Body, att.Filename)
 		ext, err := ai.Extract(ctx, n, client, att.Data, content.Subject, content.Body, att.Filename)
+		processingMs := time.Since(startTime).Milliseconds()
+
 		if err != nil {
 			n.Logf("   ❌ %s — Claude-fel: %v", att.Filename, err)
+			if emailID > 0 {
+				decision := &store.AIDecision{
+					EmailID:      &emailID,
+					Step:         "extract",
+					Model:        "claude-sonnet-4-5",
+					DurationMs:   processingMs,
+					Success:      false,
+					ErrorMessage: err.Error(),
+				}
+				repo.InsertAIDecision(decision)
+			}
 			store.MoveToReview(cfg, emlPath, content, &att, nil, bNums, fmt.Sprintf("claude error: %v", err))
 			anyFail = true
 			continue
@@ -98,6 +183,17 @@ func processEml(ctx context.Context, client *anthropic.Client, cfg store.Config,
 		fails := cert.Validate(ext, bNums)
 		if len(fails) > 0 {
 			n.Logf("   ❌ %s — %s", att.Filename, strings.Join(fails, "; "))
+			if emailID > 0 {
+				decision := &store.AIDecision{
+					EmailID:    &emailID,
+					Step:       "validate",
+					Model:      "claude-sonnet-4-5",
+					DurationMs: processingMs,
+					Success:    false,
+					ErrorMessage: strings.Join(fails, "; "),
+				}
+				repo.InsertAIDecision(decision)
+			}
 			store.MoveToReview(cfg, emlPath, content, &att, ext, bNums, strings.Join(fails, "; "))
 			anyFail = true
 			continue
@@ -110,24 +206,76 @@ func processEml(ctx context.Context, client *anthropic.Client, cfg store.Config,
 			continue
 		}
 		sum := sha256.Sum256(att.Data)
+		hash := hex.EncodeToString(sum[:])
+
+		// Skapa PdfMeta med nya fälten
 		meta := store.PdfMeta{
 			Charge:           ext.Charge,
-			Material:         ext.MaterialShort,
+			Material:         ext.Material,
+			MaterialShort:    ext.MaterialShort,
 			ProductForm:      ext.ProductForm,
 			Dimensions:       ext.Dimensions,
 			BNumbers:         bNums,
 			Confidence:       ext.Confidence,
 			Issues:           ext.Issues,
+			EmailSubject:     content.Subject,
+			EmailFrom:        content.From,
+			EmailDate:        content.Date,
+			EmailBody:        content.Body,
+			ModelUsed:        "claude-sonnet-4-5",
+			TokensInput:      0, // Fylls i av logAICall
+			TokensOutput:     0,
+			ProcessingMs:     processingMs,
 			OriginalFilename: att.Filename,
 			ExtractedAt:      time.Now().Format(time.RFC3339),
-			Schema:           4,
-			EmailRaw:         store.EmailRawText(content),
+			Hash:             hash,
+			Schema:           5,
 			Status:           "queue",
-			Hash:             hex.EncodeToString(sum[:]),
 		}
 		if err := store.EmbedMetadata(dst, meta); err != nil {
 			n.Logf("   ⚠️  kunde inte bädda in metadata i %s: %v", filepath.Base(dst), err)
 		}
+
+		// Spara certifikat i DB
+		if emailID > 0 {
+			cert := &store.Certificate{
+				EmailID:          emailID,
+				PDFHash:          hash,
+				Filename:         filepath.Base(dst),
+				OriginalFilename: att.Filename,
+				CertType:         ext.CertType,
+				Charge:           ext.Charge,
+				Material:         ext.Material,
+				MaterialShort:    ext.MaterialShort,
+				ProductForm:      ext.ProductForm,
+				Dimensions:       ext.Dimensions,
+				BNumbers:         mustMarshal(bNums),
+				Confidence:       ext.Confidence,
+				Issues:           mustMarshal(ext.Issues),
+				ModelUsed:        "claude-sonnet-4-5",
+				TokensInput:      0,
+				TokensOutput:     0,
+				ProcessingMs:     processingMs,
+				Status:           "queue",
+				ExtractedAt:      time.Now().Format(time.RFC3339),
+			}
+			certID, err := repo.InsertCertificate(cert)
+			if err != nil {
+				n.Logf("   ⚠️  kunde inte spara certifikat i DB: %v", err)
+			} else {
+				// Spara extract-beslut
+				decision := &store.AIDecision{
+					EmailID:       &emailID,
+					CertificateID: &certID,
+					Step:          "extract",
+					Model:         "claude-sonnet-4-5",
+					DurationMs:    processingMs,
+					Success:       true,
+				}
+				repo.InsertAIDecision(decision)
+			}
+		}
+
 		n.Logf("   ✅ %s", filepath.Base(dst))
 		n.IncrementOK()
 	}
@@ -138,11 +286,22 @@ func processEml(ctx context.Context, client *anthropic.Client, cfg store.Config,
 	}
 
 	if !anyFail {
+		if emailID > 0 {
+			repo.UpdateEmailStatus(emailID, "completed")
+		}
 		_ = os.Remove(emlPath)
 	} else {
+		if emailID > 0 {
+			repo.UpdateEmailStatus(emailID, "partial")
+		}
 		dst := filepath.Join(store.ReviewDir(cfg), filepath.Base(emlPath))
 		_ = os.Rename(emlPath, dst)
 	}
+}
+
+func mustMarshal(v any) string {
+	data, _ := json.Marshal(v)
+	return string(data)
 }
 
 // runOneTick scannar inbox och processar alla hittade .eml-filer en gång.

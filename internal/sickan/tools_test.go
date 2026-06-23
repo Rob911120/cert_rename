@@ -79,28 +79,6 @@ func Test_Dispatch_ApplyOrder_WritesFile(t *testing.T) {
 	}
 }
 
-func Test_Dispatch_Approve_MovesFile(t *testing.T) {
-	tb, cfg := setupToolbox(t)
-	writeFakePDF(t, store.QueueDir(cfg), "a.pdf")
-	_ = SaveOrder(cfg, []string{"a.pdf", "b.pdf"})
-	res, err := tb.Dispatch("approve_queue_item", json.RawMessage(`{"filename":"a.pdf"}`))
-	if err != nil {
-		t.Fatalf("dispatch: %v", err)
-	}
-	if !contains(res.Summary, `"ok":true`) {
-		t.Errorf("svar: %s", res.Summary)
-	}
-	if _, err := os.Stat(filepath.Join(store.QueueDir(cfg), "a.pdf")); !os.IsNotExist(err) {
-		t.Errorf("a.pdf borde flyttats från queue")
-	}
-	if _, err := os.Stat(filepath.Join(store.ApprovedDir(cfg), "a.pdf")); err != nil {
-		t.Errorf("a.pdf borde finnas i approved: %v", err)
-	}
-	if order := LoadOrder(cfg); len(order) != 1 || order[0] != "b.pdf" {
-		t.Errorf("a.pdf borde tagits ur ordningen, fick: %v", order)
-	}
-}
-
 func Test_Dispatch_AnalyzeReview_ReadsEmlAndReason(t *testing.T) {
 	tb, cfg := setupToolbox(t)
 	base := "test_msg"

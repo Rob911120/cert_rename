@@ -24,10 +24,11 @@ type Notifier interface {
 	BroadcastStats()
 }
 
-// Toolbox knyter ihop config + notifier för en chat-session.
+// Toolbox knyter ihop config + notifier + repo för en chat-session.
 type Toolbox struct {
-	Cfg store.Config
-	N   Notifier
+	Cfg  store.Config
+	N    Notifier
+	Repo *store.Repository
 }
 
 // ToolDefs returnerar tool-defs som skickas till Claude i varje request.
@@ -43,9 +44,7 @@ func ToolDefs() []anthropic.ToolUnionParam {
 		{OfTool: &analyzeReviewTool},
 		{OfTool: &analyzeQueueTool},
 		{OfTool: &updateQueueTool},
-		{OfTool: &approveQueueTool},
 		{OfTool: &archiveReviewTool},
-		{OfTool: &archiveQueueTool},
 		{OfTool: &readPdfTool},
 		{OfTool: &addImprovementTool},
 		{OfTool: &listImprovementsTool},
@@ -86,12 +85,8 @@ func (tb *Toolbox) Dispatch(name string, input json.RawMessage) (DispatchResult,
 		return wrapText(tb.analyzeQueue(input))
 	case "update_queue_item":
 		return wrapText(tb.updateQueue(input))
-	case "approve_queue_item":
-		return wrapText(tb.approveQueue(input))
 	case "archive_review_item":
 		return wrapText(tb.archiveReview(input))
-	case "archive_queue_item":
-		return wrapText(tb.archiveQueue(input))
 	case "read_pdf":
 		return tb.readPdf(input)
 	case "promote_review_to_queue":
@@ -245,28 +240,6 @@ var archiveReviewTool = anthropic.ToolParam{
 	},
 }
 
-var archiveQueueTool = anthropic.ToolParam{
-	Name:        "archive_queue_item",
-	Description: anthropic.String("Arkiverar en post från kön till arkiverat/. Använd för dubbletter eller felaktiga cert som inte ska godkännas. Anropa bara efter explicit ja från användaren."),
-	InputSchema: anthropic.ToolInputSchemaParam{
-		Properties: map[string]any{
-			"filename": map[string]any{"type": "string", "description": "PDF-filnamnet i kön."},
-		},
-		Required: []string{"filename"},
-	},
-}
-
-var approveQueueTool = anthropic.ToolParam{
-	Name:        "approve_queue_item",
-	Description: anthropic.String("Godkänner en kö-post och flyttar filen till approved/. Anropa bara efter explicit ja från användaren."),
-	InputSchema: anthropic.ToolInputSchemaParam{
-		Properties: map[string]any{
-			"filename": map[string]any{"type": "string"},
-		},
-		Required: []string{"filename"},
-	},
-}
-
 var addImprovementTool = anthropic.ToolParam{
 	Name:        "add_improvement",
 	Description: anthropic.String("Lägger till en post i förbättringslistan (Google Form → Sheet). Använd när användaren ber dig 'skicka en task', 'lägg till på förbättringslistan' eller liknande. Skriv koncist — en mening eller två som beskriver vad som borde förbättras eller fixas."),
@@ -291,6 +264,34 @@ var listImprovementsTool = anthropic.ToolParam{
 // ---------------------------------------------------------------------------
 
 func (tb *Toolbox) listQueue() (string, error) {
+	// Använd DB om tillgänglig, annars fallback till filsystem
+	if tb.Repo != nil {
+		certs, err := tb.Repo.ListCertificates("queue")
+		if err != nil {
+			return "", err
+		}
+		items := make([]store.QueueItem, 0, len(certs))
+		for _, c := range certs {
+			item := store.QueueItem{
+				Filename:    c.Filename,
+				Charge:      c.Charge,
+				Material:    c.Material,
+				ProductForm: c.ProductForm,
+				Dimensions:  c.Dimensions,
+				Confidence:  c.Confidence,
+			}
+			if c.BNumbers != "" {
+				_ = json.Unmarshal([]byte(c.BNumbers), &item.BNumbers)
+			}
+			if c.Issues != "" {
+				_ = json.Unmarshal([]byte(c.Issues), &item.Issues)
+			}
+			items = append(items, item)
+		}
+		out, _ := json.Marshal(map[string]any{"items": items, "count": len(items)})
+		return string(out), nil
+	}
+	// Fallback till filsystem
 	items := readQueue(tb.Cfg)
 	items = Apply(tb.Cfg, items)
 	out, _ := json.Marshal(map[string]any{"items": items, "count": len(items)})
@@ -476,30 +477,17 @@ func (tb *Toolbox) updateQueue(input json.RawMessage) (string, error) {
 	if finalName != args.Filename {
 		RenameInOrder(tb.Cfg, args.Filename, finalName)
 	}
+
+	// Uppdatera filnamn i DB
+	if tb.Repo != nil && finalName != args.Filename {
+		if cert, err := tb.Repo.GetCertificateByFilename(args.Filename); err == nil {
+			_ = tb.Repo.UpdateCertificateFilename(cert.ID, finalName)
+		}
+	}
+
 	tb.N.BroadcastQueue()
 	tb.N.Logf("🤖 Sickan: %s → %s", args.Filename, finalName)
 	out, _ := json.Marshal(map[string]any{"ok": true, "new_filename": finalName})
-	return string(out), nil
-}
-
-func (tb *Toolbox) approveQueue(input json.RawMessage) (string, error) {
-	var args struct {
-		Filename string `json:"filename"`
-	}
-	if err := json.Unmarshal(input, &args); err != nil {
-		return "", err
-	}
-	if !safeName(args.Filename) {
-		return "", fmt.Errorf("ogiltigt filnamn")
-	}
-	if _, err := store.ApproveQueueItem(tb.Cfg, args.Filename); err != nil {
-		return "", err
-	}
-	RemoveFromOrder(tb.Cfg, args.Filename)
-	tb.N.BroadcastQueue()
-	tb.N.BroadcastStats()
-	tb.N.Logf("🤖 Sickan: godkänd %s", args.Filename)
-	out, _ := json.Marshal(map[string]any{"ok": true})
 	return string(out), nil
 }
 
@@ -530,6 +518,34 @@ func (tb *Toolbox) promoteReview(input json.RawMessage) (string, error) {
 	if err != nil {
 		return "", err
 	}
+
+	// Infoga i DB
+	if tb.Repo != nil {
+		metaPath := filepath.Join(store.QueueDir(tb.Cfg), newName)
+		if m, ok := store.ReadMetadata(metaPath); ok {
+			cert := &store.Certificate{
+				PDFHash:          m.Hash,
+				Filename:         newName,
+				OriginalFilename: m.OriginalFilename,
+				CertType:         "3.1",
+				Charge:           m.Charge,
+				Material:         m.Material,
+				MaterialShort:    m.MaterialShort,
+				ProductForm:      m.ProductForm,
+				Dimensions:       m.Dimensions,
+				BNumbers:         marshalJSON(m.BNumbers),
+				Confidence:       m.Confidence,
+				Issues:           marshalJSON(m.Issues),
+				ModelUsed:        m.ModelUsed,
+				Status:           "queue",
+				ExtractedAt:      m.ExtractedAt,
+			}
+			if _, insertErr := tb.Repo.InsertCertificate(cert); insertErr != nil {
+				tb.N.Logf("⚠️  DB-insert vid promote misslyckades: %v", insertErr)
+			}
+		}
+	}
+
 	tb.N.BroadcastQueue()
 	tb.N.BroadcastReview()
 	tb.N.BroadcastStats()
@@ -586,28 +602,6 @@ func (tb *Toolbox) archiveReview(input json.RawMessage) (string, error) {
 	tb.N.BroadcastReview()
 	tb.N.BroadcastStats()
 	tb.N.Logf("🤖 Sickan: arkiverade %s", args.Base)
-	out, _ := json.Marshal(map[string]any{"ok": true, "archived": filepath.Base(dst)})
-	return string(out), nil
-}
-
-func (tb *Toolbox) archiveQueue(input json.RawMessage) (string, error) {
-	var args struct {
-		Filename string `json:"filename"`
-	}
-	if err := json.Unmarshal(input, &args); err != nil {
-		return "", err
-	}
-	if !safeName(args.Filename) {
-		return "", fmt.Errorf("ogiltigt filnamn")
-	}
-	dst, err := store.ArchiveQueueItem(tb.Cfg, args.Filename)
-	if err != nil {
-		return "", err
-	}
-	RemoveFromOrder(tb.Cfg, args.Filename)
-	tb.N.BroadcastQueue()
-	tb.N.BroadcastStats()
-	tb.N.Logf("🤖 Sickan: arkiverade %s", args.Filename)
 	out, _ := json.Marshal(map[string]any{"ok": true, "archived": filepath.Base(dst)})
 	return string(out), nil
 }
@@ -677,6 +671,11 @@ func safeName(s string) bool {
 		return false
 	}
 	return !strings.ContainsAny(s, `/\`) && !strings.Contains(s, "..")
+}
+
+func marshalJSON(v any) string {
+	data, _ := json.Marshal(v)
+	return string(data)
 }
 
 func attNames(atts []eml.Attachment) []string {

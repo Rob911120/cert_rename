@@ -5,12 +5,14 @@ package server
 
 import (
 	"context"
+	"database/sql"
 	"embed"
 	"encoding/json"
 	"fmt"
 	"io/fs"
 	"log"
 	"net/http"
+	"os"
 	"sync"
 	"time"
 
@@ -28,6 +30,9 @@ type Server struct {
 	cancelFn context.CancelFunc
 	running  bool
 
+	db   *sql.DB
+	repo *store.Repository
+
 	costsMu sync.Mutex
 	costs   store.Costs
 
@@ -37,15 +42,38 @@ type Server struct {
 	workerKick chan struct{}
 }
 
-// New bygger en ny Server med Config + Costs från disk.
+// New bygger en ny Server med Config + Costs från disk och initierar databasen.
 func New() *Server {
-	return &Server{
+	dbPath := store.DBPath()
+	db, err := store.InitDB(dbPath)
+	if err != nil {
+		log.Fatalf("❌ Kunde inte initiera databas: %v", err)
+	}
+
+	srv := &Server{
 		cfg:        store.LoadConfig(),
+		db:         db,
+		repo:       store.NewRepository(db),
 		costs:      store.LoadCosts(),
 		subs:       map[chan ssEvent]struct{}{},
 		sickanSess: newSickanSessions(),
 		workerKick: make(chan struct{}, 1),
 	}
+
+	// Kör reconciliation om inbox är satt
+	if srv.cfg.InboxDir != "" {
+		queueDir := store.QueueDir(srv.cfg)
+		if _, statErr := os.Stat(queueDir); statErr == nil {
+			added, removed, recErr := srv.repo.ReconcileQueue(queueDir)
+			if recErr != nil {
+				log.Printf("⚠️  Reconciliation misslyckades: %v", recErr)
+			} else if added > 0 || removed > 0 {
+				log.Printf("🗄️  Reconciliation: lade till %d, tog bort %d", added, removed)
+			}
+		}
+	}
+
+	return srv
 }
 
 // Logf är en del av ai.Logger och worker.Notifier.
@@ -73,6 +101,11 @@ func (s *Server) RecordUsage(model string, in, out, cacheCreate, cacheRead int64
 		log.Printf("⚠️  SaveCosts: %v", err)
 	}
 	s.BroadcastCosts()
+}
+
+// Repo returnerar repositoryn — del av worker.Notifier.
+func (s *Server) Repo() *store.Repository {
+	return s.repo
 }
 
 // Autostart startar workern om Autostart-flaggan är satt och preconds (api_key + inbox) uppfyllda.
