@@ -149,6 +149,35 @@ func (c *Client) getList(ctx context.Context, path string, q *Query, out any) er
 	return decodeList(data, out)
 }
 
+// postJSON gör en POST mot apiBase()+path med body som JSON och avkodar svaret
+// till out (om out != nil). Används för write-kommandon som ReportArrivals.
+func (c *Client) postJSON(ctx context.Context, path string, body, out any) error {
+	b, err := json.Marshal(body)
+	if err != nil {
+		return err
+	}
+	r, err := http.NewRequestWithContext(ctx, http.MethodPost, c.apiBase()+path, bytes.NewReader(b))
+	if err != nil {
+		return err
+	}
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("Accept", "application/json")
+	c.auth(r)
+	resp, err := c.http.Do(r)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	data, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("POST %s: status %d: %s", path, resp.StatusCode, strings.TrimSpace(string(data)))
+	}
+	if out != nil && len(data) > 0 {
+		return json.Unmarshal(data, out)
+	}
+	return nil
+}
+
 // decodeList avkodar antingen ett OData-wrappat svar {"value":[...]} eller en
 // bar JSON-array [...] till out.
 func decodeList(data []byte, out any) error {

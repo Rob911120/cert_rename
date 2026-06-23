@@ -170,5 +170,6 @@ func NewMux(s *Server) *http.ServeMux {
 	mux.HandleFunc("/api/sickan/reset", s.handleSickanReset)
 	mux.HandleFunc("/api/sickan/model", s.handleSickanModel)
 	mux.HandleFunc("/api/upload", s.handleUpload)
+	mux.HandleFunc("/api/upload-delivery-note", s.handleUploadDeliveryNote)
 	return mux
 }

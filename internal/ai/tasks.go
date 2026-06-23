@@ -189,6 +189,70 @@ func ClassifyMailCategory(ctx context.Context, log Logger, client *anthropic.Cli
 	)
 }
 
+// DeliveryNoteExtraction är fälten vision läser ur en följesedel-bild (Fas 4).
+type DeliveryNoteExtraction struct {
+	Supplier           string   `json:"supplier"`
+	DeliveryDate       string   `json:"delivery_date"`
+	OrderNumber        string   `json:"order_number"`
+	BNumbers           []string `json:"b_numbers"`
+	Charge             string   `json:"charge"`
+	Material           string   `json:"material"`
+	Quantity           float64  `json:"quantity"`
+	Unit               string   `json:"unit"`
+	DeliveryNoteNumber string   `json:"delivery_note_number"`
+	Confidence         string   `json:"confidence"`
+}
+
+// ExtractFromImage läser en följesedel-BILD (image/png eller image/jpeg) med
+// sonnet-vision och returnerar extraherade fält. Bara bild-media types stöds.
+func ExtractFromImage(ctx context.Context, log Logger, client *anthropic.Client, img []byte, mediaType string) (*DeliveryNoteExtraction, error) {
+	switch mediaType {
+	case "image/png", "image/jpeg", "image/gif", "image/webp":
+	default:
+		return nil, fmt.Errorf("media type stöds ej för vision: %q (förväntade image/png eller image/jpeg)", mediaType)
+	}
+	b64 := base64.StdEncoding.EncodeToString(img)
+	return logAICall(log, "sonnet ExtractFromImage",
+		func() (*DeliveryNoteExtraction, anthropic.Usage, error) {
+			resp, err := client.Messages.New(ctx, anthropic.MessageNewParams{
+				Model:     ModelExtract,
+				MaxTokens: 1024,
+				System:    []anthropic.TextBlockParam{{Text: deliveryNoteSystemPrompt}},
+				Tools:     []anthropic.ToolUnionParam{{OfTool: &deliveryNoteTool}},
+				ToolChoice: anthropic.ToolChoiceUnionParam{
+					OfTool: &anthropic.ToolChoiceToolParam{Name: "extract_delivery_note"},
+				},
+				Messages: []anthropic.MessageParam{
+					{
+						Role: anthropic.MessageParamRoleUser,
+						Content: []anthropic.ContentBlockParamUnion{
+							anthropic.NewImageBlockBase64(mediaType, b64),
+							{OfText: &anthropic.TextBlockParam{Text: "Läs av denna följesedel och returnera fälten via verktyget."}},
+						},
+					},
+				},
+			})
+			if err != nil {
+				return nil, anthropic.Usage{}, err
+			}
+			for _, block := range resp.Content {
+				if block.Type == "tool_use" {
+					tu := block.AsToolUse()
+					var dn DeliveryNoteExtraction
+					if err := json.Unmarshal(tu.Input, &dn); err != nil {
+						return nil, resp.Usage, fmt.Errorf("unmarshal: %w", err)
+					}
+					return &dn, resp.Usage, nil
+				}
+			}
+			return nil, resp.Usage, fmt.Errorf("inget tool_use-svar från Claude")
+		},
+		func(dn *DeliveryNoteExtraction) string {
+			return fmt.Sprintf("leverantör=%s order=%s charge=%s antal=%g %s", dn.Supplier, dn.OrderNumber, dn.Charge, dn.Quantity, dn.Unit)
+		},
+	)
+}
+
 // Verify anropar haiku på alla PDF-bilagor och avgör om någon är ett 3.1-cert.
 func Verify(ctx context.Context, log Logger, client *anthropic.Client, c *eml.Content) (*cert.Verification, error) {
 	content := []anthropic.ContentBlockParamUnion{}

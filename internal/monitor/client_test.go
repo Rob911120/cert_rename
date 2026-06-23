@@ -132,6 +132,51 @@ func TestFindProductRecords_ByCharge(t *testing.T) {
 	}
 }
 
+func TestReportArrivals_PostsPayloadWithSession(t *testing.T) {
+	var gotSession string
+	var gotBody []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/001.1/login"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"SessionId":"sess-123"}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/PurchaseOrders/ReportArrivals"):
+			gotSession = r.Header.Get("X-Monitor-SessionId")
+			gotBody, _ = io.ReadAll(r.Body)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"Ok":true}`))
+		default:
+			http.Error(w, "unexpected: "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	c := New(srv.URL)
+	if err := c.Login(context.Background(), "kalle", "hemligt"); err != nil {
+		t.Fatalf("login: %v", err)
+	}
+	res, err := c.ReportArrivals(context.Background(), ReportArrivalsRequest{
+		DeliveryNoteNumber: "CCF000195",
+		Rows:               []ArrivalRow{{PurchaseOrderRowId: 11, Quantity: 6}},
+	})
+	if err != nil {
+		t.Fatalf("ReportArrivals: %v", err)
+	}
+	if gotSession != "sess-123" {
+		t.Errorf("session-header = %q, vill ha sess-123", gotSession)
+	}
+	body := string(gotBody)
+	if !strings.Contains(body, `"PurchaseOrderRowId":11`) {
+		t.Errorf("body saknar PurchaseOrderRowId: %s", body)
+	}
+	if !strings.Contains(body, `"DeliveryNoteNumber":"CCF000195"`) {
+		t.Errorf("body saknar DeliveryNoteNumber: %s", body)
+	}
+	if !strings.Contains(string(res), "Ok") {
+		t.Errorf("oväntat svar: %s", string(res))
+	}
+}
+
 func TestQuery_BuildsODataParams(t *testing.T) {
 	vals := NewQuery().
 		Filter("ChargeNumber eq '1'").

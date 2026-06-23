@@ -422,6 +422,140 @@ func (r *Repository) GetTotalCosts() (map[string]CostEntry, error) {
 	return costs, nil
 }
 
+// --- Delivery note operations (Fas 4: inleverans-trial) ---
+
+// Status-flöde för en följesedel.
+const (
+	DNUnmatched          = "unmatched"
+	DNMatchedPO          = "matched_po"
+	DNReceivingProposed  = "receiving_proposed"
+	DNReceivingConfirmed = "receiving_confirmed"
+)
+
+// DeliveryNote är en uppladdad följesedel (bild) med vision-extraherade fält +
+// matchning mot Monitor-inköpsorder. status går unmatched → matched_po →
+// receiving_proposed → receiving_confirmed.
+type DeliveryNote struct {
+	ID                 int64   `json:"id"`
+	ImageFilename      string  `json:"image_filename"`
+	Supplier           string  `json:"supplier"`
+	DeliveryDate       string  `json:"delivery_date"`
+	OrderNumber        string  `json:"order_number"`
+	Charge             string  `json:"charge"`
+	Material           string  `json:"material"`
+	Quantity           float64 `json:"quantity"`
+	Unit               string  `json:"unit"`
+	DeliveryNoteNumber string  `json:"delivery_note_number"`
+	WaybillNumber      string  `json:"waybill_number"`
+	BNumbers           string  `json:"b_numbers"`
+	Confidence         string  `json:"confidence"`
+	Status             string  `json:"status"`
+	MatchedPOID        int64   `json:"matched_po_id"`
+	MatchedRowID       int64   `json:"matched_row_id"`
+	ProposedQuantity   float64 `json:"proposed_quantity"`
+	CreatedAt          string  `json:"created_at"`
+}
+
+const dnColumns = `id, image_filename, supplier, delivery_date, order_number, charge, material, quantity, unit, delivery_note_number, waybill_number, b_numbers, confidence, status, matched_po_id, matched_row_id, proposed_quantity, created_at`
+
+func scanDeliveryNote(s interface {
+	Scan(dest ...any) error
+}) (DeliveryNote, error) {
+	var d DeliveryNote
+	var supplier, date, orderNo, charge, material, unit, dnNo, waybill, bnums, conf sql.NullString
+	var qty, proposedQty sql.NullFloat64
+	var poID, rowID sql.NullInt64
+	err := s.Scan(
+		&d.ID, &d.ImageFilename, &supplier, &date, &orderNo, &charge, &material,
+		&qty, &unit, &dnNo, &waybill, &bnums, &conf, &d.Status,
+		&poID, &rowID, &proposedQty, &d.CreatedAt,
+	)
+	if err != nil {
+		return d, err
+	}
+	d.Supplier, d.DeliveryDate, d.OrderNumber = supplier.String, date.String, orderNo.String
+	d.Charge, d.Material, d.Unit = charge.String, material.String, unit.String
+	d.DeliveryNoteNumber, d.WaybillNumber, d.BNumbers, d.Confidence = dnNo.String, waybill.String, bnums.String, conf.String
+	d.Quantity, d.ProposedQuantity = qty.Float64, proposedQty.Float64
+	d.MatchedPOID, d.MatchedRowID = poID.Int64, rowID.Int64
+	return d, nil
+}
+
+// InsertDeliveryNote infogar en ny följesedel (status default 'unmatched').
+func (r *Repository) InsertDeliveryNote(d *DeliveryNote) (int64, error) {
+	if d.Status == "" {
+		d.Status = DNUnmatched
+	}
+	result, err := r.db.Exec(`
+		INSERT INTO delivery_notes (
+			image_filename, supplier, delivery_date, order_number, charge, material,
+			quantity, unit, delivery_note_number, waybill_number, b_numbers, confidence, status
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		d.ImageFilename, d.Supplier, d.DeliveryDate, d.OrderNumber, d.Charge, d.Material,
+		d.Quantity, d.Unit, d.DeliveryNoteNumber, d.WaybillNumber, d.BNumbers, d.Confidence, d.Status)
+	if err != nil {
+		return 0, err
+	}
+	return result.LastInsertId()
+}
+
+// GetDeliveryNote hämtar en följesedel via id.
+func (r *Repository) GetDeliveryNote(id int64) (*DeliveryNote, error) {
+	row := r.db.QueryRow(`SELECT `+dnColumns+` FROM delivery_notes WHERE id = ?`, id)
+	d, err := scanDeliveryNote(row)
+	if err != nil {
+		return nil, err
+	}
+	return &d, nil
+}
+
+// ListDeliveryNotes listar följesedlar; tom status returnerar alla.
+func (r *Repository) ListDeliveryNotes(status string) ([]DeliveryNote, error) {
+	query := `SELECT ` + dnColumns + ` FROM delivery_notes`
+	var args []interface{}
+	if status != "" {
+		query += ` WHERE status = ?`
+		args = append(args, status)
+	}
+	query += ` ORDER BY created_at DESC`
+	rows, err := r.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []DeliveryNote
+	for rows.Next() {
+		d, err := scanDeliveryNote(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
+// UpdateDeliveryNoteMatch sätter matchad PO/orderrad + status (matched_po).
+func (r *Repository) UpdateDeliveryNoteMatch(id, poID, rowID int64, status string) error {
+	_, err := r.db.Exec(
+		`UPDATE delivery_notes SET matched_po_id = ?, matched_row_id = ?, status = ? WHERE id = ?`,
+		poID, rowID, status, id)
+	return err
+}
+
+// UpdateDeliveryNoteProposal sätter föreslagen kvantitet + status (receiving_proposed).
+func (r *Repository) UpdateDeliveryNoteProposal(id int64, proposedQty float64, status string) error {
+	_, err := r.db.Exec(
+		`UPDATE delivery_notes SET proposed_quantity = ?, status = ? WHERE id = ?`,
+		proposedQty, status, id)
+	return err
+}
+
+// UpdateDeliveryNoteStatus sätter bara status.
+func (r *Repository) UpdateDeliveryNoteStatus(id int64, status string) error {
+	_, err := r.db.Exec(`UPDATE delivery_notes SET status = ? WHERE id = ?`, status, id)
+	return err
+}
+
 // --- Chat Session operations ---
 
 // SaveChatSession sparar eller uppdaterar en chat-session.

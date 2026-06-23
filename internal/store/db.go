@@ -92,12 +92,34 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS delivery_notes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    image_filename TEXT NOT NULL,
+    supplier TEXT,
+    delivery_date TEXT,
+    order_number TEXT,
+    charge TEXT,
+    material TEXT,
+    quantity REAL,
+    unit TEXT,
+    delivery_note_number TEXT,
+    waybill_number TEXT,
+    b_numbers TEXT,
+    confidence TEXT,
+    status TEXT NOT NULL DEFAULT 'unmatched',
+    matched_po_id INTEGER,
+    matched_row_id INTEGER,
+    proposed_quantity REAL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE INDEX IF NOT EXISTS idx_certificates_status ON certificates(status);
 CREATE INDEX IF NOT EXISTS idx_certificates_email_id ON certificates(email_id);
 CREATE INDEX IF NOT EXISTS idx_certificates_pdf_hash ON certificates(pdf_hash);
 CREATE INDEX IF NOT EXISTS idx_ai_decisions_email_id ON ai_decisions(email_id);
 CREATE INDEX IF NOT EXISTS idx_ai_decisions_certificate_id ON ai_decisions(certificate_id);
 CREATE INDEX IF NOT EXISTS idx_cost_entries_certificate_id ON cost_entries(certificate_id);
+CREATE INDEX IF NOT EXISTS idx_delivery_notes_status ON delivery_notes(status);
 `
 
 // InitDB öppnar (eller skapar) SQLite-databasen och kör migrations.

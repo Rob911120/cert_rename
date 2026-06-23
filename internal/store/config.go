@@ -24,10 +24,11 @@ type Config struct {
 	MonitorPassword string `json:"monitor_password,omitempty"`
 }
 
-func QueueDir(c Config) string     { return filepath.Join(c.InboxDir, "queue") }
-func ReviewDir(c Config) string    { return filepath.Join(c.InboxDir, "review") }
-func ApprovedDir(c Config) string  { return filepath.Join(c.InboxDir, "approved") }
-func ArkiveratDir(c Config) string { return filepath.Join(c.InboxDir, "arkiverat") }
+func QueueDir(c Config) string         { return filepath.Join(c.InboxDir, "queue") }
+func ReviewDir(c Config) string        { return filepath.Join(c.InboxDir, "review") }
+func ApprovedDir(c Config) string      { return filepath.Join(c.InboxDir, "approved") }
+func ArkiveratDir(c Config) string     { return filepath.Join(c.InboxDir, "arkiverat") }
+func DeliveryNotesDir(c Config) string { return filepath.Join(c.InboxDir, "delivery_notes") }
 
 func ConfigPath() string {
 	home, err := os.UserHomeDir()

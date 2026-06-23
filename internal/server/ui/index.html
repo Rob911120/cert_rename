@@ -1059,9 +1059,30 @@ window.addEventListener('drop', async (e) => {
 async function uploadOneFile(file, bNumber) {
   const id = ++dropToastSeq;
   const ext = (file.name.match(/\.[^.]+$/) || [''])[0].toLowerCase();
+  // Bild-följesedel → vision-flödet (matcha/registrera sker sen via Sickan).
+  if (/\.(png|jpe?g|gif|webp)$/i.test(file.name)) {
+    dropToastShow(id, `⬆️ ${file.name} (följesedel)…`);
+    const fd = new FormData();
+    fd.append('image', file, file.name);
+    try {
+      const r = await fetch('/api/upload-delivery-note', { method: 'POST', body: fd });
+      const text = await r.text();
+      if (!r.ok) throw new Error(text || ('HTTP ' + r.status));
+      let msg = `📦 ${file.name} → följesedel`;
+      try {
+        const j = JSON.parse(text);
+        const e2 = j.extraction || {};
+        msg = `📦 följesedel #${j.id} — ${(e2.supplier || '?')} ${(e2.order_number || '')}`.trim();
+      } catch (_) {}
+      dropToastDone(id, msg);
+    } catch (err) {
+      dropToastDone(id, `❌ ${file.name}: ${err.message || err}`);
+    }
+    return;
+  }
   if (ext !== '.pdf' && ext !== '.eml') {
-    dropToastShow(id, `⚠️ ${file.name} (bara .pdf och .eml)`);
-    dropToastDone(id, `⚠️ ${file.name} (bara .pdf och .eml)`);
+    dropToastShow(id, `⚠️ ${file.name} (bara .pdf, .eml och bild-följesedlar)`);
+    dropToastDone(id, `⚠️ ${file.name} (bara .pdf, .eml och bild-följesedlar)`);
     return;
   }
   dropToastShow(id, `⬆️ ${file.name}…`);

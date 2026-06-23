@@ -62,6 +62,20 @@ Returnera ALLTID via verktyget verify_pdfs.
 
 Vid genuin tveksamhet om en PDF *kan* vara ett 3.1-cert (t.ex. del av cert, dålig OCR), säg ja.`
 
+const deliveryNoteSystemPrompt = `Du läser av en FÖLJESEDEL (packsedel) från en stål-/metalleverantör utifrån en bild.
+Returnera ALLTID via verktyget extract_delivery_note.
+- supplier: leverantörens namn.
+- delivery_date: leveransdatum (ISO YYYY-MM-DD om möjligt, annars som det står).
+- order_number: kundens inköpsordernummer (ofta "B" + siffror, t.ex. B127196).
+- b_numbers: lista över B-nummer/ordernummer som nämns.
+- charge: charge-/heat-/slabnummer om det står på följesedeln.
+- material: materialdesignation (t.ex. S355J2).
+- quantity: levererad mängd som tal (utan enhet).
+- unit: enhet för mängden (t.ex. "st", "m", "kg").
+- delivery_note_number: följesedelns eget nummer.
+- confidence: "high"/"medium"/"low".
+Lämna fält tomma (eller 0 för quantity) om de inte framgår. Svara inte med text utanför verktyget.`
+
 var extractionTool = anthropic.ToolParam{
 	Name:        "submit_extraction",
 	Description: anthropic.String("Lämna extraherade fält från certifikatet."),
@@ -91,6 +105,26 @@ var classifyTool = anthropic.ToolParam{
 			"reason":       map[string]any{"type": "string"},
 		},
 		Required: []string{"is_cert_mail", "confidence", "reason"},
+	},
+}
+
+var deliveryNoteTool = anthropic.ToolParam{
+	Name:        "extract_delivery_note",
+	Description: anthropic.String("Lämna fält avlästa från en följesedel-bild."),
+	InputSchema: anthropic.ToolInputSchemaParam{
+		Properties: map[string]any{
+			"supplier":             map[string]any{"type": "string"},
+			"delivery_date":        map[string]any{"type": "string"},
+			"order_number":         map[string]any{"type": "string"},
+			"b_numbers":            map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+			"charge":               map[string]any{"type": "string"},
+			"material":             map[string]any{"type": "string"},
+			"quantity":             map[string]any{"type": "number"},
+			"unit":                 map[string]any{"type": "string"},
+			"delivery_note_number": map[string]any{"type": "string"},
+			"confidence":           map[string]any{"type": "string"},
+		},
+		Required: []string{"supplier", "delivery_date", "order_number", "b_numbers", "charge", "material", "quantity", "unit", "delivery_note_number", "confidence"},
 	},
 }
 
