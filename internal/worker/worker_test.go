@@ -138,6 +138,41 @@ const (
 		"stop_reason": "tool_use",
 		"usage": {"input_tokens": 100, "output_tokens": 20}
 	}`
+
+	// classifyCategoryCertJSON routar mejlet in i det befintliga cert-flödet
+	// (steg 0 = kategori-klassificering säger "certificate").
+	classifyCategoryCertJSON = `{
+		"id": "msg_test",
+		"type": "message",
+		"role": "assistant",
+		"model": "claude-haiku-4-5-20251001",
+		"content": [{
+			"type": "tool_use",
+			"id": "toolu_test",
+			"name": "classify_mail_category",
+			"input": {"category": "certificate", "confidence": "high", "reason": "cert-mejl"}
+		}],
+		"stop_reason": "tool_use",
+		"usage": {"input_tokens": 10, "output_tokens": 5}
+	}`
+
+	// classifyCategoryInvoiceJSON: en faktura — ej cert, ej reklam. Ska
+	// persisteras i emails med mail_category="invoice" och arkiveras, UTAN
+	// att gå genom verify/extract-vägen.
+	classifyCategoryInvoiceJSON = `{
+		"id": "msg_test",
+		"type": "message",
+		"role": "assistant",
+		"model": "claude-haiku-4-5-20251001",
+		"content": [{
+			"type": "tool_use",
+			"id": "toolu_test",
+			"name": "classify_mail_category",
+			"input": {"category": "invoice", "confidence": "high", "reason": "faktura"}
+		}],
+		"stop_reason": "tool_use",
+		"usage": {"input_tokens": 10, "output_tokens": 5}
+	}`
 )
 
 // testNotifier är en no-op Notifier som testerna använder istället för en
@@ -186,9 +221,18 @@ func startStubAnthropic(t *testing.T, stubs stubMap) *httptest.Server {
 		}
 		resp, ok := stubs[toolName]
 		if !ok {
-			t.Errorf("stub: ingen response för tool %q", toolName)
-			http.Error(w, "no stub", http.StatusInternalServerError)
-			return
+			// Steg 0-kategoriklassificeringen (classify_mail_category) körs för
+			// ALLA mejl. Default:a den till "certificate" så att befintliga
+			// cert-tester routas in i cert-flödet utan att behöva deklarera den
+			// explicit. Tester som vill testa en annan kategori sätter
+			// "classify_mail_category" själva i sin stubMap.
+			if toolName == "classify_mail_category" {
+				resp = classifyCategoryCertJSON
+			} else {
+				t.Errorf("stub: ingen response för tool %q", toolName)
+				http.Error(w, "no stub", http.StatusInternalServerError)
+				return
+			}
 		}
 		if strings.HasPrefix(resp, "STATUS:") {
 			code, _ := strconv.Atoi(strings.TrimPrefix(resp, "STATUS:"))
@@ -1020,5 +1064,48 @@ func Test_PromoteReviewToQueue_InsertsIntoDB(t *testing.T) {
 		if certs[0].Filename != newName {
 			t.Errorf("cert.Filename = %q, vill ha %q", certs[0].Filename, newName)
 		}
+	}
+}
+
+// Test_ClassifyCategory_NonCert_PersistedAndArchived verifierar Fas 2:
+// steg 0 kategori-klassificering. Ett mejl som klassas som "invoice" (ej cert,
+// ej reklam) ska persisteras i emails med mail_category="invoice" och arkiveras
+// på disk — UTAN att gå genom verify/extract-vägen (inga sådana stubs finns, så
+// om koden ändå anropar dem skriker stub:en). Inget cert hamnar i kön.
+func Test_ClassifyCategory_NonCert_PersistedAndArchived(t *testing.T) {
+	cfg, n := setupTestInbox(t)
+	stub := startStubAnthropic(t, stubMap{
+		"classify_mail_category": classifyCategoryInvoiceJSON,
+		// medvetet INGA verify_pdfs/submit_extraction/classify_email — cert-vägen
+		// ska aldrig nås för en faktura.
+	})
+	client := makeTestClient(stub)
+	emlPath := copyFixture(t, cfg, "cert_with_pdf.eml")
+
+	processEml(context.Background(), client, cfg, emlPath, n, 1, 1)
+
+	// Inget cert i kön — cert-flödet hoppades över.
+	if cnt := countFiles(t, store.QueueDir(cfg)); cnt != 0 {
+		t.Errorf("queue ska vara tom för faktura, fick %d filer", cnt)
+	}
+	// Arkiverat på disk.
+	subs := listSubdirs(t, store.ArkiveratDir(cfg))
+	if len(subs) != 1 {
+		t.Fatalf("arkiverat: förväntade 1 undermapp, fick %d (%v)", len(subs), subs)
+	}
+	// .eml borttagen från inbox.
+	if _, err := os.Stat(emlPath); !os.IsNotExist(err) {
+		t.Errorf("eml borde tas bort efter arkivering, men finns kvar")
+	}
+	// Persisterat i emails med rätt kategori.
+	emails, err := n.repo.ListEmailsByCategory("invoice")
+	if err != nil {
+		t.Fatalf("list emails by category: %v", err)
+	}
+	if len(emails) != 1 {
+		t.Fatalf("förväntade 1 faktura-mejl i DB, fick %d", len(emails))
+	}
+	if emails[0].MailCategory != "invoice" {
+		t.Errorf("mail_category = %q, vill ha %q", emails[0].MailCategory, "invoice")
 	}
 }

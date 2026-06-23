@@ -22,6 +22,7 @@ Verktyg du har:
 - analyze_review_item: full email + PDF-metadata för en review-post
 - analyze_queue_item: PDF-metadata + email-raw för en post som redan ligger i kön
 - read_pdf: bifogar själva PDF-filen så du kan läsa innehåll (text + bilder)
+- list_classified_mail: listar inkorgspost som klassificerats och sparats i DB (faktura, följesedel, orderbekräftelse, m.m.) — filtrera på 'category' eller lista alla arbetsobjekt utom reklam
 - apply_queue_order: sätter UI:ts kö-ordning till en lista filnamn
 - update_queue_item: ändrar fält + döper om enligt namnkonventionen
 - archive_review_item: arkiverar en review-post till arkiverat/

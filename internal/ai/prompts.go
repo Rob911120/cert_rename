@@ -26,6 +26,22 @@ Returnera ALLTID via verktyget classify_email.
 - reason: kort motivering på svenska
 Var generös — säg ja vid tveksamhet. Säg nej bara när det är uppenbart att inget är ett cert.`
 
+const classifyCategorySystemPrompt = `Du kategoriserar inkommande mejl till en stål-/metallinköpares inkorg.
+Returnera ALLTID via verktyget classify_mail_category med exakt EN kategori:
+- certificate: mejlet levererar ett material-/inspektionscertifikat (EN 10204 2.2/3.1/3.2), kontrollrapport eller OFP/NDT-rapport.
+- delivery_note: följesedel/packsedel (utan att i sig vara ett cert).
+- invoice: faktura.
+- order_confirmation: orderbekräftelse/orderbesked.
+- technical_doc: ritning, datablad, kvalitetsplan eller specifikation.
+- reklam: marknadsföring, nyhetsbrev eller utskick utan konkret affärsärende.
+- other: passar ingen av kategorierna ovan.
+
+Vid genuin tveksamhet mellan certificate och något annat: välj certificate — det är
+kärnflödet och verifieras separat i nästa steg.
+- category: exakt en av strängarna ovan (gemener).
+- confidence: "high"/"medium"/"low".
+- reason: kort motivering på svenska.`
+
 const verifySystemPrompt = `Du får 1+ PDF-bilagor från ett mejl. Avgör om NÅGON är ett EN 10204 3.1 MATERIAL-certifikat.
 
 Ett 3.1-cert intygar specifikt material som har levererats. Det innehåller minst:
@@ -75,6 +91,22 @@ var classifyTool = anthropic.ToolParam{
 			"reason":       map[string]any{"type": "string"},
 		},
 		Required: []string{"is_cert_mail", "confidence", "reason"},
+	},
+}
+
+var classifyCategoryTool = anthropic.ToolParam{
+	Name:        "classify_mail_category",
+	Description: anthropic.String("Kategorisera ett inkommande mejl i exakt en kategori."),
+	InputSchema: anthropic.ToolInputSchemaParam{
+		Properties: map[string]any{
+			"category": map[string]any{
+				"type": "string",
+				"enum": []string{"certificate", "delivery_note", "invoice", "order_confirmation", "technical_doc", "reklam", "other"},
+			},
+			"confidence": map[string]any{"type": "string"},
+			"reason":     map[string]any{"type": "string"},
+		},
+		Required: []string{"category", "confidence", "reason"},
 	},
 }
 

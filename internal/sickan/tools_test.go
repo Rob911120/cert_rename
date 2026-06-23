@@ -137,6 +137,71 @@ func Test_Dispatch_UnknownTool(t *testing.T) {
 	}
 }
 
+func Test_Dispatch_ListClassifiedMail(t *testing.T) {
+	tb, _ := setupToolbox(t)
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	db, err := store.InitDB(dbPath)
+	if err != nil {
+		t.Fatalf("init db: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+	repo := store.NewRepository(db)
+	tb.Repo = repo
+
+	seed := func(filename, category string) {
+		id, err := repo.InsertEmail(&store.Email{Filename: filename, Status: "archived", ProcessedAt: "2026-01-01"})
+		if err != nil {
+			t.Fatalf("insert email: %v", err)
+		}
+		if err := repo.UpdateEmailCategory(id, category); err != nil {
+			t.Fatalf("update category: %v", err)
+		}
+	}
+	seed("faktura.eml", "invoice")
+	seed("foljesedel.eml", "delivery_note")
+	seed("reklam.eml", "reklam")
+
+	var resp struct {
+		Count int `json:"count"`
+		Items []struct {
+			MailCategory string `json:"mail_category"`
+		} `json:"items"`
+	}
+
+	// Filtrera på kategori → exakt 1 (invoice).
+	res, err := tb.Dispatch("list_classified_mail", json.RawMessage(`{"category":"invoice"}`))
+	if err != nil {
+		t.Fatalf("dispatch invoice: %v", err)
+	}
+	if err := json.Unmarshal([]byte(res.Summary), &resp); err != nil {
+		t.Fatalf("unmarshal: %v (%s)", err, res.Summary)
+	}
+	if resp.Count != 1 {
+		t.Fatalf("invoice-filter: count=%d (%s)", resp.Count, res.Summary)
+	}
+	if resp.Items[0].MailCategory != "invoice" {
+		t.Errorf("förväntade mail_category=invoice, fick %q", resp.Items[0].MailCategory)
+	}
+
+	// Utan filter → reklam exkluderas, kvar: invoice + delivery_note = 2.
+	resp.Count, resp.Items = 0, nil
+	res, err = tb.Dispatch("list_classified_mail", json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatalf("dispatch all: %v", err)
+	}
+	if err := json.Unmarshal([]byte(res.Summary), &resp); err != nil {
+		t.Fatalf("unmarshal: %v (%s)", err, res.Summary)
+	}
+	if resp.Count != 2 {
+		t.Errorf("utan filter förväntade 2 (reklam exkluderad), fick %d (%s)", resp.Count, res.Summary)
+	}
+	for _, it := range resp.Items {
+		if it.MailCategory == "reklam" {
+			t.Errorf("reklam ska inte surfas som arbetsobjekt utan explicit filter")
+		}
+	}
+}
+
 func contains(haystack, needle string) bool {
 	return len(haystack) >= len(needle) && stringIndex(haystack, needle) >= 0
 }

@@ -65,6 +65,45 @@ func processEml(ctx context.Context, client *anthropic.Client, cfg store.Config,
 			content.Subject, content.From, content.Date, content.Body, emailID)
 	}
 
+	// STEG 0: kategori-klassificering av ALL inkorgspost. Misslyckas anropet
+	// faller vi tillbaka på "certificate" (fail-open) så cert aldrig tappas.
+	category := ai.CategoryCertificate
+	mc, mcerr := ai.ClassifyMailCategory(ctx, n, client, content)
+	if mcerr != nil {
+		n.Logf("   ⚠️  kategori-classify-fel, antar certificate: %v", mcerr)
+	} else if mc != nil && mc.Category != "" {
+		category = mc.Category
+		n.Logf("   🏷️  kategori: %s (%s) — %s", mc.Category, mc.Confidence, mc.Reason)
+	}
+	if emailID > 0 {
+		repo.UpdateEmailCategory(emailID, category)
+		decision := &store.AIDecision{
+			EmailID: &emailID,
+			Step:    "classify_category",
+			Model:   "claude-haiku-4-5-20251001",
+			Success: mcerr == nil,
+		}
+		if mcerr != nil {
+			decision.ErrorMessage = mcerr.Error()
+		}
+		repo.InsertAIDecision(decision)
+	}
+
+	// Icke-cert (faktura, följesedel, orderbekräftelse, teknisk doc, reklam, other):
+	// kategorin är redan persisterad — arkivera på disk och hoppa över cert-vägen
+	// (verify/extract). Reklam behålls i DB med sin kategori men surfas inte som
+	// arbetsobjekt (filtreras bort i list_classified_mail).
+	if category != ai.CategoryCertificate {
+		n.Logf("   📁 kategori=%s — arkiverar, kör inte cert-flödet", category)
+		if emailID > 0 {
+			repo.UpdateEmailStatus(emailID, "archived")
+		}
+		store.MoveToArchive(cfg, emlPath, "kategori: "+category)
+		n.BroadcastStats()
+		_ = os.Remove(emlPath)
+		return
+	}
+
 	if len(content.Attachments) == 0 {
 		n.Logf("   📦 arkiverat: inga PDF-bilagor")
 		if emailID > 0 {

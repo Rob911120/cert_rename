@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"fmt"
 	"log"
 	"path/filepath"
 
@@ -17,6 +18,7 @@ CREATE TABLE IF NOT EXISTS emails (
     date TEXT,
     body TEXT,
     status TEXT NOT NULL DEFAULT 'processing',
+    mail_category TEXT NOT NULL DEFAULT '',
     processed_at TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -111,8 +113,52 @@ func InitDB(dbPath string) (*sql.DB, error) {
 	if _, err := db.Exec(dbSchema); err != nil {
 		return nil, err
 	}
+	if err := migrate(db); err != nil {
+		return nil, err
+	}
 	log.Printf("🗄️  Databas initierad: %s", dbPath)
 	return db, nil
+}
+
+// migrate applicerar idempotenta schema-ändringar på en befintlig databas.
+// CREATE TABLE IF NOT EXISTS i dbSchema rör inte tabeller som redan finns, så
+// nya kolumner på gamla tabeller måste läggas till här (ALTER) för att DB:er
+// som skapades före en kolumn ska få den. Körs efter dbSchema (tabellerna
+// finns garanterat) och är säker att köra om: redan-applicerade steg hoppas över.
+func migrate(db *sql.DB) error {
+	if err := ensureColumn(db, "emails", "mail_category", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_emails_mail_category ON emails(mail_category)`); err != nil {
+		return err
+	}
+	return nil
+}
+
+// ensureColumn lägger till column på table om den saknas (idempotent).
+// ddl är typ + ev. constraints, t.ex. "TEXT NOT NULL DEFAULT ''".
+func ensureColumn(db *sql.DB, table, column, ddl string) error {
+	rows, err := db.Query(fmt.Sprintf("PRAGMA table_info(%s)", table))
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid, notnull, pk int
+		var name, ctype string
+		var dflt sql.NullString
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			return err
+		}
+		if name == column {
+			return nil // kolumnen finns redan
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	_, err = db.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, column, ddl))
+	return err
 }
 
 // DBPath returnerar sökvägen till databasen (bredvid config.json).

@@ -10,6 +10,7 @@ import (
 
 	"github.com/anthropics/anthropic-sdk-go"
 
+	"cert-renamer/internal/ai"
 	"cert-renamer/internal/cert"
 	"cert-renamer/internal/eml"
 	"cert-renamer/internal/store"
@@ -46,6 +47,7 @@ func ToolDefs() []anthropic.ToolUnionParam {
 		{OfTool: &updateQueueTool},
 		{OfTool: &archiveReviewTool},
 		{OfTool: &readPdfTool},
+		{OfTool: &listClassifiedMailTool},
 		{OfTool: &addImprovementTool},
 		{OfTool: &listImprovementsTool},
 		{OfTool: &last},
@@ -89,6 +91,8 @@ func (tb *Toolbox) Dispatch(name string, input json.RawMessage) (DispatchResult,
 		return wrapText(tb.archiveReview(input))
 	case "read_pdf":
 		return tb.readPdf(input)
+	case "list_classified_mail":
+		return wrapText(tb.listClassifiedMail(input))
 	case "promote_review_to_queue":
 		return wrapText(tb.promoteReview(input))
 	case "add_improvement":
@@ -237,6 +241,20 @@ var archiveReviewTool = anthropic.ToolParam{
 			},
 		},
 		Required: []string{"base"},
+	},
+}
+
+var listClassifiedMailTool = anthropic.ToolParam{
+	Name:        "list_classified_mail",
+	Description: anthropic.String("Listar inkorgspost som klassificerats och sparats i databasen (faktura, följesedel, orderbekräftelse, teknisk doc, m.m.) med ämne, avsändare, datum och kategori. Ange 'category' för att filtrera (t.ex. \"invoice\", \"delivery_note\"); utan filter listas alla arbetsobjekt utom reklam. Använd för att jobba med icke-cert-post som fångats in från inkorgen."),
+	InputSchema: anthropic.ToolInputSchemaParam{
+		Properties: map[string]any{
+			"category": map[string]any{
+				"type":        "string",
+				"enum":        []string{"certificate", "delivery_note", "invoice", "order_confirmation", "technical_doc", "reklam", "other"},
+				"description": "Valfritt: filtrera på exakt en kategori. Lämna tomt för alla arbetsobjekt (reklam exkluderas då).",
+			},
+		},
 	},
 }
 
@@ -551,6 +569,51 @@ func (tb *Toolbox) promoteReview(input json.RawMessage) (string, error) {
 	tb.N.BroadcastStats()
 	tb.N.Logf("🤖 Sickan: %s → kö (%s)", args.Base, newName)
 	out, _ := json.Marshal(map[string]any{"ok": true, "new_filename": newName})
+	return string(out), nil
+}
+
+func (tb *Toolbox) listClassifiedMail(input json.RawMessage) (string, error) {
+	var args struct {
+		Category string `json:"category"`
+	}
+	if len(input) > 0 {
+		if err := json.Unmarshal(input, &args); err != nil {
+			return "", err
+		}
+	}
+	if tb.Repo == nil {
+		return `{"items":[],"count":0}`, nil
+	}
+	emails, err := tb.Repo.ListEmailsByCategory(args.Category)
+	if err != nil {
+		return "", err
+	}
+	type mailItem struct {
+		ID           int64  `json:"id"`
+		Filename     string `json:"filename"`
+		Subject      string `json:"subject"`
+		From         string `json:"from"`
+		Date         string `json:"date"`
+		MailCategory string `json:"mail_category"`
+		Status       string `json:"status"`
+	}
+	items := make([]mailItem, 0, len(emails))
+	for _, e := range emails {
+		// Reklam surfas inte som arbetsobjekt om den inte uttryckligen efterfrågas.
+		if args.Category == "" && e.MailCategory == ai.CategoryReklam {
+			continue
+		}
+		items = append(items, mailItem{
+			ID:           e.ID,
+			Filename:     e.Filename,
+			Subject:      e.Subject,
+			From:         e.FromAddr,
+			Date:         e.Date,
+			MailCategory: e.MailCategory,
+			Status:       e.Status,
+		})
+	}
+	out, _ := json.Marshal(map[string]any{"items": items, "count": len(items)})
 	return string(out), nil
 }
 

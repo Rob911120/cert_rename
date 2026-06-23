@@ -26,15 +26,16 @@ func (r *Repository) DB() *sql.DB {
 
 // Email representerar en bearbetad email.
 type Email struct {
-	ID          int64  `json:"id"`
-	Filename    string `json:"filename"`
-	Subject     string `json:"subject"`
-	FromAddr    string `json:"from_addr"`
-	Date        string `json:"date"`
-	Body        string `json:"body"`
-	Status      string `json:"status"`
-	ProcessedAt string `json:"processed_at"`
-	CreatedAt   string `json:"created_at"`
+	ID           int64  `json:"id"`
+	Filename     string `json:"filename"`
+	Subject      string `json:"subject"`
+	FromAddr     string `json:"from_addr"`
+	Date         string `json:"date"`
+	Body         string `json:"body"`
+	Status       string `json:"status"`
+	MailCategory string `json:"mail_category"`
+	ProcessedAt  string `json:"processed_at"`
+	CreatedAt    string `json:"created_at"`
 }
 
 // Certificate representerar ett extraherat certifikat.
@@ -120,6 +121,49 @@ func (r *Repository) InsertEmail(e *Email) (int64, error) {
 func (r *Repository) UpdateEmailStatus(id int64, status string) error {
 	_, err := r.db.Exec(`UPDATE emails SET status = ? WHERE id = ?`, status, id)
 	return err
+}
+
+// UpdateEmailCategory sätter mail_category för en email (Fas 2-klassificering).
+func (r *Repository) UpdateEmailCategory(id int64, category string) error {
+	_, err := r.db.Exec(`UPDATE emails SET mail_category = ? WHERE id = ?`, category, id)
+	return err
+}
+
+// ListEmailsByCategory listar emails filtrerade på mail_category. Tom category
+// ("") returnerar alla. Använder explicit kolumnlista (inte SELECT *) så att
+// framtida kolumntillägg inte bryter scanningen.
+func (r *Repository) ListEmailsByCategory(category string) ([]Email, error) {
+	query := `SELECT id, filename, subject, from_addr, date, body, status, mail_category, processed_at, created_at FROM emails`
+	var args []interface{}
+	if category != "" {
+		query += ` WHERE mail_category = ?`
+		args = append(args, category)
+	}
+	query += ` ORDER BY created_at DESC`
+
+	rows, err := r.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var emails []Email
+	for rows.Next() {
+		var e Email
+		var subject, fromAddr, date, body sql.NullString
+		if err := rows.Scan(
+			&e.ID, &e.Filename, &subject, &fromAddr, &date, &body,
+			&e.Status, &e.MailCategory, &e.ProcessedAt, &e.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		e.Subject = subject.String
+		e.FromAddr = fromAddr.String
+		e.Date = date.String
+		e.Body = body.String
+		emails = append(emails, e)
+	}
+	return emails, rows.Err()
 }
 
 // --- Certificate operations ---

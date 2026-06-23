@@ -115,6 +115,80 @@ func Classify(ctx context.Context, log Logger, client *anthropic.Client, c *eml.
 	)
 }
 
+// Mail-kategorier för ClassifyMailCategory (steg 0 i worker-pipelinen).
+const (
+	CategoryCertificate       = "certificate"
+	CategoryDeliveryNote      = "delivery_note"
+	CategoryInvoice           = "invoice"
+	CategoryOrderConfirmation = "order_confirmation"
+	CategoryTechnicalDoc      = "technical_doc"
+	CategoryReklam            = "reklam"
+	CategoryOther             = "other"
+)
+
+// MailClassification är resultatet av kategori-klassificeringen (steg 0):
+// en grov kategori för ALL inkorgspost, inte bara cert.
+type MailClassification struct {
+	Category   string `json:"category"`
+	Confidence string `json:"confidence"`
+	Reason     string `json:"reason"`
+}
+
+// ClassifyMailCategory kategoriserar ett mejl (steg 0) med haiku, baserat på
+// text + bilagenamn. Returnerar en av Category*-konstanterna. Till skillnad
+// från Classify (binär is_cert_mail) täcker den ALL inkorgspost så att icke-cert
+// (faktura, följesedel, orderbekräftelse, …) kan sparas och reklam filtreras bort.
+func ClassifyMailCategory(ctx context.Context, log Logger, client *anthropic.Client, c *eml.Content) (*MailClassification, error) {
+	var attNames []string
+	for _, a := range c.Attachments {
+		attNames = append(attNames, a.Filename)
+	}
+	body := c.Body
+	if len(body) > eml.MaxBodyBytes {
+		body = body[:eml.MaxBodyBytes] + "\n[trunkerad]"
+	}
+	userText := fmt.Sprintf("Subject: %s\nFrom: %s\nDate: %s\nBilagor: %s\n\nBody:\n%s",
+		c.Subject, c.From, c.Date, strings.Join(attNames, ", "), body)
+	return logAICall(log, "haiku ClassifyMailCategory",
+		func() (*MailClassification, anthropic.Usage, error) {
+			resp, err := client.Messages.New(ctx, anthropic.MessageNewParams{
+				Model:     ModelClassify,
+				MaxTokens: 256,
+				System:    []anthropic.TextBlockParam{{Text: classifyCategorySystemPrompt}},
+				Tools:     []anthropic.ToolUnionParam{{OfTool: &classifyCategoryTool}},
+				ToolChoice: anthropic.ToolChoiceUnionParam{
+					OfTool: &anthropic.ToolChoiceToolParam{Name: "classify_mail_category"},
+				},
+				Messages: []anthropic.MessageParam{
+					{
+						Role: anthropic.MessageParamRoleUser,
+						Content: []anthropic.ContentBlockParamUnion{
+							{OfText: &anthropic.TextBlockParam{Text: userText}},
+						},
+					},
+				},
+			})
+			if err != nil {
+				return nil, anthropic.Usage{}, err
+			}
+			for _, block := range resp.Content {
+				if block.Type == "tool_use" {
+					tu := block.AsToolUse()
+					var mc MailClassification
+					if err := json.Unmarshal(tu.Input, &mc); err != nil {
+						return nil, resp.Usage, fmt.Errorf("unmarshal: %w", err)
+					}
+					return &mc, resp.Usage, nil
+				}
+			}
+			return nil, resp.Usage, fmt.Errorf("inget tool_use-svar från Claude")
+		},
+		func(mc *MailClassification) string {
+			return fmt.Sprintf("category=%s conf=%s — %s", mc.Category, mc.Confidence, mc.Reason)
+		},
+	)
+}
+
 // Verify anropar haiku på alla PDF-bilagor och avgör om någon är ett 3.1-cert.
 func Verify(ctx context.Context, log Logger, client *anthropic.Client, c *eml.Content) (*cert.Verification, error) {
 	content := []anthropic.ContentBlockParamUnion{}
