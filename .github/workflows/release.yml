@@ -1,10 +1,13 @@
 name: Bygg Windows .exe + portabel zip
 
-# Kör manuellt (Actions-fliken → "Run workflow") för en rullande "latest"-release,
-# eller pusha en tagg v* (t.ex. v0.2.0) för en versionerad release.
+# Kör automatiskt vid push till main (rullande "latest"-release), manuellt via
+# Actions-fliken → "Run workflow", eller pusha en tagg v* (t.ex. v0.2.0) för en
+# versionerad release.
 on:
   workflow_dispatch:
   push:
+    branches:
+      - main
     tags:
       - 'v*'
 
