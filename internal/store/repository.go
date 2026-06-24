@@ -424,12 +424,11 @@ func (r *Repository) GetTotalCosts() (map[string]CostEntry, error) {
 
 // --- Delivery note operations (Fas 4: inleverans-trial) ---
 
-// Status-flöde för en följesedel.
+// Status-flöde för en följesedel. Livscykeln slutar vid matched_po — själva
+// inleveransregistreringen sker via UI-styrning av Monitor-klienten (utanför DB).
 const (
-	DNUnmatched          = "unmatched"
-	DNMatchedPO          = "matched_po"
-	DNReceivingProposed  = "receiving_proposed"
-	DNReceivingConfirmed = "receiving_confirmed"
+	DNUnmatched = "unmatched"
+	DNMatchedPO = "matched_po"
 )
 
 // DeliveryNote är en uppladdad följesedel (bild) med vision-extraherade fält +
@@ -539,20 +538,6 @@ func (r *Repository) UpdateDeliveryNoteMatch(id, poID, rowID int64, status strin
 	_, err := r.db.Exec(
 		`UPDATE delivery_notes SET matched_po_id = ?, matched_row_id = ?, status = ? WHERE id = ?`,
 		poID, rowID, status, id)
-	return err
-}
-
-// UpdateDeliveryNoteProposal sätter föreslagen kvantitet + status (receiving_proposed).
-func (r *Repository) UpdateDeliveryNoteProposal(id int64, proposedQty float64, status string) error {
-	_, err := r.db.Exec(
-		`UPDATE delivery_notes SET proposed_quantity = ?, status = ? WHERE id = ?`,
-		proposedQty, status, id)
-	return err
-}
-
-// UpdateDeliveryNoteStatus sätter bara status.
-func (r *Repository) UpdateDeliveryNoteStatus(id int64, status string) error {
-	_, err := r.db.Exec(`UPDATE delivery_notes SET status = ? WHERE id = ?`, status, id)
 	return err
 }
 

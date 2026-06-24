@@ -69,26 +69,6 @@ type Supplier struct {
 	AlternativeName string `json:"AlternativeName"`
 }
 
-// ArrivalRow är en rad i en ReportArrivals-write. OBS: ArrivalRow:s exakta
-// fältuppsättning är INTE dokumenterad i API-crawlen — PurchaseOrderRowId +
-// Quantity är vårt bästa antagande och MÅSTE verifieras live innan skarp drift.
-type ArrivalRow struct {
-	PurchaseOrderRowId ID      `json:"PurchaseOrderRowId"`
-	Quantity           float64 `json:"Quantity"`
-}
-
-// ReportArrivalsRequest är payloaden till POST .../PurchaseOrders/ReportArrivals
-// (Monitor v2.36+). DeliveryNoteNumber/WaybillNumber kan vara obligatoriska
-// beroende på systeminställningar. ArrivalDate/ReportingEmployeeId defaultar i
-// API:t (idag resp. inloggad användare) om de utelämnas.
-type ReportArrivalsRequest struct {
-	ArrivalDate         string       `json:"ArrivalDate,omitempty"`
-	ReportingEmployeeId ID           `json:"ReportingEmployeeId,omitempty"`
-	DeliveryNoteNumber  string       `json:"DeliveryNoteNumber,omitempty"`
-	WaybillNumber       string       `json:"WaybillNumber,omitempty"`
-	Rows                []ArrivalRow `json:"Rows"`
-}
-
 // ProductRecord — /api/v1/Inventory/ProductRecords. Bär charge/B-nr
 // (ChargeNumber/SerialNumber) och länkar till en inköpsorder via PurchaseOrderId
 // + artikeln via PartId. OBS: ingen direkt FK till PurchaseOrderRow — matchning

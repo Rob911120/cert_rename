@@ -6,18 +6,16 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync/atomic"
 	"testing"
 
 	"cert-renamer/internal/monitor"
 	"cert-renamer/internal/store"
 )
 
-// deliveryStub spelar Monitor och RÄKNAR ReportArrivals-anrop (writes), så att
-// testerna kan bevisa att write-gaten håller.
+// deliveryStub spelar Monitors LÄS-API (login + OData-listor) för
+// följesedel-/matchningstesterna. Ingen skriv-väg finns längre.
 type deliveryStub struct {
-	srv      *httptest.Server
-	arrivals atomic.Int64
+	srv *httptest.Server
 }
 
 func newDeliveryStub(t *testing.T) *deliveryStub {
@@ -28,16 +26,10 @@ func newDeliveryStub(t *testing.T) *deliveryStub {
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/001.1/login"):
 			_, _ = w.Write([]byte(`{"SessionId":"sess-xyz"}`))
-		case strings.HasSuffix(r.URL.Path, "/PurchaseOrders/ReportArrivals"):
-			ds.arrivals.Add(1)
-			_, _ = w.Write([]byte(`{"Ok":true}`))
 		case strings.HasSuffix(r.URL.Path, "/Purchase/PurchaseOrders"):
 			_, _ = w.Write([]byte(`{"value":[{"Id":1,"OrderNumber":"B127196","Status":1,"BusinessContactId":7}]}`))
 		case strings.HasSuffix(r.URL.Path, "/Purchase/PurchaseOrderRows"):
-			_, _ = w.Write([]byte(`{"value":[` +
-				`{"Id":11,"ParentOrderId":1,"PartId":5,"RowIndex":1,"OrderedQuantity":10,"RestQuantity":10,"ArrivalReporting":true},` +
-				`{"Id":12,"ParentOrderId":1,"PartId":6,"RowIndex":2,"OrderedQuantity":4,"RestQuantity":4,"ArrivalReporting":false}` +
-				`]}`))
+			_, _ = w.Write([]byte(`{"value":[{"Id":11,"ParentOrderId":1,"PartId":5,"RowIndex":1,"OrderedQuantity":10,"RestQuantity":10}]}`))
 		case strings.HasSuffix(r.URL.Path, "/Inventory/ProductRecords"):
 			_, _ = w.Write([]byte(`{"value":[{"Id":99,"ChargeNumber":"610042","PartId":5,"PurchaseOrderId":1}]}`))
 		case strings.HasSuffix(r.URL.Path, "/Purchase/Suppliers"):
@@ -69,33 +61,21 @@ func setupDeliveryToolbox(t *testing.T) (*Toolbox, *deliveryStub) {
 	return tb, ds
 }
 
-// seedDeliveryNote infogar dn och tillämpar sedan matchning/förslag/status via
-// repo-metoderna (samma väg som det riktiga flödet — InsertDeliveryNote sätter
-// bara basfälten; matchad PO/rad och slutstatus sätts av update-metoderna).
+// seedDeliveryNote infogar dn (alltid som unmatched) och, om dn är matchad,
+// tillämpar matchningen via UpdateDeliveryNoteMatch (status matched_po).
+// Följesedelns livscykel slutar vid matched_po — ingen receiving-status finns.
 func seedDeliveryNote(t *testing.T, tb *Toolbox, dn *store.DeliveryNote) int64 {
 	t.Helper()
-	finalStatus := dn.Status
-	if finalStatus == "" {
-		finalStatus = store.DNUnmatched
-	}
 	base := *dn
 	base.Status = store.DNUnmatched
 	id, err := tb.Repo.InsertDeliveryNote(&base)
 	if err != nil {
 		t.Fatalf("insert dn: %v", err)
 	}
-	if dn.MatchedPOID != 0 || dn.MatchedRowID != 0 {
+	if dn.Status == store.DNMatchedPO || dn.MatchedPOID != 0 || dn.MatchedRowID != 0 {
 		if err := tb.Repo.UpdateDeliveryNoteMatch(id, dn.MatchedPOID, dn.MatchedRowID, store.DNMatchedPO); err != nil {
 			t.Fatalf("seed match: %v", err)
 		}
-	}
-	if dn.ProposedQuantity != 0 {
-		if err := tb.Repo.UpdateDeliveryNoteProposal(id, dn.ProposedQuantity, store.DNReceivingProposed); err != nil {
-			t.Fatalf("seed proposal: %v", err)
-		}
-	}
-	if err := tb.Repo.UpdateDeliveryNoteStatus(id, finalStatus); err != nil {
-		t.Fatalf("seed status: %v", err)
 	}
 	return id
 }
@@ -118,124 +98,10 @@ func Test_DeliveryFlow_MatchSetsRow(t *testing.T) {
 	}
 }
 
-func Test_DeliveryFlow_ProposeDoesNotWrite(t *testing.T) {
-	tb, ds := setupDeliveryToolbox(t)
-	id := seedDeliveryNote(t, tb, &store.DeliveryNote{
-		ImageFilename: "dn1.png", OrderNumber: "B127196", Charge: "610042", Quantity: 6, Unit: "st",
-		Status: store.DNMatchedPO, MatchedPOID: 1, MatchedRowID: 11,
-	})
-	res, err := tb.Dispatch("propose_receiving", json.RawMessage(`{"id":`+itoa(id)+`}`))
-	if err != nil {
-		t.Fatalf("propose: %v", err)
-	}
-	if !strings.Contains(res.Summary, "PurchaseOrderRowId") {
-		t.Errorf("preview saknar payload: %s", res.Summary)
-	}
-	if ds.arrivals.Load() != 0 {
-		t.Errorf("propose_receiving FÅR INTE skriva — ReportArrivals anropades %d ggr", ds.arrivals.Load())
-	}
-	dn, _ := tb.Repo.GetDeliveryNote(id)
-	if dn.Status != store.DNReceivingProposed {
-		t.Errorf("status efter propose = %q, vill ha receiving_proposed", dn.Status)
-	}
-}
-
-func Test_RegisterArrival_RequiresConfirmation(t *testing.T) {
-	tb, ds := setupDeliveryToolbox(t)
-	id := seedDeliveryNote(t, tb, &store.DeliveryNote{
-		ImageFilename: "dn1.png", DeliveryNoteNumber: "CCF195", Quantity: 6,
-		Status: store.DNReceivingProposed, MatchedPOID: 1, MatchedRowID: 11, ProposedQuantity: 6,
-	})
-
-	// Utan confirm → MÅSTE vägra och INTE skriva.
-	if _, err := tb.Dispatch("monitor_register_arrival", json.RawMessage(`{"id":`+itoa(id)+`}`)); err == nil {
-		t.Error("register utan confirm borde ge fel")
-	}
-	if ds.arrivals.Load() != 0 {
-		t.Fatalf("write skedde utan bekräftelse! ReportArrivals anropades %d ggr", ds.arrivals.Load())
-	}
-
-	// Med confirm=true → skriver en gång och markerar confirmed.
-	if _, err := tb.Dispatch("monitor_register_arrival", json.RawMessage(`{"id":`+itoa(id)+`,"confirm":true}`)); err != nil {
-		t.Fatalf("register med confirm: %v", err)
-	}
-	if ds.arrivals.Load() != 1 {
-		t.Errorf("förväntade exakt 1 ReportArrivals, fick %d", ds.arrivals.Load())
-	}
-	dn, _ := tb.Repo.GetDeliveryNote(id)
-	if dn.Status != store.DNReceivingConfirmed {
-		t.Errorf("status efter register = %q, vill ha receiving_confirmed", dn.Status)
-	}
-}
-
-func Test_RegisterArrival_RefusesIfNotProposed(t *testing.T) {
-	tb, ds := setupDeliveryToolbox(t)
-	id := seedDeliveryNote(t, tb, &store.DeliveryNote{
-		ImageFilename: "dn1.png", Status: store.DNUnmatched, // ej föreslaget
-	})
-	if _, err := tb.Dispatch("monitor_register_arrival", json.RawMessage(`{"id":`+itoa(id)+`,"confirm":true}`)); err == nil {
-		t.Error("register på ej-föreslaget dn borde ge fel")
-	}
-	if ds.arrivals.Load() != 0 {
-		t.Errorf("write skedde på ej-föreslaget dn! anrop=%d", ds.arrivals.Load())
-	}
-}
-
-func Test_ReportArrivalDirect_PreviewDoesNotWrite(t *testing.T) {
-	tb, ds := setupDeliveryToolbox(t)
-	// Utan confirm → förhandsvisning, inget skrivs.
-	out, err := tb.Dispatch("monitor_report_arrival_direct",
-		json.RawMessage(`{"order_number":"B127196","purchase_order_row_id":11,"quantity":3}`))
-	if err != nil {
-		t.Fatalf("preview: %v", err)
-	}
-	if ds.arrivals.Load() != 0 {
-		t.Fatalf("write skedde under förhandsvisning! anrop=%d", ds.arrivals.Load())
-	}
-	if !strings.Contains(out.Summary, "preview") {
-		t.Errorf("förväntade en förhandsvisning, fick: %s", out.Summary)
-	}
-}
-
-func Test_ReportArrivalDirect_ConfirmWrites(t *testing.T) {
-	tb, ds := setupDeliveryToolbox(t)
-	if _, err := tb.Dispatch("monitor_report_arrival_direct",
-		json.RawMessage(`{"order_number":"B127196","purchase_order_row_id":11,"quantity":3,"confirm":true}`)); err != nil {
-		t.Fatalf("confirm: %v", err)
-	}
-	if ds.arrivals.Load() != 1 {
-		t.Errorf("förväntade exakt 1 ReportArrivals, fick %d", ds.arrivals.Load())
-	}
-}
-
-func Test_ReportArrivalDirect_NonReportableRow_WarnsButAllows(t *testing.T) {
-	tb, ds := setupDeliveryToolbox(t)
-	// Rad 12 har ArrivalReporting=false. Förhandsvisning ska VARNA men inte blockera.
-	out, err := tb.Dispatch("monitor_report_arrival_direct",
-		json.RawMessage(`{"order_number":"B127196","purchase_order_row_id":12,"quantity":1}`))
-	if err != nil {
-		t.Fatalf("preview på ArrivalReporting=false borde inte ge fel: %v", err)
-	}
-	if !strings.Contains(out.Summary, "ArrivalReporting=false") {
-		t.Errorf("förväntade en varning om ArrivalReporting, fick: %s", out.Summary)
-	}
-	if ds.arrivals.Load() != 0 {
-		t.Fatalf("write skedde under förhandsvisning! anrop=%d", ds.arrivals.Load())
-	}
-	// Med confirm=true → ska gå igenom ändå (Monitor får avgöra).
-	if _, err := tb.Dispatch("monitor_report_arrival_direct",
-		json.RawMessage(`{"order_number":"B127196","purchase_order_row_id":12,"quantity":1,"confirm":true}`)); err != nil {
-		t.Fatalf("confirm på ArrivalReporting=false borde gå igenom: %v", err)
-	}
-	if ds.arrivals.Load() != 1 {
-		t.Errorf("förväntade exakt 1 ReportArrivals, fick %d", ds.arrivals.Load())
-	}
-}
-
 func Test_ListDeliveryNotes_DefaultsToUnmatched(t *testing.T) {
 	tb, _ := setupDeliveryToolbox(t)
 	seedDeliveryNote(t, tb, &store.DeliveryNote{ImageFilename: "a.png", Status: store.DNUnmatched})
-	seedDeliveryNote(t, tb, &store.DeliveryNote{ImageFilename: "b.png", Status: store.DNReceivingConfirmed})
+	seedDeliveryNote(t, tb, &store.DeliveryNote{ImageFilename: "b.png", Status: store.DNMatchedPO, MatchedPOID: 1, MatchedRowID: 11})
 
 	res, err := tb.Dispatch("list_delivery_notes", json.RawMessage(`{}`))
 	if err != nil {

@@ -10,9 +10,10 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// Monitor read-tools (Fas 3). Alla är LÄSANDE — de slår upp data i Monitor ERP
-// och föreslår, men skriver aldrig (write-vägen ReportArrivals kommer i Fas 4
-// och gateas bakom uttrycklig bekräftelse).
+// Monitor read-tools. Alla är LÄSANDE — de slår upp data i Monitor ERP och
+// föreslår, men skriver aldrig. Inleverans-registrering sker via UI-styrning av
+// Monitor-klienten (monitor_ui_report_arrival), eftersom skriv-API:t inte är
+// licensierat.
 // ---------------------------------------------------------------------------
 
 var monitorFindPurchaseOrderTool = anthropic.ToolParam{

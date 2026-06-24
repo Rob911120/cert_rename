@@ -9,13 +9,26 @@ import (
 	"cert-renamer/internal/store"
 )
 
-// stubNotifier är en no-op Notifier för tester.
-type stubNotifier struct{ logs int }
+// stubNotifier är en no-op Notifier för tester. Den räknar DriveMonitorRoutine-
+// anrop så write-gaten kan bevisas, och kan tvinga fram ett fel.
+type stubNotifier struct {
+	logs        int
+	driveCalls  int
+	lastRoutine string
+	lastOrder   string
+	lastSave    bool
+	driveErr    error
+}
 
 func (s *stubNotifier) Logf(string, ...any) { s.logs++ }
 func (s *stubNotifier) BroadcastQueue()     {}
 func (s *stubNotifier) BroadcastReview()    {}
 func (s *stubNotifier) BroadcastStats()     {}
+func (s *stubNotifier) DriveMonitorRoutine(routine, orderNumber string, save bool) error {
+	s.driveCalls++
+	s.lastRoutine, s.lastOrder, s.lastSave = routine, orderNumber, save
+	return s.driveErr
+}
 
 func setupToolbox(t *testing.T) (*Toolbox, store.Config) {
 	t.Helper()
@@ -44,8 +57,8 @@ func Test_Dispatch_ListQueue(t *testing.T) {
 		t.Fatalf("dispatch: %v", err)
 	}
 	var resp struct {
-		Count int                `json:"count"`
-		Items []store.QueueItem  `json:"items"`
+		Count int               `json:"count"`
+		Items []store.QueueItem `json:"items"`
 	}
 	if err := json.Unmarshal([]byte(res.Summary), &resp); err != nil {
 		t.Fatalf("unmarshal: %v (%s)", err, res.Summary)

@@ -24,6 +24,10 @@ type Notifier interface {
 	BroadcastQueue()
 	BroadcastReview()
 	BroadcastStats()
+	// DriveMonitorRoutine styr Monitor-skrivbordsklienten (UI-automation) för
+	// rutinen "report_arrival" eller "inspection". save=true begär även en
+	// Ctrl+S-sparning (server-sidan kan spärra det via inställning).
+	DriveMonitorRoutine(routine, orderNumber string, save bool) error
 }
 
 // Toolbox knyter ihop config + notifier + repo för en chat-session.
@@ -58,9 +62,7 @@ func ToolDefs() []anthropic.ToolUnionParam {
 		{OfTool: &listDeliveryNotesTool},
 		{OfTool: &readDeliveryNoteImageTool},
 		{OfTool: &matchDeliveryNoteToPOTool},
-		{OfTool: &proposeReceivingTool},
-		{OfTool: &monitorRegisterArrivalTool},
-		{OfTool: &monitorReportArrivalDirectTool},
+		{OfTool: &monitorUIReportArrivalTool},
 		{OfTool: &addImprovementTool},
 		{OfTool: &listImprovementsTool},
 		{OfTool: &last},
@@ -118,12 +120,8 @@ func (tb *Toolbox) Dispatch(name string, input json.RawMessage) (DispatchResult,
 		return tb.readDeliveryNoteImage(input)
 	case "match_delivery_note_to_po":
 		return wrapText(tb.matchDeliveryNoteToPO(input))
-	case "propose_receiving":
-		return wrapText(tb.proposeReceiving(input))
-	case "monitor_register_arrival":
-		return wrapText(tb.monitorRegisterArrival(input))
-	case "monitor_report_arrival_direct":
-		return wrapText(tb.monitorReportArrivalDirect(input))
+	case "monitor_ui_report_arrival":
+		return wrapText(tb.monitorUIReportArrival(input))
 	case "promote_review_to_queue":
 		return wrapText(tb.promoteReview(input))
 	case "add_improvement":
