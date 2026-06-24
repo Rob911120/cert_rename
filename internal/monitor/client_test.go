@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -128,6 +129,51 @@ func TestDecodeList_StringIDs(t *testing.T) {
 	}
 	if len(orders) != 1 || orders[0].ID != 123456789012345678 || orders[0].BusinessContactId != 42 {
 		t.Fatalf("orders = %+v", orders)
+	}
+}
+
+// Regression: en utgången session (401) ska få klienten att logga in igen med
+// sparade credentials och försöka anropet en gång till — automatiskt.
+func TestAutoReloginOn401(t *testing.T) {
+	var logins, orderHits int
+	var session string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/001.1/login"):
+			logins++
+			session = "sess-" + strconv.Itoa(logins)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"SessionId":"` + session + `"}`))
+		case strings.Contains(r.URL.Path, "PurchaseOrders"):
+			orderHits++
+			if orderHits == 1 {
+				http.Error(w, "session expired", http.StatusUnauthorized) // simulera utgången session
+				return
+			}
+			if got := r.Header.Get(SessionHeader); got != session {
+				t.Errorf("retry använde fel session: %q != %q", got, session)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"value":[{"Id":"1","OrderNumber":"PO-1","BusinessContactId":"7"}]}`))
+		default:
+			http.Error(w, "oväntad path "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL)
+	if err := c.Login(context.Background(), "kalle", "hemligt"); err != nil {
+		t.Fatalf("login: %v", err)
+	}
+	orders, err := c.ListPurchaseOrders(context.Background(), NewQuery().Top(1))
+	if err != nil {
+		t.Fatalf("list efter 401/relogin: %v", err)
+	}
+	if len(orders) != 1 || orders[0].OrderNumber != "PO-1" {
+		t.Fatalf("orders = %+v", orders)
+	}
+	if logins != 2 {
+		t.Errorf("förväntade 2 logins (initial + relogin), fick %d", logins)
 	}
 }
 

@@ -21,6 +21,7 @@ import (
 	"net/http/cookiejar"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -28,12 +29,21 @@ import (
 // konvention men kan behöva justeras efter live-verifiering (se paketdoc).
 const SessionHeader = "X-Monitor-SessionId"
 
-// Client är en Monitor-API-klient. Inte trådsäker för samtidig Login + anrop.
+// Client är en Monitor-API-klient. Session/credentials skyddas av mu och
+// (re)login serialiseras av loginMu, så samtidiga anrop är säkra. Vid 401
+// (utgången session) loggar klienten in igen med sparade uppgifter och försöker
+// anropet en gång till — se send().
 type Client struct {
 	baseURL string
 	lang    string // språkkod i path-prefixet, t.ex. "sv" → /sv/001.1/...
-	session string
 	http    *http.Client
+
+	mu      sync.Mutex // skyddar session/user/pass
+	session string
+	user    string
+	pass    string
+
+	loginMu sync.Mutex // serialiserar (re)login så samtidiga 401 inte loggar in i kapp
 }
 
 // New skapar en klient mot baseURL (t.ex. "https://192.168.52.232:8001").
@@ -62,10 +72,18 @@ func (c *Client) SetLanguage(lang string) {
 }
 
 // SessionID returnerar nuvarande session (tom innan Login). Mest för logg/test.
-func (c *Client) SessionID() string { return c.session }
+func (c *Client) SessionID() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.session
+}
 
 // LoggedIn säger om en session finns.
-func (c *Client) LoggedIn() bool { return c.session != "" }
+func (c *Client) LoggedIn() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.session != ""
+}
 
 // apiBase är prefixet för alla anrop, t.ex. "https://host/sv/001.1".
 func (c *Client) apiBase() string { return c.baseURL + "/" + c.lang + "/001.1" }
@@ -98,12 +116,70 @@ func (c *Client) Login(ctx context.Context, user, pass string) error {
 		SessionId string `json:"SessionId"`
 	}
 	_ = json.Unmarshal(data, &lr)
+	// Spara session + credentials under lås. Credentials behövs för auto-relogin
+	// vid 401 (utgången session).
+	c.mu.Lock()
 	c.session = lr.SessionId
+	c.user, c.pass = user, pass
+	session := c.session
+	c.mu.Unlock()
 	// Cookie-jar kan ha fått en session-cookie även om svaret saknar SessionId.
-	if c.session == "" && !c.hasCookies() {
+	if session == "" && !c.hasCookies() {
 		return fmt.Errorf("login: varken SessionId i svaret eller session-cookie")
 	}
 	return nil
+}
+
+// reloginIfStale loggar in igen med sparade credentials, men bara om sessionen
+// fortfarande är den utgångna (stale) — har en annan goroutine redan förnyat
+// hoppar vi över. Serialiseras av loginMu så samtidiga 401 inte loggar in i kapp.
+func (c *Client) reloginIfStale(ctx context.Context, stale string) error {
+	c.loginMu.Lock()
+	defer c.loginMu.Unlock()
+	c.mu.Lock()
+	cur, user, pass := c.session, c.user, c.pass
+	c.mu.Unlock()
+	if cur != stale {
+		return nil // redan förnyad av en annan goroutine
+	}
+	if user == "" {
+		return fmt.Errorf("ingen sparad credential för relogin")
+	}
+	return c.Login(ctx, user, pass)
+}
+
+// send utför en autentiserad request och, vid 401 (utgången session), loggar in
+// igen en gång och försöker om. build kallas på nytt per försök eftersom en
+// request-body konsumeras vid Do. Andra fel (inkl. 403) propageras orört.
+func (c *Client) send(ctx context.Context, build func() (*http.Request, error)) (*http.Response, error) {
+	c.mu.Lock()
+	stale := c.session
+	c.mu.Unlock()
+
+	req, err := build()
+	if err != nil {
+		return nil, err
+	}
+	c.auth(req)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusUnauthorized {
+		return resp, nil
+	}
+	// Session utgången → töm/stäng svaret, logga in igen, försök en gång till.
+	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
+	if rerr := c.reloginIfStale(ctx, stale); rerr != nil {
+		return nil, fmt.Errorf("session utgången och relogin misslyckades: %w", rerr)
+	}
+	req2, err := build()
+	if err != nil {
+		return nil, err
+	}
+	c.auth(req2)
+	return c.http.Do(req2)
 }
 
 func (c *Client) hasCookies() bool {
@@ -119,8 +195,11 @@ func (c *Client) hasCookies() bool {
 
 // auth sätter session-headern på en request (cookie-jar sköts av http.Client).
 func (c *Client) auth(r *http.Request) {
-	if c.session != "" {
-		r.Header.Set(SessionHeader, c.session)
+	c.mu.Lock()
+	s := c.session
+	c.mu.Unlock()
+	if s != "" {
+		r.Header.Set(SessionHeader, s)
 	}
 }
 
@@ -131,13 +210,14 @@ func (c *Client) getList(ctx context.Context, path string, q *Query, out any) er
 	if vals := q.Values(); len(vals) > 0 {
 		u += "?" + vals.Encode()
 	}
-	r, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
-	if err != nil {
-		return err
-	}
-	r.Header.Set("Accept", "application/json")
-	c.auth(r)
-	resp, err := c.http.Do(r)
+	resp, err := c.send(ctx, func() (*http.Request, error) {
+		r, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+		if err != nil {
+			return nil, err
+		}
+		r.Header.Set("Accept", "application/json")
+		return r, nil
+	})
 	if err != nil {
 		return err
 	}
@@ -156,14 +236,15 @@ func (c *Client) postJSON(ctx context.Context, path string, body, out any) error
 	if err != nil {
 		return err
 	}
-	r, err := http.NewRequestWithContext(ctx, http.MethodPost, c.apiBase()+path, bytes.NewReader(b))
-	if err != nil {
-		return err
-	}
-	r.Header.Set("Content-Type", "application/json")
-	r.Header.Set("Accept", "application/json")
-	c.auth(r)
-	resp, err := c.http.Do(r)
+	resp, err := c.send(ctx, func() (*http.Request, error) {
+		r, err := http.NewRequestWithContext(ctx, http.MethodPost, c.apiBase()+path, bytes.NewReader(b))
+		if err != nil {
+			return nil, err
+		}
+		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set("Accept", "application/json")
+		return r, nil
+	})
 	if err != nil {
 		return err
 	}
