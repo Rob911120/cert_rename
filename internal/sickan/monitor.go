@@ -168,7 +168,7 @@ func (tb *Toolbox) monitorFillMissingCertData(input json.RawMessage) (string, er
 		if i >= 10 {
 			break
 		}
-		m := match{PartId: r.PartId, SerialNumber: r.SerialNumber}
+		m := match{PartId: int64(r.PartId), SerialNumber: r.SerialNumber}
 		if r.PurchaseOrderId != 0 {
 			if po, _ := tb.Monitor.GetPurchaseOrder(ctx, r.PurchaseOrderId); po != nil {
 				m.OrderNumber = po.OrderNumber

@@ -201,10 +201,10 @@ func (tb *Toolbox) matchDeliveryNoteToPO(input json.RawMessage) (string, error) 
 	if err != nil {
 		return "", err
 	}
-	var partIDs map[int64]bool
+	var partIDs map[monitor.ID]bool
 	if dn.Charge != "" {
 		if recs, rerr := tb.Monitor.FindProductRecords(ctx, dn.Charge); rerr == nil {
-			partIDs = map[int64]bool{}
+			partIDs = map[monitor.ID]bool{}
 			for _, r := range recs {
 				partIDs[r.PartId] = true
 			}
@@ -223,7 +223,7 @@ func (tb *Toolbox) matchDeliveryNoteToPO(input json.RawMessage) (string, error) 
 
 	if len(candidates) == 1 {
 		row := candidates[0]
-		if err := tb.Repo.UpdateDeliveryNoteMatch(dn.ID, po.ID, row.ID, store.DNMatchedPO); err != nil {
+		if err := tb.Repo.UpdateDeliveryNoteMatch(dn.ID, int64(po.ID), int64(row.ID), store.DNMatchedPO); err != nil {
 			return "", err
 		}
 		tb.N.BroadcastStats()
@@ -278,7 +278,7 @@ func (tb *Toolbox) proposeReceiving(input json.RawMessage) (string, error) {
 	payload := monitor.ReportArrivalsRequest{
 		DeliveryNoteNumber: dn.DeliveryNoteNumber,
 		WaybillNumber:      dn.WaybillNumber,
-		Rows:               []monitor.ArrivalRow{{PurchaseOrderRowId: dn.MatchedRowID, Quantity: qty}},
+		Rows:               []monitor.ArrivalRow{{PurchaseOrderRowId: monitor.ID(dn.MatchedRowID), Quantity: qty}},
 	}
 	if err := tb.Repo.UpdateDeliveryNoteProposal(dn.ID, qty, store.DNReceivingProposed); err != nil {
 		return "", err
@@ -333,7 +333,7 @@ func (tb *Toolbox) monitorRegisterArrival(input json.RawMessage) (string, error)
 	res, err := tb.Monitor.ReportArrivals(ctx, monitor.ReportArrivalsRequest{
 		DeliveryNoteNumber: dn.DeliveryNoteNumber,
 		WaybillNumber:      dn.WaybillNumber,
-		Rows:               []monitor.ArrivalRow{{PurchaseOrderRowId: dn.MatchedRowID, Quantity: qty}},
+		Rows:               []monitor.ArrivalRow{{PurchaseOrderRowId: monitor.ID(dn.MatchedRowID), Quantity: qty}},
 	})
 	if err != nil {
 		return "", fmt.Errorf("ReportArrivals misslyckades: %w", err)

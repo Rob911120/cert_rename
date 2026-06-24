@@ -1,38 +1,66 @@
 package monitor
 
+import (
+	"fmt"
+	"strconv"
+	"strings"
+)
+
 // Typerna speglar Monitor G5 001.1-API:ets entiteter. Fält-casing matchar API:t
 // (PascalCase) — verifierat mot dokumentationscrawlen i ~/dev/monitor_api_docs_v2.
 // Bara de fält cert-renamer behöver är med; OData $select kan trimma svaren.
 
+// ID är ett Monitor-entitets-ID. Monitor G5 serialiserar 64-bitars-ID:n som
+// JSON-strängar ("123456789012345678") för att inte tappa precision i
+// JavaScript-klienter, men kan även skicka dem som bara tal (123). Avkodningen
+// tål båda formerna (samt null/"" → 0) så ett strängat ID inte kraschar hela
+// svaret. Marshalas som tal.
+type ID int64
+
+// UnmarshalJSON accepterar både "123" (sträng) och 123 (tal) samt null/"".
+func (id *ID) UnmarshalJSON(data []byte) error {
+	s := strings.Trim(strings.TrimSpace(string(data)), `"`)
+	if s == "" || s == "null" {
+		*id = 0
+		return nil
+	}
+	n, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return fmt.Errorf("ogiltigt Monitor-ID %q: %w", s, err)
+	}
+	*id = ID(n)
+	return nil
+}
+
 // PurchaseOrder — /api/v1/Purchase/PurchaseOrders. Leverantören länkas via
 // BusinessContactId (→ Suppliers.Id).
 type PurchaseOrder struct {
-	ID                int64  `json:"Id"`
+	ID                ID     `json:"Id"`
 	OrderNumber       string `json:"OrderNumber"`
 	OrderDate         string `json:"OrderDate"`
 	Status            int    `json:"Status"`
-	BusinessContactId int64  `json:"BusinessContactId"`
+	BusinessContactId ID     `json:"BusinessContactId"`
 }
 
 // PurchaseOrderRow — /api/v1/Purchase/PurchaseOrderRows. Länkas till sin order
 // via ParentOrderId och till artikeln via PartId. ArrivalReporting säger om
 // raden inleveransrapporteras; RestQuantity är kvarvarande ej levererat.
 type PurchaseOrderRow struct {
-	ID                int64   `json:"Id"`
-	ParentOrderId     int64   `json:"ParentOrderId"`
-	PartId            int64   `json:"PartId"`
+	ID                ID      `json:"Id"`
+	ParentOrderId     ID      `json:"ParentOrderId"`
+	PartId            ID      `json:"PartId"`
 	RowIndex          int     `json:"RowIndex"`
 	OrderedQuantity   float64 `json:"OrderedQuantity"`
 	DeliveredQuantity float64 `json:"DeliveredQuantity"`
 	RestQuantity      float64 `json:"RestQuantity"`
-	UnitId            int64   `json:"UnitId"`
+	UnitId            ID      `json:"UnitId"`
 	ArrivalReporting  bool    `json:"ArrivalReporting"`
 	RowStatus         int     `json:"RowStatus"`
 }
 
 // Supplier — /api/v1/Purchase/Suppliers.
 type Supplier struct {
-	ID              int64  `json:"Id"`
+	ID              ID     `json:"Id"`
 	SupplierCode    string `json:"SupplierCode"`
 	Name            string `json:"Name"`
 	AlternativeName string `json:"AlternativeName"`
@@ -42,7 +70,7 @@ type Supplier struct {
 // fältuppsättning är INTE dokumenterad i API-crawlen — PurchaseOrderRowId +
 // Quantity är vårt bästa antagande och MÅSTE verifieras live innan skarp drift.
 type ArrivalRow struct {
-	PurchaseOrderRowId int64   `json:"PurchaseOrderRowId"`
+	PurchaseOrderRowId ID      `json:"PurchaseOrderRowId"`
 	Quantity           float64 `json:"Quantity"`
 }
 
@@ -52,7 +80,7 @@ type ArrivalRow struct {
 // API:t (idag resp. inloggad användare) om de utelämnas.
 type ReportArrivalsRequest struct {
 	ArrivalDate         string       `json:"ArrivalDate,omitempty"`
-	ReportingEmployeeId int64        `json:"ReportingEmployeeId,omitempty"`
+	ReportingEmployeeId ID           `json:"ReportingEmployeeId,omitempty"`
 	DeliveryNoteNumber  string       `json:"DeliveryNoteNumber,omitempty"`
 	WaybillNumber       string       `json:"WaybillNumber,omitempty"`
 	Rows                []ArrivalRow `json:"Rows"`
@@ -63,9 +91,9 @@ type ReportArrivalsRequest struct {
 // + artikeln via PartId. OBS: ingen direkt FK till PurchaseOrderRow — matchning
 // till orderrad sker via (PurchaseOrderId, PartId).
 type ProductRecord struct {
-	ID              int64  `json:"Id"`
+	ID              ID     `json:"Id"`
 	SerialNumber    string `json:"SerialNumber"`
 	ChargeNumber    string `json:"ChargeNumber"`
-	PartId          int64  `json:"PartId"`
-	PurchaseOrderId int64  `json:"PurchaseOrderId"`
+	PartId          ID     `json:"PartId"`
+	PurchaseOrderId ID     `json:"PurchaseOrderId"`
 }
