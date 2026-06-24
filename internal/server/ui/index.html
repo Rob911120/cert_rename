@@ -232,6 +232,23 @@
       </div>
 
       <div class="panel-section">
+        <div class="panel-label">🖥️ Monitor UI-styrning (Windows)</div>
+        <div class="text-xs text-slate-500 dark:text-slate-400 mb-2">
+          Styr Monitor-klienten direkt när skriv-API:t inte är licensierat. Klistra in
+          monitor://-länkarna till rutinerna. Ctrl+S (spara) skickas bara om auto-spara är på.
+        </div>
+        <div class="flex flex-col gap-2">
+          <input type="text" id="monitorLinkArrivalInput" placeholder="monitor://… Rapportera inleverans" autocomplete="off" class="input-field">
+          <input type="text" id="monitorLinkInspectionInput" placeholder="monitor://… Mottagningskontroll" autocomplete="off" class="input-field">
+          <input type="text" id="monitorWindowTitleInput" placeholder="Fönstertitel (default: Monitor)" autocomplete="off" class="input-field">
+          <label class="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-200">
+            <input type="checkbox" id="monitorAutoSaveInput"> Auto-spara (skicka Ctrl+S automatiskt)
+          </label>
+          <button class="btn-primary" onclick="saveMonitorUI()">Spara UI-styrning</button>
+        </div>
+      </div>
+
+      <div class="panel-section">
         <div class="panel-label">🎨 Tema</div>
         <div class="segmented" id="themeMode">
           <button data-mode="light" data-active="true" onclick="setTheme('light')">Ljus</button>
@@ -303,7 +320,7 @@
 </aside>
 
 <script>
-let cfg = { inbox_dir: '', theme: 'light', autostart: false, api_key_set: false, b_number_mode: 'session' };
+let cfg = { inbox_dir: '', theme: 'light', autostart: false, api_key_set: false, b_number_mode: 'session', monitor_ui_auto_save: false };
 let running = false;
 let approvedCount = 0;
 
@@ -334,6 +351,7 @@ function postConfig(overrides = {}) {
     api_key: '',
     autostart: !!cfg.autostart,
     b_number_mode: cfg.b_number_mode || 'session',
+    monitor_ui_auto_save: !!cfg.monitor_ui_auto_save,
     ...overrides,
   };
   return fetch('/api/config', {
@@ -377,6 +395,12 @@ async function loadConfig() {
     monHint.classList.remove('text-red-500');
     monHint.classList.add('text-slate-500', 'dark:text-slate-400');
   }
+  // Monitor UI-styrning
+  cfg.monitor_ui_auto_save = !!data.monitor_ui_auto_save;
+  if (data.monitor_link_report_arrival) document.getElementById('monitorLinkArrivalInput').value = data.monitor_link_report_arrival;
+  if (data.monitor_link_inspection)     document.getElementById('monitorLinkInspectionInput').value = data.monitor_link_inspection;
+  if (data.monitor_window_title)        document.getElementById('monitorWindowTitleInput').value = data.monitor_window_title;
+  document.getElementById('monitorAutoSaveInput').checked = cfg.monitor_ui_auto_save;
   document.documentElement.dataset.theme = cfg.theme;
   setActiveSegment('themeMode', cfg.theme);
   setActiveSegment('bnumModeSeg', cfg.b_number_mode);
@@ -411,6 +435,19 @@ async function saveMonitor() {
   const r = await postConfig(overrides);
   if (!r.ok) { alert(await r.text()); return; }
   document.getElementById('monitorPassInput').value = '';
+  loadConfig();
+}
+
+async function saveMonitorUI() {
+  cfg.monitor_ui_auto_save = document.getElementById('monitorAutoSaveInput').checked;
+  const overrides = {
+    monitor_link_report_arrival: document.getElementById('monitorLinkArrivalInput').value.trim(),
+    monitor_link_inspection:     document.getElementById('monitorLinkInspectionInput').value.trim(),
+    monitor_window_title:        document.getElementById('monitorWindowTitleInput').value.trim(),
+    monitor_ui_auto_save:        cfg.monitor_ui_auto_save,
+  };
+  const r = await postConfig(overrides);
+  if (!r.ok) { alert(await r.text()); return; }
   loadConfig();
 }
 

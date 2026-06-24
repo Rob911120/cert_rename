@@ -36,6 +36,11 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 			"monitor_url":        c.MonitorURL,
 			"monitor_user":       c.MonitorUser,
 			"monitor_configured": c.MonitorURL != "" && c.MonitorUser != "" && c.MonitorPassword != "",
+
+			"monitor_link_report_arrival": c.MonitorLinkReportArrival,
+			"monitor_link_inspection":     c.MonitorLinkInspection,
+			"monitor_window_title":        c.MonitorWindowTitle,
+			"monitor_ui_auto_save":        c.MonitorUIAutoSave,
 		})
 		return
 	}
@@ -62,6 +67,17 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		}
 		if c.MonitorPassword == "" {
 			c.MonitorPassword = s.cfg.MonitorPassword
+		}
+		// UI-automationslänkar/titel: tomma = behåll sparade (samma som ovan).
+		// MonitorUIAutoSave (bool) skickas alltid med av UI:t, som autostart.
+		if c.MonitorLinkReportArrival == "" {
+			c.MonitorLinkReportArrival = s.cfg.MonitorLinkReportArrival
+		}
+		if c.MonitorLinkInspection == "" {
+			c.MonitorLinkInspection = s.cfg.MonitorLinkInspection
+		}
+		if c.MonitorWindowTitle == "" {
+			c.MonitorWindowTitle = s.cfg.MonitorWindowTitle
 		}
 		monitorChanged := c.MonitorURL != s.cfg.MonitorURL ||
 			c.MonitorUser != s.cfg.MonitorUser ||
