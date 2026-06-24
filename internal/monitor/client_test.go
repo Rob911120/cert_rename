@@ -87,6 +87,50 @@ func TestLogin_BadCredentials(t *testing.T) {
 	}
 }
 
+func TestID_UnmarshalJSON(t *testing.T) {
+	cases := []struct {
+		in      string
+		want    ID
+		wantErr bool
+	}{
+		{`"123456789012345678"`, 123456789012345678, false}, // Monitor: strängat 64-bitars-ID
+		{`123`, 123, false},                                 // bart tal
+		{`"0"`, 0, false},
+		{`null`, 0, false},
+		{`""`, 0, false},
+		{`"abc"`, 0, true}, // ogiltigt → fel, inte panik
+	}
+	for _, tc := range cases {
+		var got ID
+		err := json.Unmarshal([]byte(tc.in), &got)
+		if tc.wantErr {
+			if err == nil {
+				t.Errorf("Unmarshal(%s): förväntade fel, fick %d", tc.in, got)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("Unmarshal(%s): oväntat fel: %v", tc.in, err)
+		}
+		if got != tc.want {
+			t.Errorf("Unmarshal(%s) = %d, vill ha %d", tc.in, got, tc.want)
+		}
+	}
+}
+
+// Regression: Monitor returnerar Id som JSON-sträng — hela listan ska ändå
+// avkodas utan att krascha (tidigare bug: int64-fält → unmarshal-fel).
+func TestDecodeList_StringIDs(t *testing.T) {
+	body := []byte(`{"value":[{"Id":"123456789012345678","OrderNumber":"PO-9","BusinessContactId":"42"}]}`)
+	var orders []PurchaseOrder
+	if err := decodeList(body, &orders); err != nil {
+		t.Fatalf("decodeList med strängade ID:n: %v", err)
+	}
+	if len(orders) != 1 || orders[0].ID != 123456789012345678 || orders[0].BusinessContactId != 42 {
+		t.Fatalf("orders = %+v", orders)
+	}
+}
+
 func TestListPurchaseOrders_FilterParseAndSession(t *testing.T) {
 	srv := stubMonitor(t)
 	c := New(srv.URL)

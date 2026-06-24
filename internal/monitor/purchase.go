@@ -38,7 +38,7 @@ func (c *Client) FindPurchaseOrderByNumber(ctx context.Context, orderNumber stri
 }
 
 // GetPurchaseOrder hämtar en inköpsorder via dess Id. nil utan fel om saknas.
-func (c *Client) GetPurchaseOrder(ctx context.Context, id int64) (*PurchaseOrder, error) {
+func (c *Client) GetPurchaseOrder(ctx context.Context, id ID) (*PurchaseOrder, error) {
 	q := NewQuery().Filter(fmt.Sprintf("Id eq %d", id)).Top(1)
 	orders, err := c.ListPurchaseOrders(ctx, q)
 	if err != nil {
@@ -51,7 +51,7 @@ func (c *Client) GetPurchaseOrder(ctx context.Context, id int64) (*PurchaseOrder
 }
 
 // GetSupplier hämtar en leverantör via dess Id. nil utan fel om saknas.
-func (c *Client) GetSupplier(ctx context.Context, id int64) (*Supplier, error) {
+func (c *Client) GetSupplier(ctx context.Context, id ID) (*Supplier, error) {
 	q := NewQuery().Filter(fmt.Sprintf("Id eq %d", id)).Top(1)
 	sups, err := c.ListSuppliers(ctx, q)
 	if err != nil {
@@ -64,7 +64,7 @@ func (c *Client) GetSupplier(ctx context.Context, id int64) (*Supplier, error) {
 }
 
 // GetPurchaseOrderRows hämtar raderna för en inköpsorder (ParentOrderId).
-func (c *Client) GetPurchaseOrderRows(ctx context.Context, orderID int64) ([]PurchaseOrderRow, error) {
+func (c *Client) GetPurchaseOrderRows(ctx context.Context, orderID ID) ([]PurchaseOrderRow, error) {
 	q := NewQuery().Filter(fmt.Sprintf("ParentOrderId eq %d", orderID)).Top(200)
 	var out []PurchaseOrderRow
 	err := c.getList(ctx, pathPurchaseOrderRows, q, &out)
