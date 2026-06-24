@@ -34,7 +34,10 @@ func newDeliveryStub(t *testing.T) *deliveryStub {
 		case strings.HasSuffix(r.URL.Path, "/Purchase/PurchaseOrders"):
 			_, _ = w.Write([]byte(`{"value":[{"Id":1,"OrderNumber":"B127196","Status":1,"BusinessContactId":7}]}`))
 		case strings.HasSuffix(r.URL.Path, "/Purchase/PurchaseOrderRows"):
-			_, _ = w.Write([]byte(`{"value":[{"Id":11,"ParentOrderId":1,"PartId":5,"RowIndex":1,"OrderedQuantity":10,"RestQuantity":10}]}`))
+			_, _ = w.Write([]byte(`{"value":[` +
+				`{"Id":11,"ParentOrderId":1,"PartId":5,"RowIndex":1,"OrderedQuantity":10,"RestQuantity":10,"ArrivalReporting":true},` +
+				`{"Id":12,"ParentOrderId":1,"PartId":6,"RowIndex":2,"OrderedQuantity":4,"RestQuantity":4,"ArrivalReporting":false}` +
+				`]}`))
 		case strings.HasSuffix(r.URL.Path, "/Inventory/ProductRecords"):
 			_, _ = w.Write([]byte(`{"value":[{"Id":99,"ChargeNumber":"610042","PartId":5,"PurchaseOrderId":1}]}`))
 		case strings.HasSuffix(r.URL.Path, "/Purchase/Suppliers"):
@@ -175,6 +178,45 @@ func Test_RegisterArrival_RefusesIfNotProposed(t *testing.T) {
 	}
 	if ds.arrivals.Load() != 0 {
 		t.Errorf("write skedde på ej-föreslaget dn! anrop=%d", ds.arrivals.Load())
+	}
+}
+
+func Test_ReportArrivalDirect_PreviewDoesNotWrite(t *testing.T) {
+	tb, ds := setupDeliveryToolbox(t)
+	// Utan confirm → förhandsvisning, inget skrivs.
+	out, err := tb.Dispatch("monitor_report_arrival_direct",
+		json.RawMessage(`{"order_number":"B127196","purchase_order_row_id":11,"quantity":3}`))
+	if err != nil {
+		t.Fatalf("preview: %v", err)
+	}
+	if ds.arrivals.Load() != 0 {
+		t.Fatalf("write skedde under förhandsvisning! anrop=%d", ds.arrivals.Load())
+	}
+	if !strings.Contains(out.Summary, "preview") {
+		t.Errorf("förväntade en förhandsvisning, fick: %s", out.Summary)
+	}
+}
+
+func Test_ReportArrivalDirect_ConfirmWrites(t *testing.T) {
+	tb, ds := setupDeliveryToolbox(t)
+	if _, err := tb.Dispatch("monitor_report_arrival_direct",
+		json.RawMessage(`{"order_number":"B127196","purchase_order_row_id":11,"quantity":3,"confirm":true}`)); err != nil {
+		t.Fatalf("confirm: %v", err)
+	}
+	if ds.arrivals.Load() != 1 {
+		t.Errorf("förväntade exakt 1 ReportArrivals, fick %d", ds.arrivals.Load())
+	}
+}
+
+func Test_ReportArrivalDirect_RefusesNonReportableRow(t *testing.T) {
+	tb, ds := setupDeliveryToolbox(t)
+	// Rad 12 har ArrivalReporting=false → ska avvisas, även med confirm.
+	if _, err := tb.Dispatch("monitor_report_arrival_direct",
+		json.RawMessage(`{"order_number":"B127196","purchase_order_row_id":12,"quantity":1,"confirm":true}`)); err == nil {
+		t.Error("inleverans på ej-rapporteringsbar rad borde ge fel")
+	}
+	if ds.arrivals.Load() != 0 {
+		t.Errorf("write skedde på ej-rapporteringsbar rad! anrop=%d", ds.arrivals.Load())
 	}
 }
 

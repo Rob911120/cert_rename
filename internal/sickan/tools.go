@@ -60,6 +60,7 @@ func ToolDefs() []anthropic.ToolUnionParam {
 		{OfTool: &matchDeliveryNoteToPOTool},
 		{OfTool: &proposeReceivingTool},
 		{OfTool: &monitorRegisterArrivalTool},
+		{OfTool: &monitorReportArrivalDirectTool},
 		{OfTool: &addImprovementTool},
 		{OfTool: &listImprovementsTool},
 		{OfTool: &last},
@@ -121,6 +122,8 @@ func (tb *Toolbox) Dispatch(name string, input json.RawMessage) (DispatchResult,
 		return wrapText(tb.proposeReceiving(input))
 	case "monitor_register_arrival":
 		return wrapText(tb.monitorRegisterArrival(input))
+	case "monitor_report_arrival_direct":
+		return wrapText(tb.monitorReportArrivalDirect(input))
 	case "promote_review_to_queue":
 		return wrapText(tb.promoteReview(input))
 	case "add_improvement":
