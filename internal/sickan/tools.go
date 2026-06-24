@@ -62,9 +62,6 @@ func ToolDefs() []anthropic.ToolUnionParam {
 		{OfTool: &listDeliveryNotesTool},
 		{OfTool: &readDeliveryNoteImageTool},
 		{OfTool: &matchDeliveryNoteToPOTool},
-		{OfTool: &proposeReceivingTool},
-		{OfTool: &monitorRegisterArrivalTool},
-		{OfTool: &monitorReportArrivalDirectTool},
 		{OfTool: &monitorUIReportArrivalTool},
 		{OfTool: &addImprovementTool},
 		{OfTool: &listImprovementsTool},
@@ -123,12 +120,6 @@ func (tb *Toolbox) Dispatch(name string, input json.RawMessage) (DispatchResult,
 		return tb.readDeliveryNoteImage(input)
 	case "match_delivery_note_to_po":
 		return wrapText(tb.matchDeliveryNoteToPO(input))
-	case "propose_receiving":
-		return wrapText(tb.proposeReceiving(input))
-	case "monitor_register_arrival":
-		return wrapText(tb.monitorRegisterArrival(input))
-	case "monitor_report_arrival_direct":
-		return wrapText(tb.monitorReportArrivalDirect(input))
 	case "monitor_ui_report_arrival":
 		return wrapText(tb.monitorUIReportArrival(input))
 	case "promote_review_to_queue":

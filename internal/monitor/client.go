@@ -1,4 +1,6 @@
-// Package monitor är en läs-/skrivklient mot Monitor G5:s 001.1 REST+OData-API.
+// Package monitor är en LÄS-klient mot Monitor G5:s 001.1 REST+OData-API.
+// (Skriv-vägen togs bort: Monitors API-skrivning är inte licensierad på det här
+// systemet — inleverans sker via UI-styrning av skrivbordsklienten i stället.)
 // Leaf-paket: importerar inget annat internt paket (som eml/cert), så det kan
 // återanvändas fritt och testas isolerat med httptest.
 //
@@ -6,8 +8,7 @@
 // skickas vidare (header vs cookie) är INTE dokumenterat i API-crawlen. Vi gör
 // två saker defensivt: (1) sätter headern X-Monitor-SessionId från login-svarets
 // SessionId på varje anrop, och (2) använder en cookie-jar så ev. Set-Cookie
-// från login bärs med automatiskt. Exakt mekanism måste bekräftas live mot
-// 192.168.52.232:8001 innan skriv-vägen (ReportArrivals) tas i bruk.
+// från login bärs med automatiskt.
 package monitor
 
 import (
@@ -227,36 +228,6 @@ func (c *Client) getList(ctx context.Context, path string, q *Query, out any) er
 		return fmt.Errorf("GET %s: status %d: %s", path, resp.StatusCode, strings.TrimSpace(string(data)))
 	}
 	return decodeList(data, out)
-}
-
-// postJSON gör en POST mot apiBase()+path med body som JSON och avkodar svaret
-// till out (om out != nil). Används för write-kommandon som ReportArrivals.
-func (c *Client) postJSON(ctx context.Context, path string, body, out any) error {
-	b, err := json.Marshal(body)
-	if err != nil {
-		return err
-	}
-	resp, err := c.send(ctx, func() (*http.Request, error) {
-		r, err := http.NewRequestWithContext(ctx, http.MethodPost, c.apiBase()+path, bytes.NewReader(b))
-		if err != nil {
-			return nil, err
-		}
-		r.Header.Set("Content-Type", "application/json")
-		r.Header.Set("Accept", "application/json")
-		return r, nil
-	})
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	data, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("POST %s: status %d: %s", path, resp.StatusCode, strings.TrimSpace(string(data)))
-	}
-	if out != nil && len(data) > 0 {
-		return json.Unmarshal(data, out)
-	}
-	return nil
 }
 
 // decodeList avkodar antingen ett OData-wrappat svar {"value":[...]} eller en

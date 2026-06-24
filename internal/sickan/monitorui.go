@@ -17,7 +17,7 @@ import (
 
 var monitorUIReportArrivalTool = anthropic.ToolParam{
 	Name:        "monitor_ui_report_arrival",
-	Description: anthropic.String("Styr Monitor-SKRIVBORDSKLIENTEN (inte API:t) för att rapportera inleverans eller mottagningskontroll: öppnar rutinen, fyller i ordernumret och hämtar listan (Ctrl+L). Utan confirm=true returneras bara en FÖRHANDSVISNING. Med confirm=true körs öppning+ifyllnad+hämtning. save=true skickar dessutom Ctrl+S (spara) — bara efter användarens uttryckliga ja OCH om auto-spara är påslaget i inställningarna. En order i taget. Använd detta när skriv-API:t inte är tillgängligt."),
+	Description: anthropic.String("DET ENDA sättet att registrera inleverans/mottagningskontroll (Monitors skriv-API är inte licensierat). Styr Monitor-SKRIVBORDSKLIENTEN: öppnar rutinen, fyller i ordernumret och hämtar listan (Ctrl+L). Utan confirm=true returneras bara en FÖRHANDSVISNING. Med confirm=true körs öppning+ifyllnad+hämtning. save=true skickar dessutom Ctrl+S (spara) — bara efter användarens uttryckliga ja OCH om auto-spara är påslaget i inställningarna. En order i taget."),
 	InputSchema: anthropic.ToolInputSchemaParam{
 		Properties: map[string]any{
 			"order_number":     map[string]any{"type": "string", "description": "Inköpsorderns nummer, t.ex. \"B128756\". Kan utelämnas om delivery_note_id anges."},

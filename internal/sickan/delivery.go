@@ -15,16 +15,16 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// Inleverans-trial (Fas 4): följesedel-bild → matcha PO → föreslå → registrera.
-// Flödet: read_delivery_note_image (visuell koll) · list_delivery_notes ·
-// match_delivery_note_to_po · propose_receiving (förhandsvisning, skriver inget) ·
-// monitor_register_arrival (WRITE — bara efter status=receiving_proposed OCH
-// confirm=true, en orderrad i taget).
+// Inleverans (följesedlar): följesedel-bild → matcha PO. Själva inleverans-
+// registreringen sker via monitor_ui_report_arrival (styr Monitor-klienten),
+// eftersom Monitors skriv-API inte är licensierat. Flödet här:
+// read_delivery_note_image (visuell koll) · list_delivery_notes ·
+// match_delivery_note_to_po (status matched_po).
 // ---------------------------------------------------------------------------
 
 var listDeliveryNotesTool = anthropic.ToolParam{
 	Name:        "list_delivery_notes",
-	Description: anthropic.String("Listar uppladdade följesedlar med vision-avlästa fält + status. Default: bara 'unmatched'. Ange status (unmatched/matched_po/receiving_proposed/receiving_confirmed) eller \"all\" för alla."),
+	Description: anthropic.String("Listar uppladdade följesedlar med vision-avlästa fält + status. Default: bara 'unmatched'. Ange status (unmatched/matched_po) eller \"all\" för alla."),
 	InputSchema: anthropic.ToolInputSchemaParam{
 		Properties: map[string]any{
 			"status": map[string]any{"type": "string", "description": "Statusfilter; tomt = unmatched, \"all\" = alla."},
@@ -51,47 +51,6 @@ var matchDeliveryNoteToPOTool = anthropic.ToolParam{
 			"id": map[string]any{"type": "integer", "description": "Följesedelns id."},
 		},
 		Required: []string{"id"},
-	},
-}
-
-var proposeReceivingTool = anthropic.ToolParam{
-	Name:        "propose_receiving",
-	Description: anthropic.String("Bygger en FÖRHANDSVISNING av inleverans-payloaden (ReportArrivals) för en matchad följesedel och sätter status receiving_proposed. KÖR INGET mot Monitor. Visa förhandsvisningen för användaren och vänta på ja."),
-	InputSchema: anthropic.ToolInputSchemaParam{
-		Properties: map[string]any{
-			"id":       map[string]any{"type": "integer", "description": "Följesedelns id (måste vara matchad)."},
-			"quantity": map[string]any{"type": "number", "description": "Valfri override av kvantitet; annars används den avlästa."},
-		},
-		Required: []string{"id"},
-	},
-}
-
-var monitorRegisterArrivalTool = anthropic.ToolParam{
-	Name:        "monitor_register_arrival",
-	Description: anthropic.String("SKRIVER en inleverans till Monitor (ReportArrivals), en orderrad i taget. Körs BARA när följesedeln har status receiving_proposed OCH confirm=true. Anropa ENDAST efter att användaren uttryckligen sagt ja i förra meddelandet."),
-	InputSchema: anthropic.ToolInputSchemaParam{
-		Properties: map[string]any{
-			"id":       map[string]any{"type": "integer", "description": "Följesedelns id (måste vara receiving_proposed)."},
-			"confirm":  map[string]any{"type": "boolean", "description": "Måste vara true — sätts bara efter användarens uttryckliga ja."},
-			"quantity": map[string]any{"type": "number", "description": "Valfri override; annars den föreslagna kvantiteten."},
-		},
-		Required: []string{"id", "confirm"},
-	},
-}
-
-var monitorReportArrivalDirectTool = anthropic.ToolParam{
-	Name:        "monitor_report_arrival_direct",
-	Description: anthropic.String("ÖVERSTYRNING: registrerar inleverans direkt på en orderrad i Monitor UTAN en matchad följesedel. Hämta först ordern och radens Id via monitor_find_purchase_order. Utan confirm=true returneras bara en FÖRHANDSVISNING (inget skrivs). SKRIVER skarpt till Monitor först med confirm=true — och bara efter användarens uttryckliga ja. En orderrad i taget. Om raden har ArrivalReporting=false varnar förhandsvisningen men blockerar inte — Monitor får avgöra."),
-	InputSchema: anthropic.ToolInputSchemaParam{
-		Properties: map[string]any{
-			"order_number":          map[string]any{"type": "string", "description": "Inköpsorderns nummer, t.ex. \"B128756\"."},
-			"purchase_order_row_id": map[string]any{"type": "integer", "description": "Orderradens Id (fältet Id i raderna från monitor_find_purchase_order)."},
-			"quantity":              map[string]any{"type": "number", "description": "Antal att inleverera."},
-			"delivery_note_number":  map[string]any{"type": "string", "description": "Valfritt följesedelsnummer att registrera med."},
-			"waybill_number":        map[string]any{"type": "string", "description": "Valfritt fraktsedelsnummer."},
-			"confirm":               map[string]any{"type": "boolean", "description": "Måste vara true för att faktiskt skriva. Utan/false = förhandsvisning."},
-		},
-		Required: []string{"order_number", "purchase_order_row_id", "quantity"},
 	},
 }
 
@@ -262,208 +221,6 @@ func (tb *Toolbox) matchDeliveryNoteToPO(input json.RawMessage) (string, error) 
 		"purchase_order_id": po.ID,
 		"candidate_rows":    candidates,
 		"reason":            fmt.Sprintf("%d möjliga rader — välj manuellt, inget registrerat", len(candidates)),
-	})
-	return string(out), nil
-}
-
-func (tb *Toolbox) proposeReceiving(input json.RawMessage) (string, error) {
-	if tb.Repo == nil {
-		return "", fmt.Errorf("DB inte tillgänglig")
-	}
-	var args struct {
-		ID       int64    `json:"id"`
-		Quantity *float64 `json:"quantity"`
-	}
-	if err := json.Unmarshal(input, &args); err != nil {
-		return "", err
-	}
-	dn, err := tb.Repo.GetDeliveryNote(args.ID)
-	if err != nil {
-		return "", fmt.Errorf("följesedel %d finns inte: %w", args.ID, err)
-	}
-	if dn.MatchedRowID == 0 {
-		return "", fmt.Errorf("följesedel %d är inte matchad mot en orderrad — kör match_delivery_note_to_po först", args.ID)
-	}
-	qty := dn.Quantity
-	if args.Quantity != nil {
-		qty = *args.Quantity
-	}
-	if qty <= 0 {
-		return "", fmt.Errorf("kvantitet saknas/ogiltig (%g) — ange quantity explicit", qty)
-	}
-	payload := monitor.ReportArrivalsRequest{
-		DeliveryNoteNumber: dn.DeliveryNoteNumber,
-		WaybillNumber:      dn.WaybillNumber,
-		Rows:               []monitor.ArrivalRow{{PurchaseOrderRowId: monitor.ID(dn.MatchedRowID), Quantity: qty}},
-	}
-	if err := tb.Repo.UpdateDeliveryNoteProposal(dn.ID, qty, store.DNReceivingProposed); err != nil {
-		return "", err
-	}
-	tb.N.BroadcastStats()
-	out, _ := json.Marshal(map[string]any{
-		"preview": payload,
-		"note":    "FÖRSLAG — inget registrerat. Vid ja: anropa monitor_register_arrival med confirm=true.",
-	})
-	return string(out), nil
-}
-
-func (tb *Toolbox) monitorRegisterArrival(input json.RawMessage) (string, error) {
-	if err := tb.monitorReady(); err != nil {
-		return "", err
-	}
-	if tb.Repo == nil {
-		return "", fmt.Errorf("DB inte tillgänglig")
-	}
-	var args struct {
-		ID       int64    `json:"id"`
-		Confirm  bool     `json:"confirm"`
-		Quantity *float64 `json:"quantity"`
-	}
-	if err := json.Unmarshal(input, &args); err != nil {
-		return "", err
-	}
-	dn, err := tb.Repo.GetDeliveryNote(args.ID)
-	if err != nil {
-		return "", fmt.Errorf("följesedel %d finns inte: %w", args.ID, err)
-	}
-	// GATE 1: måste vara föreslaget (propose_receiving har körts).
-	if dn.Status != store.DNReceivingProposed {
-		return "", fmt.Errorf("registrerar inte: följesedel %d har status %q — kör propose_receiving först", args.ID, dn.Status)
-	}
-	// GATE 2: explicit bekräftelse (sätts bara efter användarens ja).
-	if !args.Confirm {
-		return "", fmt.Errorf("registrerar inte utan uttrycklig bekräftelse (confirm=true) — be användaren bekräfta först")
-	}
-	if dn.MatchedRowID == 0 {
-		return "", fmt.Errorf("ingen matchad orderrad att registrera mot")
-	}
-	qty := dn.ProposedQuantity
-	if args.Quantity != nil {
-		qty = *args.Quantity
-	}
-	if qty <= 0 {
-		return "", fmt.Errorf("ogiltig kvantitet (%g)", qty)
-	}
-	ctx, cancel := monitorCtx()
-	defer cancel()
-	res, err := tb.Monitor.ReportArrivals(ctx, monitor.ReportArrivalsRequest{
-		DeliveryNoteNumber: dn.DeliveryNoteNumber,
-		WaybillNumber:      dn.WaybillNumber,
-		Rows:               []monitor.ArrivalRow{{PurchaseOrderRowId: monitor.ID(dn.MatchedRowID), Quantity: qty}},
-	})
-	if err != nil {
-		return "", fmt.Errorf("ReportArrivals misslyckades: %w", err)
-	}
-	if err := tb.Repo.UpdateDeliveryNoteStatus(dn.ID, store.DNReceivingConfirmed); err != nil {
-		return "", err
-	}
-	tb.N.Logf("🤖 Sickan: inleverans REGISTRERAD — följesedel #%d, orderrad %d, antal %g", dn.ID, dn.MatchedRowID, qty)
-	tb.N.BroadcastStats()
-	out, _ := json.Marshal(map[string]any{
-		"ok":               true,
-		"delivery_note_id": dn.ID,
-		"monitor_response": json.RawMessage(res),
-	})
-	return string(out), nil
-}
-
-// monitorReportArrivalDirect är ÖVERSTYRNINGEN: registrerar inleverans direkt på
-// en orderrad utan en matchad följesedel. Samma säkerhetsnivå som det vanliga
-// flödet — utan confirm=true returneras bara en förhandsvisning (inget skrivs),
-// ArrivalReporting=false blockerar inte (overifierad semantik) — vi varnar bara.
-func (tb *Toolbox) monitorReportArrivalDirect(input json.RawMessage) (string, error) {
-	if err := tb.monitorReady(); err != nil {
-		return "", err
-	}
-	var args struct {
-		OrderNumber        string   `json:"order_number"`
-		PurchaseOrderRowId int64    `json:"purchase_order_row_id"`
-		Quantity           *float64 `json:"quantity"`
-		Confirm            bool     `json:"confirm"`
-		DeliveryNoteNumber string   `json:"delivery_note_number"`
-		WaybillNumber      string   `json:"waybill_number"`
-	}
-	if err := json.Unmarshal(input, &args); err != nil {
-		return "", err
-	}
-	if args.OrderNumber == "" {
-		return "", fmt.Errorf("order_number krävs")
-	}
-	if args.PurchaseOrderRowId == 0 {
-		return "", fmt.Errorf("purchase_order_row_id krävs — hämta radens Id via monitor_find_purchase_order")
-	}
-	if args.Quantity == nil || *args.Quantity <= 0 {
-		return "", fmt.Errorf("quantity krävs och måste vara > 0")
-	}
-	qty := *args.Quantity
-
-	ctx, cancel := monitorCtx()
-	defer cancel()
-	po, err := tb.Monitor.FindPurchaseOrderByNumber(ctx, args.OrderNumber)
-	if err != nil {
-		return "", err
-	}
-	if po == nil {
-		return "", fmt.Errorf("ingen inköpsorder %q hittades", args.OrderNumber)
-	}
-	rows, err := tb.Monitor.GetPurchaseOrderRows(ctx, po.ID)
-	if err != nil {
-		return "", err
-	}
-	var row *monitor.PurchaseOrderRow
-	for i := range rows {
-		if int64(rows[i].ID) == args.PurchaseOrderRowId {
-			row = &rows[i]
-			break
-		}
-	}
-	if row == nil {
-		return "", fmt.Errorf("orderrad %d hör inte till order %s — kontrollera rad-Id", args.PurchaseOrderRowId, args.OrderNumber)
-	}
-	// ArrivalReporting=false BLOCKERAR INTE: fältets exakta semantik är overifierad
-	// och i praktiken går rader (även utan lagerartikel) att inleverera ändå. Vi
-	// varnar bara och låter Monitor vara sanningskällan — nekar API:t så ytas felet.
-	var warning string
-	if !row.ArrivalReporting {
-		warning = "OBS: Monitor flaggar raden ArrivalReporting=false (ofta text-/tjänsterad utan lagerartikel). Inleverans kan ändå fungera — bekräfta om du vill försöka."
-	}
-
-	req := monitor.ReportArrivalsRequest{
-		DeliveryNoteNumber: args.DeliveryNoteNumber,
-		WaybillNumber:      args.WaybillNumber,
-		Rows:               []monitor.ArrivalRow{{PurchaseOrderRowId: row.ID, Quantity: qty}},
-	}
-
-	// GATE: utan confirm=true → förhandsvisa, skriv inget.
-	if !args.Confirm {
-		out, _ := json.Marshal(map[string]any{
-			"preview":           req,
-			"order_number":      po.OrderNumber,
-			"part_id":           row.PartId,
-			"ordered":           row.OrderedQuantity,
-			"delivered":         row.DeliveredQuantity,
-			"rest_quantity":     row.RestQuantity,
-			"over_delivery":     qty > row.RestQuantity,
-			"arrival_reporting": row.ArrivalReporting,
-			"warning":           warning,
-			"note":              "FÖRSLAG (överstyrning utan följesedel) — INGET registrerat. Visa detta för Rob, vänta på uttryckligt ja, anropa sedan igen med confirm=true.",
-		})
-		return string(out), nil
-	}
-
-	res, err := tb.Monitor.ReportArrivals(ctx, req)
-	if err != nil {
-		return "", fmt.Errorf("ReportArrivals misslyckades: %w", err)
-	}
-	tb.N.Logf("🤖 Sickan: inleverans REGISTRERAD (överstyrning, utan följesedel) — order %s, orderrad %d, antal %g", po.OrderNumber, args.PurchaseOrderRowId, qty)
-	tb.N.BroadcastStats()
-	out, _ := json.Marshal(map[string]any{
-		"ok":               true,
-		"override":         true,
-		"order_number":     po.OrderNumber,
-		"purchase_order_row_id": args.PurchaseOrderRowId,
-		"quantity":         qty,
-		"monitor_response": json.RawMessage(res),
 	})
 	return string(out), nil
 }
