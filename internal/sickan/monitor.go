@@ -56,7 +56,7 @@ func monitorCtx() (context.Context, context.CancelFunc) {
 // monitorReady kontrollerar att klienten finns (Monitor kan vara okonfigurerad).
 func (tb *Toolbox) monitorReady() error {
 	if tb.Monitor == nil {
-		return fmt.Errorf("Monitor är inte konfigurerad — sätt MONITOR_URL/USER/PASSWORD")
+		return fmt.Errorf("Monitor är inte konfigurerad — öppna ⚙️ Inställningar och fyll i URL, användarnamn och lösenord (eller sätt miljövariablerna MONITOR_URL/USER/PASSWORD)")
 	}
 	return nil
 }

@@ -221,6 +221,17 @@
       </div>
 
       <div class="panel-section">
+        <div class="panel-label">🔌 Monitor ERP</div>
+        <div id="monitorHint" class="text-xs text-slate-500 dark:text-slate-400 mb-2">…laddas…</div>
+        <div class="flex flex-col gap-2">
+          <input type="text" id="monitorUrlInput" placeholder="https://server:8001" autocomplete="off" class="input-field">
+          <input type="text" id="monitorUserInput" placeholder="Användarnamn" autocomplete="off" class="input-field">
+          <input type="password" id="monitorPassInput" placeholder="Lösenord (lämna tomt för att behålla)" autocomplete="off" class="input-field">
+          <button class="btn-primary" onclick="saveMonitor()">Spara Monitor-anslutning</button>
+        </div>
+      </div>
+
+      <div class="panel-section">
         <div class="panel-label">🎨 Tema</div>
         <div class="segmented" id="themeMode">
           <button data-mode="light" data-active="true" onclick="setTheme('light')">Ljus</button>
@@ -354,6 +365,18 @@ async function loadConfig() {
     hintEl.classList.add('text-red-500');
     hintEl.classList.remove('text-slate-500', 'dark:text-slate-400');
   }
+  const monHint = document.getElementById('monitorHint');
+  if (data.monitor_url)  document.getElementById('monitorUrlInput').value  = data.monitor_url;
+  if (data.monitor_user) document.getElementById('monitorUserInput').value = data.monitor_user;
+  if (data.monitor_configured) {
+    monHint.textContent = 'Sparad: ' + (data.monitor_url || '');
+    monHint.classList.remove('text-red-500');
+    monHint.classList.add('text-slate-500', 'dark:text-slate-400');
+  } else {
+    monHint.textContent = 'Ej konfigurerad — krävs för Monitor-funktioner';
+    monHint.classList.remove('text-red-500');
+    monHint.classList.add('text-slate-500', 'dark:text-slate-400');
+  }
   document.documentElement.dataset.theme = cfg.theme;
   setActiveSegment('themeMode', cfg.theme);
   setActiveSegment('bnumModeSeg', cfg.b_number_mode);
@@ -374,6 +397,20 @@ async function saveApiKey() {
   if (!r.ok) { alert(await r.text()); return; }
   input.value = '';
   if (running) document.getElementById('apiKeyNotice').classList.remove('hidden');
+  loadConfig();
+}
+
+async function saveMonitor() {
+  const url  = document.getElementById('monitorUrlInput').value.trim();
+  const user = document.getElementById('monitorUserInput').value.trim();
+  const pass = document.getElementById('monitorPassInput').value;
+  if (!url || !user) { alert('Fyll i URL och användarnamn'); return; }
+  // Skicka bara lösenordet om något skrivits — tomt = behåll det sparade.
+  const overrides = { monitor_url: url, monitor_user: user };
+  if (pass) overrides.monitor_password = pass;
+  const r = await postConfig(overrides);
+  if (!r.ok) { alert(await r.text()); return; }
+  document.getElementById('monitorPassInput').value = '';
   loadConfig();
 }
 
