@@ -208,15 +208,27 @@ func Test_ReportArrivalDirect_ConfirmWrites(t *testing.T) {
 	}
 }
 
-func Test_ReportArrivalDirect_RefusesNonReportableRow(t *testing.T) {
+func Test_ReportArrivalDirect_NonReportableRow_WarnsButAllows(t *testing.T) {
 	tb, ds := setupDeliveryToolbox(t)
-	// Rad 12 har ArrivalReporting=false → ska avvisas, även med confirm.
-	if _, err := tb.Dispatch("monitor_report_arrival_direct",
-		json.RawMessage(`{"order_number":"B127196","purchase_order_row_id":12,"quantity":1,"confirm":true}`)); err == nil {
-		t.Error("inleverans på ej-rapporteringsbar rad borde ge fel")
+	// Rad 12 har ArrivalReporting=false. Förhandsvisning ska VARNA men inte blockera.
+	out, err := tb.Dispatch("monitor_report_arrival_direct",
+		json.RawMessage(`{"order_number":"B127196","purchase_order_row_id":12,"quantity":1}`))
+	if err != nil {
+		t.Fatalf("preview på ArrivalReporting=false borde inte ge fel: %v", err)
+	}
+	if !strings.Contains(out.Summary, "ArrivalReporting=false") {
+		t.Errorf("förväntade en varning om ArrivalReporting, fick: %s", out.Summary)
 	}
 	if ds.arrivals.Load() != 0 {
-		t.Errorf("write skedde på ej-rapporteringsbar rad! anrop=%d", ds.arrivals.Load())
+		t.Fatalf("write skedde under förhandsvisning! anrop=%d", ds.arrivals.Load())
+	}
+	// Med confirm=true → ska gå igenom ändå (Monitor får avgöra).
+	if _, err := tb.Dispatch("monitor_report_arrival_direct",
+		json.RawMessage(`{"order_number":"B127196","purchase_order_row_id":12,"quantity":1,"confirm":true}`)); err != nil {
+		t.Fatalf("confirm på ArrivalReporting=false borde gå igenom: %v", err)
+	}
+	if ds.arrivals.Load() != 1 {
+		t.Errorf("förväntade exakt 1 ReportArrivals, fick %d", ds.arrivals.Load())
 	}
 }
 

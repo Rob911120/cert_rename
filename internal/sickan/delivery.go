@@ -81,7 +81,7 @@ var monitorRegisterArrivalTool = anthropic.ToolParam{
 
 var monitorReportArrivalDirectTool = anthropic.ToolParam{
 	Name:        "monitor_report_arrival_direct",
-	Description: anthropic.String("ÖVERSTYRNING: registrerar inleverans direkt på en orderrad i Monitor UTAN en matchad följesedel. Hämta först ordern och radens Id via monitor_find_purchase_order. Utan confirm=true returneras bara en FÖRHANDSVISNING (inget skrivs). SKRIVER skarpt till Monitor först med confirm=true — och bara efter användarens uttryckliga ja. En orderrad i taget. Rader som inte är inleveransrapporteringsbara (ArrivalReporting=false) avvisas."),
+	Description: anthropic.String("ÖVERSTYRNING: registrerar inleverans direkt på en orderrad i Monitor UTAN en matchad följesedel. Hämta först ordern och radens Id via monitor_find_purchase_order. Utan confirm=true returneras bara en FÖRHANDSVISNING (inget skrivs). SKRIVER skarpt till Monitor först med confirm=true — och bara efter användarens uttryckliga ja. En orderrad i taget. Om raden har ArrivalReporting=false varnar förhandsvisningen men blockerar inte — Monitor får avgöra."),
 	InputSchema: anthropic.ToolInputSchemaParam{
 		Properties: map[string]any{
 			"order_number":          map[string]any{"type": "string", "description": "Inköpsorderns nummer, t.ex. \"B128756\"."},
@@ -370,7 +370,7 @@ func (tb *Toolbox) monitorRegisterArrival(input json.RawMessage) (string, error)
 // monitorReportArrivalDirect är ÖVERSTYRNINGEN: registrerar inleverans direkt på
 // en orderrad utan en matchad följesedel. Samma säkerhetsnivå som det vanliga
 // flödet — utan confirm=true returneras bara en förhandsvisning (inget skrivs),
-// och raden måste vara inleveransrapporteringsbar (ArrivalReporting=true).
+// ArrivalReporting=false blockerar inte (overifierad semantik) — vi varnar bara.
 func (tb *Toolbox) monitorReportArrivalDirect(input json.RawMessage) (string, error) {
 	if err := tb.monitorReady(); err != nil {
 		return "", err
@@ -420,9 +420,12 @@ func (tb *Toolbox) monitorReportArrivalDirect(input json.RawMessage) (string, er
 	if row == nil {
 		return "", fmt.Errorf("orderrad %d hör inte till order %s — kontrollera rad-Id", args.PurchaseOrderRowId, args.OrderNumber)
 	}
-	// Säkerhet: raden måste vara inleveransrapporteringsbar (annars vägrar Monitor ändå).
+	// ArrivalReporting=false BLOCKERAR INTE: fältets exakta semantik är overifierad
+	// och i praktiken går rader (även utan lagerartikel) att inleverera ändå. Vi
+	// varnar bara och låter Monitor vara sanningskällan — nekar API:t så ytas felet.
+	var warning string
 	if !row.ArrivalReporting {
-		return "", fmt.Errorf("orderrad %d är inte inleveransrapporteringsbar i Monitor (ArrivalReporting=false) — kan inte registreras", args.PurchaseOrderRowId)
+		warning = "OBS: Monitor flaggar raden ArrivalReporting=false (ofta text-/tjänsterad utan lagerartikel). Inleverans kan ändå fungera — bekräfta om du vill försöka."
 	}
 
 	req := monitor.ReportArrivalsRequest{
@@ -434,14 +437,16 @@ func (tb *Toolbox) monitorReportArrivalDirect(input json.RawMessage) (string, er
 	// GATE: utan confirm=true → förhandsvisa, skriv inget.
 	if !args.Confirm {
 		out, _ := json.Marshal(map[string]any{
-			"preview":       req,
-			"order_number":  po.OrderNumber,
-			"part_id":       row.PartId,
-			"ordered":       row.OrderedQuantity,
-			"delivered":     row.DeliveredQuantity,
-			"rest_quantity": row.RestQuantity,
-			"over_delivery": qty > row.RestQuantity,
-			"note":          "FÖRSLAG (överstyrning utan följesedel) — INGET registrerat. Visa detta för Rob, vänta på uttryckligt ja, anropa sedan igen med confirm=true.",
+			"preview":           req,
+			"order_number":      po.OrderNumber,
+			"part_id":           row.PartId,
+			"ordered":           row.OrderedQuantity,
+			"delivered":         row.DeliveredQuantity,
+			"rest_quantity":     row.RestQuantity,
+			"over_delivery":     qty > row.RestQuantity,
+			"arrival_reporting": row.ArrivalReporting,
+			"warning":           warning,
+			"note":              "FÖRSLAG (överstyrning utan följesedel) — INGET registrerat. Visa detta för Rob, vänta på uttryckligt ja, anropa sedan igen med confirm=true.",
 		})
 		return string(out), nil
 	}

@@ -43,8 +43,11 @@ type PurchaseOrder struct {
 }
 
 // PurchaseOrderRow — /api/v1/Purchase/PurchaseOrderRows. Länkas till sin order
-// via ParentOrderId och till artikeln via PartId. ArrivalReporting säger om
-// raden inleveransrapporteras; RestQuantity är kvarvarande ej levererat.
+// via ParentOrderId och till artikeln via PartId. ArrivalReporting är en
+// Monitor-flagga vars exakta semantik är OVERIFIERAD (troligen: om raden ingår i
+// godsmottagnings-/inleveransrapporteringsflödet, ev. text-/tjänsterad utan
+// lagerartikel) — den används som varning, inte spärr. RestQuantity är
+// kvarvarande ej levererat.
 type PurchaseOrderRow struct {
 	ID                ID      `json:"Id"`
 	ParentOrderId     ID      `json:"ParentOrderId"`
