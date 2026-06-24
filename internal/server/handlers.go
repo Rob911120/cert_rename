@@ -27,12 +27,15 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"inbox_dir":     c.InboxDir,
-			"theme":         c.Theme,
-			"autostart":     c.Autostart,
-			"api_key_hint":  hint,
-			"sickan_model":  c.SickanModel,
-			"b_number_mode": c.BNumberMode,
+			"inbox_dir":          c.InboxDir,
+			"theme":              c.Theme,
+			"autostart":          c.Autostart,
+			"api_key_hint":       hint,
+			"sickan_model":       c.SickanModel,
+			"b_number_mode":      c.BNumberMode,
+			"monitor_url":        c.MonitorURL,
+			"monitor_user":       c.MonitorUser,
+			"monitor_configured": c.MonitorURL != "" && c.MonitorUser != "" && c.MonitorPassword != "",
 		})
 		return
 	}
@@ -43,15 +46,33 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.mu.Lock()
+		// Tomma fält i POST:en betyder "behåll det sparade" — UI:t skickar inte
+		// alltid med hemligheter (samma mönster som API-nyckeln).
 		if c.ApiKey == "" {
 			c.ApiKey = s.cfg.ApiKey
 		}
 		if c.SickanModel == "" {
 			c.SickanModel = s.cfg.SickanModel
 		}
+		if c.MonitorURL == "" {
+			c.MonitorURL = s.cfg.MonitorURL
+		}
+		if c.MonitorUser == "" {
+			c.MonitorUser = s.cfg.MonitorUser
+		}
+		if c.MonitorPassword == "" {
+			c.MonitorPassword = s.cfg.MonitorPassword
+		}
+		monitorChanged := c.MonitorURL != s.cfg.MonitorURL ||
+			c.MonitorUser != s.cfg.MonitorUser ||
+			c.MonitorPassword != s.cfg.MonitorPassword
 		s.cfg = c
 		s.mu.Unlock()
 		_ = store.SaveConfig(c)
+		// Anslut om mot Monitor när uppgifterna ändrats, utan omstart.
+		if monitorChanged {
+			s.connectMonitor()
+		}
 		w.WriteHeader(204)
 		return
 	}

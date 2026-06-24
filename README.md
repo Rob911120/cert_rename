@@ -87,9 +87,10 @@ Relevanta fält (se `internal/store/config.go`): `inbox_dir`, `api_key`,
 `autostart`, `sickan_model`, `b_number_mode`, samt Monitor-uppgifterna
 `monitor_url` / `monitor_user` / `monitor_password`.
 
-Monitor-uppgifter kan även sättas via miljövariablerna `MONITOR_URL`,
-`MONITOR_USER` och `MONITOR_PASSWORD` (dessa har företräde framför
-`config.json`).
+Monitor-uppgifterna kan anges direkt i UI:t under **⚙️ Inställningar → 🔌
+Monitor ERP** (URL, användarnamn, lösenord) — anslutningen görs om direkt utan
+omstart. De kan också sättas via miljövariablerna `MONITOR_URL`,
+`MONITOR_USER` och `MONITOR_PASSWORD`, som har företräde framför `config.json`.
 
 `config.example.json` visar minsta möjliga inbox-konfiguration.
 
