@@ -25,23 +25,25 @@ func TestBuildReceivingScript_FetchOnly(t *testing.T) {
 	}
 }
 
-func TestBuildReceivingScript_AppActivateGatedOnTitle(t *testing.T) {
-	// Tom titel → ingen AppActivate (skriv direkt i fönstret länken öppnade).
-	withoutTitle := buildReceivingScript("monitor://report", "", "B1", false)
-	if strings.Contains(withoutTitle, "AppActivate") {
-		t.Errorf("tom titel ska inte ge AppActivate: %s", withoutTitle)
+func TestBuildReceivingScript_PicksNewWindow(t *testing.T) {
+	// Tom titel → fokusera det nyaste fönstret som dök upp efter länken.
+	noTitle := buildReceivingScript("monitor://report", "", "B1", false)
+	if !strings.Contains(noTitle, "EnumWindows") {
+		t.Errorf("ska enumerera fönster: %s", noTitle)
 	}
-	// Satt titel → AppActivate (omslutet av try/catch så det inte avbryter).
-	withTitle := buildReceivingScript("monitor://report", "Monitor", "B1", false)
-	if !strings.Contains(withTitle, "AppActivate") {
-		t.Errorf("satt titel ska ge AppActivate: %s", withTitle)
+	if !strings.Contains(noTitle, "$new[$new.Count - 1]") {
+		t.Errorf("tom titel ska välja nyaste nya fönstret: %s", noTitle)
 	}
-	if !strings.Contains(withTitle, "try {") {
-		t.Errorf("AppActivate ska vara omsluten av try/catch: %s", withTitle)
+	if !strings.Contains(noTitle, "WinUtil]::Focus") {
+		t.Errorf("ska fokusera målfönstret innan SendKeys: %s", noTitle)
 	}
-	// Ordernumret ska skickas oavsett.
-	if strings.Count(withoutTitle, "B1") < 2 {
-		t.Errorf("ordernumret ska skrivas även utan titel: %s", withoutTitle)
+	if strings.Count(noTitle, "B1") < 2 {
+		t.Errorf("ordernumret ska skrivas i båda fälten: %s", noTitle)
+	}
+	// Satt titel → filtrera nya fönster på titeln.
+	withTitle := buildReceivingScript("monitor://report", "Rapportera inleverans", "B1", false)
+	if !strings.Contains(withTitle, "*Rapportera inleverans*") {
+		t.Errorf("satt titel ska filtrera på titeln: %s", withTitle)
 	}
 }
 
