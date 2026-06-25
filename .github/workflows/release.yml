@@ -34,10 +34,18 @@ jobs:
             go build -ldflags="-s -w -H windowsgui" -o cert-renamer.exe ./cmd/cert-renamer
           ls -lh cert-renamer.exe
 
+      - name: Bygg diagnostikverktyget monitor-probe.exe (konsol, för felsökning av djuplänkar)
+        run: |
+          # Inget -H windowsgui: probe-verktyget ska ha konsol (skriver ut resultat).
+          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 \
+            go build -ldflags="-s -w" -o monitor-probe.exe ./cmd/monitor-probe
+          ls -lh monitor-probe.exe
+
       - name: Paketera portabel zip
         run: |
           mkdir -p pkg
           cp cert-renamer.exe pkg/
+          cp monitor-probe.exe pkg/
           cat > "pkg/LÄS-MIG.txt" <<'TXT'
           Cert Renamer — portabel (Windows x64)
 
@@ -84,6 +92,6 @@ jobs:
           if [ "${{ steps.meta.outputs.prerelease }}" = "true" ]; then
             ARGS+=(--prerelease)
           fi
-          gh release create "$TAG" cert-renamer-windows-amd64.zip cert-renamer.exe "${ARGS[@]}"
+          gh release create "$TAG" cert-renamer-windows-amd64.zip cert-renamer.exe monitor-probe.exe "${ARGS[@]}"
           echo "Release-URL:"
           gh release view "$TAG" --json url -q .url
