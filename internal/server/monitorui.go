@@ -18,12 +18,14 @@ import (
 // fungerar bara på Windows med Monitor installerat och monitor://-protokollet
 // registrerat.
 
-// monitorOpenDelayMs är pausen efter att rutinen öppnats innan vi aktiverar
-// fönstret och börjar skicka tangenter. monitorSaveDelayMs är pausen efter
-// Ctrl+L (listan ska hinna hämtas) innan ett ev. Ctrl+S.
+// monitorOpenDelayMs är pausen efter att rutinen öppnats så fönstret hinner
+// öppnas riktigt innan vi aktiverar det och börjar skriva. monitorStepDelayMs är
+// pausen efter AppActivate (fönstret ska hinna ta fokus) och mellan tangentsteg.
+// monitorSaveDelayMs är pausen efter Ctrl+L (listan ska hinna hämtas) innan
+// ett ev. Ctrl+S.
 const (
-	monitorOpenDelayMs = 1500
-	monitorStepDelayMs = 300
+	monitorOpenDelayMs = 3000
+	monitorStepDelayMs = 500
 	monitorSaveDelayMs = 1200
 )
 
