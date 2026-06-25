@@ -11,11 +11,8 @@ import (
 func uiToolbox(autoSave bool) (*Toolbox, *stubNotifier) {
 	sn := &stubNotifier{}
 	tb := &Toolbox{
-		N: sn,
-		Cfg: store.Config{
-			MonitorLinkReportArrival: "monitor://arrival",
-			MonitorUIAutoSave:        autoSave,
-		},
+		N:   sn,
+		Cfg: store.Config{MonitorUIAutoSave: autoSave},
 	}
 	return tb, sn
 }
@@ -52,25 +49,13 @@ func TestMonitorUIReportArrival_ConfirmDrives(t *testing.T) {
 	}
 }
 
-func TestMonitorUIReportArrival_NoLinkConfigured(t *testing.T) {
-	sn := &stubNotifier{}
-	tb := &Toolbox{N: sn, Cfg: store.Config{}} // ingen länk
+func TestMonitorUIReportArrival_InspectionRoutine(t *testing.T) {
+	tb, sn := uiToolbox(false)
 	if _, err := tb.Dispatch("monitor_ui_report_arrival",
-		json.RawMessage(`{"order_number":"B1","confirm":true}`)); err == nil {
-		t.Error("utan konfigurerad länk borde det ge fel")
+		json.RawMessage(`{"order_number":"B1","routine":"inspection","confirm":true}`)); err != nil {
+		t.Fatalf("inspection: %v", err)
 	}
-	if sn.driveCalls != 0 {
-		t.Errorf("klienten styrdes utan länk! anrop=%d", sn.driveCalls)
-	}
-}
-
-func TestMonitorUIReportArrival_InspectionNeedsItsOwnLink(t *testing.T) {
-	tb, sn := uiToolbox(false) // bara arrival-länk satt
-	if _, err := tb.Dispatch("monitor_ui_report_arrival",
-		json.RawMessage(`{"order_number":"B1","routine":"inspection","confirm":true}`)); err == nil {
-		t.Error("inspection utan inspection-länk borde ge fel")
-	}
-	if sn.driveCalls != 0 {
-		t.Errorf("klienten styrdes utan inspection-länk! anrop=%d", sn.driveCalls)
+	if sn.driveCalls != 1 || sn.lastRoutine != "inspection" {
+		t.Errorf("förväntade styrning av inspection, fick anrop=%d routine=%q", sn.driveCalls, sn.lastRoutine)
 	}
 }

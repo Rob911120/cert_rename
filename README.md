@@ -45,13 +45,16 @@ Omdöpta filer följer mönstret:
 
 - **Monitor ERP-integration** (`internal/monitor`) — **läser** inköpsorder via
   OData och kan koppla cert/följesedlar mot rätt order. (Monitors skriv-API är
-  inte licensierat på systemet, så klienten är renodlat läsande.)
+  inte licensierat på systemet, så klienten är renodlat läsande.) Inloggning sker
+  **lazy** först vid faktisk API-användning — aldrig vid start — eftersom varje
+  login loggar ut den interaktiva Monitor-sessionen.
 - **Följesedel → vision → matchning** — bild på en följesedel tolkas med
   Claudes vision och matchas mot en inköpsorder/orderrad.
 - **Inleverans via UI-styrning** (Windows) — eftersom skriv-API:t saknas
   registreras inleverans/mottagningskontroll genom att styra Monitor-klienten
-  (öppnar rutinen via `monitor://`-länk, fyller i ordernummer, Ctrl+L; Ctrl+S
-  bara efter uttrycklig bekräftelse). Länkar/fönstertitel ställs in i UI:t.
+  (öppnar rutinen via `mond://`-länk, fokuserar fönstret, fyller i ordernummer,
+  Ctrl+L; Ctrl+S bara efter uttrycklig bekräftelse + påslagen auto-spara).
+  Rutin-länkarna är hårdkodade i `internal/server/monitorui.go`.
 - **"Sickan"** (`internal/sickan`) — en chat-/agentyta som kan fylla i data och
   köra verktyg mot Monitor.
 - **Kostnadsspårning** — token-användning per Claude-anrop summeras och visas

@@ -34,9 +34,11 @@ type Server struct {
 	db   *sql.DB
 	repo *store.Repository
 
-	// mon är Monitor-ERP-klienten (nil tills/om inloggad). Skyddas av mu:
-	// bakgrundsinloggningen i New() skriver under lås, läsare läser under lås.
-	mon *monitor.Client
+	// mon är Monitor-ERP-klienten (nil tills lazy inloggad vid första
+	// API-användningen — se ensureMonitor). Skyddas av mu. monConnectMu
+	// serialiserar själva inloggningen.
+	mon          *monitor.Client
+	monConnectMu sync.Mutex
 
 	costsMu sync.Mutex
 	costs   store.Costs
@@ -78,37 +80,42 @@ func New() *Server {
 		}
 	}
 
-	// Monitor ERP: logga in lazy i bakgrunden så startup inte blockerar på nätet.
-	srv.connectMonitor()
+	// Ingen Monitor-inloggning vid start: varje login skickar ForceRelogin:true
+	// och loggar ut den interaktiva Monitor-sessionen. Vi loggar in lazy först
+	// när ett verktyg faktiskt behöver läsa via API:t (ensureMonitor).
 
 	return srv
 }
 
-// connectMonitor loggar in mot Monitor ERP i bakgrunden om URL, användarnamn
-// och lösenord finns i konfigurationen, och sätter s.mon när login-försöket är
-// klart. Klienten tilldelas s.mon FÖRST efter login (under lås), så
-// session-skrivningen i Login har happens-before mot läsande requests.
-// Säker att kalla flera gånger — t.ex. när uppgifterna sparats i Inställningar.
-func (s *Server) connectMonitor() {
+// ensureMonitor returnerar en inloggad Monitor-klient och loggar in lazy vid
+// första anropet. Serialiserad så samtidiga förstaanvändningar inte loggar in
+// i kapp. Anropas av sickan-verktygen (via Toolbox.MonitorConnect) precis när
+// de behöver API:t — inte vid app-start.
+func (s *Server) ensureMonitor() (*monitor.Client, error) {
+	s.monConnectMu.Lock()
+	defer s.monConnectMu.Unlock()
+
 	s.mu.Lock()
+	mon := s.mon
 	url, user, pass := s.cfg.MonitorURL, s.cfg.MonitorUser, s.cfg.MonitorPassword
 	s.mu.Unlock()
-	if url == "" || user == "" || pass == "" {
-		return
+	if mon != nil {
+		return mon, nil
 	}
-	go func() {
-		mc := monitor.New(url)
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		if err := mc.Login(ctx, user, pass); err != nil {
-			s.Logf("⚠️  Monitor-login misslyckades: %v (fortsätter utan Monitor)", err)
-		} else {
-			s.Logf("🔌 Monitor inloggad mot %s", url)
-		}
-		s.mu.Lock()
-		s.mon = mc
-		s.mu.Unlock()
-	}()
+	if url == "" || user == "" || pass == "" {
+		return nil, fmt.Errorf("Monitor-anslutning saknas — fyll i URL, användarnamn och lösenord i ⚙️ Inställningar")
+	}
+	mc := monitor.New(url)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := mc.Login(ctx, user, pass); err != nil {
+		return nil, fmt.Errorf("Monitor-login misslyckades: %w", err)
+	}
+	s.mu.Lock()
+	s.mon = mc
+	s.mu.Unlock()
+	s.Logf("🔌 Monitor inloggad mot %s", url)
+	return mc, nil
 }
 
 // Logf är en del av ai.Logger och worker.Notifier.

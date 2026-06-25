@@ -54,10 +54,22 @@ func monitorCtx() (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.Background(), 30*time.Second)
 }
 
-// monitorReady kontrollerar att klienten finns (Monitor kan vara okonfigurerad).
+// monitorReady ser till att en inloggad Monitor-klient finns. Klienten loggas
+// in LAT här — först när ett verktyg faktiskt behöver API:t — eftersom varje
+// login loggar ut den interaktiva Monitor-sessionen.
 func (tb *Toolbox) monitorReady() error {
+	if tb.Monitor != nil {
+		return nil
+	}
+	if tb.MonitorConnect != nil {
+		mc, err := tb.MonitorConnect()
+		if err != nil {
+			return err
+		}
+		tb.Monitor = mc
+	}
 	if tb.Monitor == nil {
-		return fmt.Errorf("Monitor är inte konfigurerad — öppna ⚙️ Inställningar och fyll i URL, användarnamn och lösenord (eller sätt miljövariablerna MONITOR_URL/USER/PASSWORD)")
+		return fmt.Errorf("Monitor är inte konfigurerad — öppna ⚙️ Inställningar och fyll i URL, användarnamn och lösenord")
 	}
 	return nil
 }

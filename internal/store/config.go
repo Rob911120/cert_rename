@@ -23,14 +23,11 @@ type Config struct {
 	MonitorUser     string `json:"monitor_user,omitempty"`
 	MonitorPassword string `json:"monitor_password,omitempty"`
 
-	// Monitor UI-automation (Windows): styr skrivbordsklienten direkt när
-	// skriv-API:t inte är licensierat. Länkarna är monitor://-hyperlänkar till
-	// rutinerna; WindowTitle används för AppActivate. AutoSave avgör om Ctrl+S
+	// Monitor UI-automation (Windows): styr skrivbordsklienten direkt eftersom
+	// skriv-API:t inte är licensierat. Länkarna till rutinerna är hårdkodade
+	// (se internal/server/monitorui.go). AutoSave avgör om Ctrl+S
 	// (spara/registrera) får skickas automatiskt.
-	MonitorLinkReportArrival string `json:"monitor_link_report_arrival,omitempty"`
-	MonitorLinkInspection    string `json:"monitor_link_inspection,omitempty"`
-	MonitorWindowTitle       string `json:"monitor_window_title,omitempty"`
-	MonitorUIAutoSave        bool   `json:"monitor_ui_auto_save,omitempty"`
+	MonitorUIAutoSave bool `json:"monitor_ui_auto_save,omitempty"`
 }
 
 func QueueDir(c Config) string         { return filepath.Join(c.InboxDir, "queue") }

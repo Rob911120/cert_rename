@@ -10,13 +10,13 @@ import (
 // Monitor UI-automation: när skriv-API:t inte är licensierat styr vi
 // Monitor-skrivbordsklienten direkt. Mekanismen är samma som dialog.go —
 // PowerShell + .NET, ingen CGO. Flödet i klienten:
-//   1. öppna rutinen via monitor://-hyperlänk
-//   2. ordernummer → Tab → ordernummer (intervallets från/till) → Ctrl+L (hämta)
-//   3. Ctrl+S (spara/registrera) — bara om save=true
+//   1. öppna rutinen via mond://-hyperlänk (hårdkodade länkar nedan)
+//   2. fokusera det nya fönstret som dök upp
+//   3. ordernummer → Tab → ordernummer (intervallets från/till) → Ctrl+L (hämta)
+//   4. Ctrl+S (spara/registrera) — bara om save=true
 //
-// Detta är inneboende bräckligt (fokus, timing, fönstertitel, tangentlayout) och
-// fungerar bara på Windows med Monitor installerat och monitor://-protokollet
-// registrerat.
+// Detta är inneboende bräckligt (fokus, timing, tangentlayout) och fungerar bara
+// på Windows med Monitor installerat och mond://-protokollet registrerat.
 
 // monitorOpenDelayMs är pausen efter att rutinen öppnats så fönstret hinner
 // öppnas riktigt innan vi aktiverar det och börjar skriva. monitorStepDelayMs är
@@ -102,12 +102,10 @@ public class WinUtil {
 }`
 
 // buildReceivingScript bygger PowerShell-skriptet som öppnar rutinen, hittar det
-// NYA fönstret som dök upp, fokuserar det, fyller i ordernumret i båda fälten,
-// hämtar listan (Ctrl+L) och — om save — sparar (Ctrl+S). Ren funktion (ingen
-// exec) så den kan enhetstestas på alla OS. windowTitle är valfri: är den satt
-// föredrar vi ett nytt fönster vars titel matchar; annars tas det nyaste nya
-// fönstret.
-func buildReceivingScript(link, windowTitle, orderNumber string, save bool) string {
+// NYA fönstret som dök upp efter länken, fokuserar det, fyller i ordernumret i
+// båda fälten, hämtar listan (Ctrl+L) och — om save — sparar (Ctrl+S). Ren
+// funktion (ingen exec) så den kan enhetstestas på alla OS.
+func buildReceivingScript(link, orderNumber string, save bool) string {
 	keys := sendKeysEscape(orderNumber)
 	var b strings.Builder
 	b.WriteString("Add-Type -AssemblyName System.Windows.Forms;\n")
@@ -118,18 +116,11 @@ func buildReceivingScript(link, windowTitle, orderNumber string, save bool) stri
 	b.WriteString("$before = [WinUtil]::List();\n")
 	fmt.Fprintf(&b, "Start-Process %s;\n", psSingleQuote(link))
 	fmt.Fprintf(&b, "Start-Sleep -Milliseconds %d;\n", monitorOpenDelayMs)
-	// 2. Vilka fönster är NYA efter länken?
+	// 2. Fokusera det nyaste fönstret som dök upp efter länken (= rutinen).
 	b.WriteString("$after = [WinUtil]::List();\n")
 	b.WriteString("$new = @($after | Where-Object { $before -notcontains $_ });\n")
 	b.WriteString("$target = [IntPtr]::Zero;\n")
-	if windowTitle != "" {
-		t := psSingleQuote("*" + windowTitle + "*")
-		fmt.Fprintf(&b, "foreach ($w in $new) { if ([WinUtil]::Title($w) -like %s) { $target = $w; break } }\n", t)
-		fmt.Fprintf(&b, "if ($target -eq [IntPtr]::Zero) { foreach ($w in $after) { if ([WinUtil]::Title($w) -like %s) { $target = $w; break } } }\n", t)
-		b.WriteString("if ($target -eq [IntPtr]::Zero -and $new.Count -gt 0) { $target = $new[$new.Count - 1] }\n")
-	} else {
-		b.WriteString("if ($new.Count -gt 0) { $target = $new[$new.Count - 1] }\n")
-	}
+	b.WriteString("if ($new.Count -gt 0) { $target = $new[$new.Count - 1] }\n")
 	// 3. Fokusera målfönstret innan vi skriver.
 	fmt.Fprintf(&b, "if ($target -ne [IntPtr]::Zero) { [WinUtil]::Focus($target); Start-Sleep -Milliseconds %d }\n", monitorStepDelayMs)
 	// 4. ordernummer → Tab → ordernummer → Ctrl+L
@@ -145,43 +136,34 @@ func buildReceivingScript(link, windowTitle, orderNumber string, save bool) stri
 
 // runMonitorRoutine kör skriptet via PowerShell på Windows. På andra OS
 // returneras ett tydligt fel (mekanismen finns bara där Monitor-klienten kör).
-func runMonitorRoutine(link, windowTitle, orderNumber string, save bool) error {
+func runMonitorRoutine(link, orderNumber string, save bool) error {
 	if runtime.GOOS != "windows" {
 		return fmt.Errorf("UI-styrning av Monitor stöds bara på Windows (denna app kör på %s)", runtime.GOOS)
 	}
-	if link == "" {
-		return fmt.Errorf("ingen monitor://-länk konfigurerad för rutinen — fyll i den under ⚙️ Inställningar")
-	}
-	script := buildReceivingScript(link, windowTitle, orderNumber, save)
+	script := buildReceivingScript(link, orderNumber, save)
 	cmd := exec.Command("powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command", script)
 	hideConsole(cmd) // dölj PowerShell-konsolen (annars blinkar den fram + stjäl fokus)
 	return cmd.Run()
 }
 
-// DriveMonitorRoutine slår upp rätt länk/fönstertitel ur konfigurationen och
-// styr Monitor-klienten. routine är "report_arrival" eller "inspection".
-// save=true skickar även Ctrl+S — men bara om MonitorUIAutoSave är på (annars
-// är save en no-op-spärr: tvinga aldrig fram en skrivning utan att det är
-// uttryckligen tillåtet i inställningarna). Del av sickan.Notifier.
+// mond://-länkar till Monitor-rutinerna (hårdkodade för den här installationen).
+const (
+	monitorLinkReportArrival = "mond://001.1/150bc858-55f1-4453-9150-89d9ecabd63c"
+	monitorLinkInspection    = "mond://001.1/6118e64b-734e-4878-bf53-ddcde3bc2b41"
+)
+
+// DriveMonitorRoutine öppnar rätt Monitor-rutin och fyller i ordernumret.
+// routine är "report_arrival" eller "inspection". save=true skickar även Ctrl+S
+// — men bara om MonitorUIAutoSave är på (säkerhetsspärr: tvinga aldrig fram en
+// skrivning utan att det är uttryckligen tillåtet). Del av sickan.Notifier.
 func (s *Server) DriveMonitorRoutine(routine, orderNumber string, save bool) error {
 	s.mu.Lock()
-	c := s.cfg
+	autoSave := s.cfg.MonitorUIAutoSave
 	s.mu.Unlock()
 
-	// Tom fönstertitel = hoppa över AppActivate och skriv direkt i fönstret som
-	// monitor://-länken öppnade (default — undviker fokus-ryck till huvudfönstret).
-	// Sätt en titel i Inställningar bara om rutinen behöver aktiveras explicit.
-	windowTitle := c.MonitorWindowTitle
-	var link string
-	switch routine {
-	case "inspection":
-		link = c.MonitorLinkInspection
-	default: // "report_arrival"
-		link = c.MonitorLinkReportArrival
+	link := monitorLinkReportArrival
+	if routine == "inspection" {
+		link = monitorLinkInspection
 	}
-
-	// Säkerhetsspärr: skicka aldrig Ctrl+S om inte auto-spara är påslaget i
-	// inställningarna, även om anroparen bett om det.
-	doSave := save && c.MonitorUIAutoSave
-	return runMonitorRoutine(link, windowTitle, orderNumber, doSave)
+	return runMonitorRoutine(link, orderNumber, save && autoSave)
 }
