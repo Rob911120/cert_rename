@@ -25,6 +25,26 @@ func TestBuildReceivingScript_FetchOnly(t *testing.T) {
 	}
 }
 
+func TestBuildReceivingScript_AppActivateGatedOnTitle(t *testing.T) {
+	// Tom titel → ingen AppActivate (skriv direkt i fönstret länken öppnade).
+	withoutTitle := buildReceivingScript("monitor://report", "", "B1", false)
+	if strings.Contains(withoutTitle, "AppActivate") {
+		t.Errorf("tom titel ska inte ge AppActivate: %s", withoutTitle)
+	}
+	// Satt titel → AppActivate (omslutet av try/catch så det inte avbryter).
+	withTitle := buildReceivingScript("monitor://report", "Monitor", "B1", false)
+	if !strings.Contains(withTitle, "AppActivate") {
+		t.Errorf("satt titel ska ge AppActivate: %s", withTitle)
+	}
+	if !strings.Contains(withTitle, "try {") {
+		t.Errorf("AppActivate ska vara omsluten av try/catch: %s", withTitle)
+	}
+	// Ordernumret ska skickas oavsett.
+	if strings.Count(withoutTitle, "B1") < 2 {
+		t.Errorf("ordernumret ska skrivas även utan titel: %s", withoutTitle)
+	}
+}
+
 func TestBuildReceivingScript_Save(t *testing.T) {
 	s := buildReceivingScript("monitor://report", "Monitor", "B1", true)
 	if !strings.Contains(s, "^s") {

@@ -62,8 +62,15 @@ func buildReceivingScript(link, windowTitle, orderNumber string, save bool) stri
 	b.WriteString("Add-Type -AssemblyName System.Windows.Forms;\n")
 	fmt.Fprintf(&b, "Start-Process %s;\n", psSingleQuote(link))
 	fmt.Fprintf(&b, "Start-Sleep -Milliseconds %d;\n", monitorOpenDelayMs)
-	fmt.Fprintf(&b, "[Microsoft.VisualBasic.Interaction]::AppActivate(%s);\n", psSingleQuote(windowTitle))
-	fmt.Fprintf(&b, "Start-Sleep -Milliseconds %d;\n", monitorStepDelayMs)
+	// AppActivate ENBART om en fönstertitel är satt. monitor://-länken öppnar
+	// redan rutinen med fokus, och AppActivate("Monitor") kan annars rycka fokus
+	// till HUVUDfönstret så tangenterna missar rutinfältet. Lämna fältet tomt i
+	// Inställningar för att skriva direkt i fönstret länken öppnade. Try/catch så
+	// en titel som inte matchar aldrig avbryter hela skriptet.
+	if windowTitle != "" {
+		fmt.Fprintf(&b, "try { [Microsoft.VisualBasic.Interaction]::AppActivate(%s) } catch {};\n", psSingleQuote(windowTitle))
+		fmt.Fprintf(&b, "Start-Sleep -Milliseconds %d;\n", monitorStepDelayMs)
+	}
 	// ordernummer → Tab → ordernummer → Ctrl+L
 	fmt.Fprintf(&b, "[System.Windows.Forms.SendKeys]::SendWait(%s);\n", psSingleQuote(keys+"{TAB}"+keys))
 	fmt.Fprintf(&b, "Start-Sleep -Milliseconds %d;\n", monitorStepDelayMs)
@@ -98,10 +105,10 @@ func (s *Server) DriveMonitorRoutine(routine, orderNumber string, save bool) err
 	c := s.cfg
 	s.mu.Unlock()
 
+	// Tom fönstertitel = hoppa över AppActivate och skriv direkt i fönstret som
+	// monitor://-länken öppnade (default — undviker fokus-ryck till huvudfönstret).
+	// Sätt en titel i Inställningar bara om rutinen behöver aktiveras explicit.
 	windowTitle := c.MonitorWindowTitle
-	if windowTitle == "" {
-		windowTitle = "Monitor"
-	}
 	var link string
 	switch routine {
 	case "inspection":
