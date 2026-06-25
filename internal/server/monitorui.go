@@ -52,26 +52,87 @@ func psSingleQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
 }
 
-// buildReceivingScript bygger PowerShell-skriptet som öppnar rutinen, fyller i
-// ordernumret i båda fälten, hämtar listan (Ctrl+L) och — om save — sparar
-// (Ctrl+S). Ren funktion (ingen exec) så den kan enhetstestas på alla OS.
+// winFocusCSharp är en C#-hjälpklass (kompileras av PowerShell via Add-Type) som
+// enumererar synliga topp-fönster och kan fokusera ett givet fönster. Vi
+// använder den för att hitta det NYA fönstret som Monitor öppnar efter att vi
+// kört monitor://-länken, och flytta förgrundsfokus dit innan vi skriver — så
+// tangenterna hamnar i rutinen och inte i appen som hade fokus (t.ex. chatten).
+// AttachThreadInput-tricket krävs för att SetForegroundWindow ska få stjäla
+// fokus. Skrivet i C# 2-kompatibel stil (anonym delegate, ingen var/out _) så
+// den kompilerar även i Windows PowerShell 5.1.
+const winFocusCSharp = `using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+using System.Text;
+public class WinUtil {
+    [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc cb, IntPtr p);
+    delegate bool EnumProc(IntPtr h, IntPtr p);
+    [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
+    [DllImport("user32.dll")] static extern int GetWindowTextLength(IntPtr h);
+    [DllImport("user32.dll")] static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
+    [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr h);
+    [DllImport("user32.dll")] static extern bool BringWindowToTop(IntPtr h);
+    [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr h, int c);
+    [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+    [DllImport("kernel32.dll")] static extern uint GetCurrentThreadId();
+    [DllImport("user32.dll")] static extern bool AttachThreadInput(uint a, uint b, bool f);
+    public static List<IntPtr> List() {
+        List<IntPtr> r = new List<IntPtr>();
+        EnumWindows(delegate(IntPtr h, IntPtr p) { if (IsWindowVisible(h) && GetWindowTextLength(h) > 0) r.Add(h); return true; }, IntPtr.Zero);
+        return r;
+    }
+    public static string Title(IntPtr h) {
+        int n = GetWindowTextLength(h);
+        StringBuilder sb = new StringBuilder(n + 1);
+        GetWindowText(h, sb, sb.Capacity);
+        return sb.ToString();
+    }
+    public static void Focus(IntPtr h) {
+        IntPtr fg = GetForegroundWindow();
+        uint pid;
+        uint t1 = GetWindowThreadProcessId(fg, out pid);
+        uint t2 = GetCurrentThreadId();
+        AttachThreadInput(t2, t1, true);
+        ShowWindow(h, 9);
+        BringWindowToTop(h);
+        SetForegroundWindow(h);
+        AttachThreadInput(t2, t1, false);
+    }
+}`
+
+// buildReceivingScript bygger PowerShell-skriptet som öppnar rutinen, hittar det
+// NYA fönstret som dök upp, fokuserar det, fyller i ordernumret i båda fälten,
+// hämtar listan (Ctrl+L) och — om save — sparar (Ctrl+S). Ren funktion (ingen
+// exec) så den kan enhetstestas på alla OS. windowTitle är valfri: är den satt
+// föredrar vi ett nytt fönster vars titel matchar; annars tas det nyaste nya
+// fönstret.
 func buildReceivingScript(link, windowTitle, orderNumber string, save bool) string {
 	keys := sendKeysEscape(orderNumber)
 	var b strings.Builder
-	b.WriteString("Add-Type -AssemblyName Microsoft.VisualBasic;\n")
 	b.WriteString("Add-Type -AssemblyName System.Windows.Forms;\n")
+	b.WriteString("Add-Type @\"\n")
+	b.WriteString(winFocusCSharp)
+	b.WriteString("\n\"@;\n")
+	// 1. Ögonblicksbild av fönstren INNAN vi öppnar rutinen.
+	b.WriteString("$before = [WinUtil]::List();\n")
 	fmt.Fprintf(&b, "Start-Process %s;\n", psSingleQuote(link))
 	fmt.Fprintf(&b, "Start-Sleep -Milliseconds %d;\n", monitorOpenDelayMs)
-	// AppActivate ENBART om en fönstertitel är satt. monitor://-länken öppnar
-	// redan rutinen med fokus, och AppActivate("Monitor") kan annars rycka fokus
-	// till HUVUDfönstret så tangenterna missar rutinfältet. Lämna fältet tomt i
-	// Inställningar för att skriva direkt i fönstret länken öppnade. Try/catch så
-	// en titel som inte matchar aldrig avbryter hela skriptet.
+	// 2. Vilka fönster är NYA efter länken?
+	b.WriteString("$after = [WinUtil]::List();\n")
+	b.WriteString("$new = @($after | Where-Object { $before -notcontains $_ });\n")
+	b.WriteString("$target = [IntPtr]::Zero;\n")
 	if windowTitle != "" {
-		fmt.Fprintf(&b, "try { [Microsoft.VisualBasic.Interaction]::AppActivate(%s) } catch {};\n", psSingleQuote(windowTitle))
-		fmt.Fprintf(&b, "Start-Sleep -Milliseconds %d;\n", monitorStepDelayMs)
+		t := psSingleQuote("*" + windowTitle + "*")
+		fmt.Fprintf(&b, "foreach ($w in $new) { if ([WinUtil]::Title($w) -like %s) { $target = $w; break } }\n", t)
+		fmt.Fprintf(&b, "if ($target -eq [IntPtr]::Zero) { foreach ($w in $after) { if ([WinUtil]::Title($w) -like %s) { $target = $w; break } } }\n", t)
+		b.WriteString("if ($target -eq [IntPtr]::Zero -and $new.Count -gt 0) { $target = $new[$new.Count - 1] }\n")
+	} else {
+		b.WriteString("if ($new.Count -gt 0) { $target = $new[$new.Count - 1] }\n")
 	}
-	// ordernummer → Tab → ordernummer → Ctrl+L
+	// 3. Fokusera målfönstret innan vi skriver.
+	fmt.Fprintf(&b, "if ($target -ne [IntPtr]::Zero) { [WinUtil]::Focus($target); Start-Sleep -Milliseconds %d }\n", monitorStepDelayMs)
+	// 4. ordernummer → Tab → ordernummer → Ctrl+L
 	fmt.Fprintf(&b, "[System.Windows.Forms.SendKeys]::SendWait(%s);\n", psSingleQuote(keys+"{TAB}"+keys))
 	fmt.Fprintf(&b, "Start-Sleep -Milliseconds %d;\n", monitorStepDelayMs)
 	b.WriteString("[System.Windows.Forms.SendKeys]::SendWait('^l');\n")
