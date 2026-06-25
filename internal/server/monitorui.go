@@ -92,7 +92,9 @@ func runMonitorRoutine(link, windowTitle, orderNumber string, save bool) error {
 		return fmt.Errorf("ingen monitor://-länk konfigurerad för rutinen — fyll i den under ⚙️ Inställningar")
 	}
 	script := buildReceivingScript(link, windowTitle, orderNumber, save)
-	return exec.Command("powershell", "-NoProfile", "-Command", script).Run()
+	cmd := exec.Command("powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command", script)
+	hideConsole(cmd) // dölj PowerShell-konsolen (annars blinkar den fram + stjäl fokus)
+	return cmd.Run()
 }
 
 // DriveMonitorRoutine slår upp rätt länk/fönstertitel ur konfigurationen och
