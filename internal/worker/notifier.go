@@ -2,6 +2,7 @@ package worker
 
 import (
 	"cert-renamer/internal/ai"
+	"cert-renamer/internal/monitor"
 	"cert-renamer/internal/store"
 )
 
@@ -16,4 +17,8 @@ type Notifier interface {
 	BroadcastQueue()
 	BroadcastReview()
 	Repo() *store.Repository
+	// MonitorClient returnerar en inloggad Monitor-läsklient (lazy login).
+	// Server implementerar via ensureMonitor; worker→monitor är ofarligt
+	// (monitor är ett leaf-paket, ingen cykel).
+	MonitorClient() (*monitor.Client, error)
 }

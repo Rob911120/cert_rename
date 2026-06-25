@@ -37,6 +37,9 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 			"monitor_user":         c.MonitorUser,
 			"monitor_configured":   c.MonitorURL != "" && c.MonitorUser != "" && c.MonitorPassword != "",
 			"monitor_ui_auto_save": c.MonitorUIAutoSave,
+			"upcoming_enabled":     c.UpcomingEnabled,
+			"upcoming_time":        c.UpcomingTime,
+			"upcoming_window_days": c.UpcomingWindowDays,
 		})
 		return
 	}
@@ -67,6 +70,7 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		// MonitorUIAutoSave (bool) skickas alltid med av UI:t, som autostart.
 		// Ingen Monitor-inloggning här — den sker lazy först vid faktisk
 		// API-användning (annars loggas den interaktiva Monitor-sessionen ut).
+		c.NormalizeUpcoming() // defaulta/validera UpcomingTime + WindowDays
 		s.cfg = c
 		s.mu.Unlock()
 		_ = store.SaveConfig(c)

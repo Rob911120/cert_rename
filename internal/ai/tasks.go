@@ -253,6 +253,97 @@ func ExtractFromImage(ctx context.Context, log Logger, client *anthropic.Client,
 	)
 }
 
+// UpcomingClassifyInput är vad materialdomen får för en kommande inleveransrad.
+// CertMaterial/CertType/CertDimensions kommer från det REDAN extraherade certet
+// (vid intag) — extrahera inte om från PDF:en.
+type UpcomingClassifyInput struct {
+	PartNumber       string // artikelnummer (kontext)
+	Description      string // Part.Description
+	ExtraDescription string // Part.ExtraDescription (bär ofta stålsort + cert-krav)
+	CertRequired     bool   // härlett ur artikeln (ReceivingInspectionType/TraceabilityMode)
+	CertMaterial     string // matchat certs lagrade Material (vårt material)
+	CertType         string // matchat certs CertType (t.ex. "3.1")
+	CertDimensions   string // matchat certs Dimensions
+}
+
+// UpcomingClassification är AI-domen för en rad. material_ok ∈ {ok,mismatch,unknown}.
+type UpcomingClassification struct {
+	RequiredMaterial string `json:"required_material"`
+	RequiredCert     string `json:"required_cert"`
+	OurMaterial      string `json:"our_material"`
+	MaterialOK       string `json:"material_ok"`
+	Notes            string `json:"notes"`
+}
+
+// ClassifyUpcoming låter ren AI döma om certets material matchar det beställda
+// (Robs beslut: AI dömer, men evidensen lagras separat så domen är granskbar).
+// Sonnet, temperatur 0 för stabilitet. Anropas bara när ett cert har matchats —
+// underlaget bygger på den lagrade cert.Material, inte en ny PDF-extraktion.
+func ClassifyUpcoming(ctx context.Context, log Logger, client *anthropic.Client, in UpcomingClassifyInput) (*UpcomingClassification, error) {
+	userText := fmt.Sprintf(`Bedöm om materialet vi har cert för matchar det som är beställt för artikeln.
+
+ARTIKEL
+- Artikelnummer: %s
+- Beskrivning: %s
+- Extra beskrivning (bär ofta stålsort + ev. cert-krav): %s
+- Kräver materialcert enligt artikelinställning: %t
+
+CERT VI HAR (redan extraherat vid intag — extrahera inte om)
+- Material: %s
+- Cert-typ: %s
+- Dimension: %s`,
+		dash(in.PartNumber), dash(in.Description), dash(in.ExtraDescription), in.CertRequired,
+		dash(in.CertMaterial), dash(in.CertType), dash(in.CertDimensions))
+
+	return logAICall(log, "sonnet ClassifyUpcoming("+in.PartNumber+")",
+		func() (*UpcomingClassification, anthropic.Usage, error) {
+			resp, err := client.Messages.New(ctx, anthropic.MessageNewParams{
+				Model:       ModelExtract, // sonnet
+				MaxTokens:   512,
+				Temperature: anthropic.Float(0),
+				System:      []anthropic.TextBlockParam{{Text: upcomingSystemPrompt}},
+				Tools:       []anthropic.ToolUnionParam{{OfTool: &upcomingTool}},
+				ToolChoice: anthropic.ToolChoiceUnionParam{
+					OfTool: &anthropic.ToolChoiceToolParam{Name: "judge_material"},
+				},
+				Messages: []anthropic.MessageParam{
+					{
+						Role: anthropic.MessageParamRoleUser,
+						Content: []anthropic.ContentBlockParamUnion{
+							{OfText: &anthropic.TextBlockParam{Text: userText}},
+						},
+					},
+				},
+			})
+			if err != nil {
+				return nil, anthropic.Usage{}, err
+			}
+			for _, block := range resp.Content {
+				if block.Type == "tool_use" {
+					tu := block.AsToolUse()
+					var uc UpcomingClassification
+					if err := json.Unmarshal(tu.Input, &uc); err != nil {
+						return nil, resp.Usage, fmt.Errorf("unmarshal: %w", err)
+					}
+					return &uc, resp.Usage, nil
+				}
+			}
+			return nil, resp.Usage, fmt.Errorf("inget tool_use-svar från Claude")
+		},
+		func(uc *UpcomingClassification) string {
+			return fmt.Sprintf("krav=%s vårt=%s → %s", uc.RequiredMaterial, uc.OurMaterial, uc.MaterialOK)
+		},
+	)
+}
+
+// dash returnerar "—" för tom sträng (gör prompten läsbar utan tomma rader).
+func dash(s string) string {
+	if strings.TrimSpace(s) == "" {
+		return "—"
+	}
+	return s
+}
+
 // Verify anropar haiku på alla PDF-bilagor och avgör om någon är ett 3.1-cert.
 func Verify(ctx context.Context, log Logger, client *anthropic.Client, c *eml.Content) (*cert.Verification, error) {
 	content := []anthropic.ContentBlockParamUnion{}

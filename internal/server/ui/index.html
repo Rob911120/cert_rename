@@ -33,6 +33,7 @@
     <div class="flex">
       <button class="tab-link" data-tab="queue" data-active="true" onclick="switchTab('queue')">Kö</button>
       <button class="tab-link" data-tab="review" onclick="switchTab('review')">Behöver granskas</button>
+      <button class="tab-link" data-tab="upcoming" onclick="switchTab('upcoming')">Kommande inleveranser</button>
     </div>
     <div class="flex items-center gap-3 pb-2">
       <span class="text-xs text-slate-500 dark:text-slate-400" id="queueCount"></span>
@@ -72,6 +73,26 @@
           <tr class="empty-row"><td colspan="4" class="text-center italic text-slate-400 py-6">Inga problem-fall</td></tr>
         </tbody>
       </table>
+    </div>
+    <div class="tab-panel hidden flex-1 min-h-0 overflow-auto flex flex-col" data-panel="upcoming">
+      <div class="flex items-center justify-between px-3 py-2 border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-main">
+        <span class="text-xs text-slate-500 dark:text-slate-400" id="upcomingStatus">…</span>
+        <button id="upcomingRunBtn" class="btn-secondary btn-sm" onclick="runUpcoming()">🔄 Kör nu</button>
+      </div>
+      <div class="flex-1 min-h-0 overflow-auto">
+        <table class="w-full text-sm">
+          <thead class="table-head">
+            <tr>
+              <th>Leveransdatum</th><th>Order</th><th>Leverantör</th><th>Artikel</th>
+              <th>Krav-material</th><th>Krav-cert</th><th>Vårt cert/material</th>
+              <th>Status</th><th>Not</th><th>Mått</th><th>Antal</th><th></th>
+            </tr>
+          </thead>
+          <tbody id="upcomingBody">
+            <tr class="empty-row"><td colspan="12" class="text-center italic text-slate-400 py-6">Inga kommande inleveranser</td></tr>
+          </tbody>
+        </table>
+      </div>
     </div>
   </div>
 </main>
@@ -245,6 +266,27 @@
       </div>
 
       <div class="panel-section">
+        <div class="panel-label">📦 Kommande inleveranser</div>
+        <div class="text-xs text-slate-500 dark:text-slate-400 mb-2">
+          Hämtar kommande inleveranser från Monitor och matchar mot cert vi har.
+          Håll <strong>av</strong> tills läs-auth är verifierad på jobbdatorn (Steg 0).
+        </div>
+        <div class="flex flex-col gap-2">
+          <label class="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-200">
+            <input type="checkbox" id="upcomingEnabledInput" onchange="saveUpcomingSettings()"> Aktivera (schema + knappar)
+          </label>
+          <label class="flex items-center justify-between gap-2 text-sm text-slate-700 dark:text-slate-200">
+            <span>Daglig körning (HH:MM)</span>
+            <input type="time" id="upcomingTimeInput" onchange="saveUpcomingSettings()" class="input-field !py-1 w-28">
+          </label>
+          <label class="flex items-center justify-between gap-2 text-sm text-slate-700 dark:text-slate-200">
+            <span>Fönster (dagar framåt)</span>
+            <input type="number" id="upcomingWindowInput" min="1" max="365" onchange="saveUpcomingSettings()" class="input-field !py-1 w-28">
+          </label>
+        </div>
+      </div>
+
+      <div class="panel-section">
         <div class="panel-label">🎨 Tema</div>
         <div class="segmented" id="themeMode">
           <button data-mode="light" data-active="true" onclick="setTheme('light')">Ljus</button>
@@ -316,7 +358,7 @@
 </aside>
 
 <script>
-let cfg = { inbox_dir: '', theme: 'light', autostart: false, api_key_set: false, b_number_mode: 'session', monitor_ui_auto_save: false };
+let cfg = { inbox_dir: '', theme: 'light', autostart: false, api_key_set: false, b_number_mode: 'session', monitor_ui_auto_save: false, upcoming_enabled: false, upcoming_time: '16:30', upcoming_window_days: 14 };
 let running = false;
 let approvedCount = 0;
 
@@ -348,6 +390,9 @@ function postConfig(overrides = {}) {
     autostart: !!cfg.autostart,
     b_number_mode: cfg.b_number_mode || 'session',
     monitor_ui_auto_save: !!cfg.monitor_ui_auto_save,
+    upcoming_enabled: !!cfg.upcoming_enabled,
+    upcoming_time: cfg.upcoming_time || '16:30',
+    upcoming_window_days: cfg.upcoming_window_days || 14,
     ...overrides,
   };
   return fetch('/api/config', {
@@ -394,6 +439,13 @@ async function loadConfig() {
   // Monitor UI-styrning
   cfg.monitor_ui_auto_save = !!data.monitor_ui_auto_save;
   document.getElementById('monitorAutoSaveInput').checked = cfg.monitor_ui_auto_save;
+  // Kommande inleveranser
+  cfg.upcoming_enabled = !!data.upcoming_enabled;
+  cfg.upcoming_time = data.upcoming_time || '16:30';
+  cfg.upcoming_window_days = data.upcoming_window_days || 14;
+  document.getElementById('upcomingEnabledInput').checked = cfg.upcoming_enabled;
+  document.getElementById('upcomingTimeInput').value = cfg.upcoming_time;
+  document.getElementById('upcomingWindowInput').value = cfg.upcoming_window_days;
   document.documentElement.dataset.theme = cfg.theme;
   setActiveSegment('themeMode', cfg.theme);
   setActiveSegment('bnumModeSeg', cfg.b_number_mode);
@@ -436,6 +488,19 @@ async function saveMonitorUI() {
   const r = await postConfig({ monitor_ui_auto_save: cfg.monitor_ui_auto_save });
   if (!r.ok) { alert(await r.text()); return; }
   loadConfig();
+}
+
+async function saveUpcomingSettings() {
+  cfg.upcoming_enabled = document.getElementById('upcomingEnabledInput').checked;
+  cfg.upcoming_time = document.getElementById('upcomingTimeInput').value || '16:30';
+  cfg.upcoming_window_days = parseInt(document.getElementById('upcomingWindowInput').value, 10) || 14;
+  const r = await postConfig({
+    upcoming_enabled: cfg.upcoming_enabled,
+    upcoming_time: cfg.upcoming_time,
+    upcoming_window_days: cfg.upcoming_window_days,
+  });
+  if (!r.ok) { alert(await r.text()); return; }
+  loadUpcoming();
 }
 
 function setTheme(t) {
@@ -735,6 +800,7 @@ es.addEventListener('stats', ev => {
 es.addEventListener('queue', () => loadQueue());
 es.addEventListener('review', () => loadReview());
 es.addEventListener('costs', ev => renderCosts(JSON.parse(ev.data)));
+es.addEventListener('upcoming', ev => { try { renderUpcoming(JSON.parse(ev.data)); } catch (e) { console.warn(e); } });
 
 async function loadCosts() {
   try { const r = await fetch('/api/costs'); if (r.ok) renderCosts(await r.json()); }
@@ -763,7 +829,164 @@ function switchTab(name) {
   setActiveTab('.tab-link[data-tab]', 'tab', name);
   document.querySelectorAll('.tab-panel').forEach(p =>
     p.classList.toggle('hidden', p.dataset.panel !== name));
+  // Sök-fältet är bara relevant för kö-vyn.
+  document.getElementById('queueFilter').classList.toggle('hidden', name !== 'queue');
   if (name === 'review') loadReview();
+  if (name === 'upcoming') loadUpcoming();
+}
+
+// --- Kommande inleveranser ---
+let upcomingState = { rows: [], running: false, enabled: false, time: '16:30', window_days: 14, last_run: '' };
+
+async function loadUpcoming() {
+  try {
+    const r = await fetch('/api/upcoming');
+    if (!r.ok) return;
+    renderUpcoming(await r.json());
+  } catch (e) { console.warn(e); }
+}
+
+function upcomingBadge(row) {
+  if (row.cert_status === 'none_required') return '<span class="badge-blue">– cert ej krävt</span>';
+  if (row.cert_status === 'missing')       return '<span class="badge-yellow">⚠ cert saknas</span>';
+  if (row.material_ok === 'ok')            return '<span class="badge-green">✓ ok</span>';
+  if (row.material_ok === 'mismatch')      return '<span class="badge-red">⚠ avvikelse</span>';
+  return '<span class="badge-gray">cert matchat</span>';
+}
+
+function renderUpcoming(data) {
+  if (data) upcomingState = data;
+  const st = upcomingState;
+  const rows = st.rows || [];
+  const enabled = !!st.enabled;
+
+  const parts = [];
+  if (!enabled) parts.push('Av — aktivera i ⚙️ efter Steg 0');
+  else { parts.push('Schemalagt ' + (st.time || '16:30')); parts.push('fönster ' + (st.window_days || 14) + ' dgr'); }
+  if (st.last_run) parts.push('senast ' + fmtWhen(st.last_run));
+  if (st.running) parts.push('⏳ uppdaterar…');
+  document.getElementById('upcomingStatus').textContent = parts.join(' · ');
+  const runBtn = document.getElementById('upcomingRunBtn');
+  if (runBtn) runBtn.disabled = !enabled || !!st.running;
+
+  const tbody = document.getElementById('upcomingBody');
+  tbody.innerHTML = '';
+  if (rows.length === 0) {
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="12" class="text-center italic text-slate-400 py-6">' +
+      (enabled ? 'Inga kommande inleveranser — kör en uppdatering' : 'Funktionen är av — aktivera i ⚙️ Inställningar') + '</td></tr>';
+    return;
+  }
+  for (const row of rows) {
+    const tr = document.createElement('tr');
+    tr.className = 'table-row cursor-pointer';
+    if (row.local_status === 'delivered') tr.classList.add('opacity-50');
+    for (const v of [row.delivery_date, row.order_number, row.supplier_name, row.part_number,
+                     row.required_material, row.required_cert, row.our_material]) {
+      const td = document.createElement('td');
+      td.textContent = v || '';
+      tr.appendChild(td);
+    }
+    const tdBadge = document.createElement('td');
+    tdBadge.innerHTML = upcomingBadge(row) + (row.local_status === 'delivered' ? ' <span class="badge-gray">levererad</span>' : '');
+    tr.appendChild(tdBadge);
+    const tdNote = document.createElement('td');
+    tdNote.className = 'text-xs text-slate-500 dark:text-slate-400 max-w-[200px] truncate';
+    tdNote.textContent = row.notes || '';
+    tdNote.title = row.notes || '';
+    tr.appendChild(tdNote);
+    const tdDim = document.createElement('td'); tdDim.textContent = row.dimensions || ''; tr.appendChild(tdDim);
+    const tdQty = document.createElement('td'); tdQty.textContent = row.planned_qty || ''; tr.appendChild(tdQty);
+
+    const tdBtn = document.createElement('td');
+    tdBtn.className = 'whitespace-nowrap';
+    const deliverBtn = document.createElement('button');
+    deliverBtn.className = 'btn-primary btn-sm';
+    deliverBtn.textContent = '📦 Leverera in';
+    deliverBtn.disabled = !enabled || row.local_status === 'delivered';
+    deliverBtn.addEventListener('click', (e) => { e.stopPropagation(); deliverIn(row); });
+    tdBtn.appendChild(deliverBtn);
+    if (row.local_status !== 'delivered') {
+      const markBtn = document.createElement('button');
+      markBtn.className = 'btn-ghost btn-sm ml-1';
+      markBtn.textContent = 'Markera levererad';
+      markBtn.disabled = !enabled;
+      markBtn.addEventListener('click', (e) => { e.stopPropagation(); markDelivered(row.delivery_row_id); });
+      tdBtn.appendChild(markBtn);
+    }
+    tr.appendChild(tdBtn);
+
+    const detail = document.createElement('tr');
+    detail.className = 'hidden bg-slate-50 dark:bg-main';
+    const detailTd = document.createElement('td');
+    detailTd.colSpan = 12;
+    detailTd.className = 'text-xs text-slate-600 dark:text-slate-300 px-4 py-2 font-mono';
+    detailTd.innerHTML = renderEvidence(row);
+    detail.appendChild(detailTd);
+    tr.addEventListener('click', () => detail.classList.toggle('hidden'));
+
+    tbody.appendChild(tr);
+    tbody.appendChild(detail);
+  }
+}
+
+function renderEvidence(row) {
+  let ev = {};
+  try { ev = JSON.parse(row.evidence_json || '{}'); } catch (e) {}
+  const lines = [];
+  const add = (k, v) => { if (v) lines.push('<div><span class="text-slate-400">' + escapeHtml(k) + ':</span> ' + escapeHtml(String(v)) + '</div>'); };
+  add('Artikel', ev.part_description);
+  add('Extra beskrivning (rå)', ev.extra_description);
+  add('Cert-fil', ev.cert_filename);
+  add('Cert-material', ev.cert_material);
+  add('Cert-charge', ev.cert_charge);
+  add('Matchat ordernr (B)', ev.order_number);
+  add('Matchning', ev.match_by);
+  add('AI-not', row.notes);
+  return lines.length ? lines.join('') : '<span class="italic text-slate-400">Ingen evidens</span>';
+}
+
+async function runUpcoming() {
+  const btn = document.getElementById('upcomingRunBtn');
+  if (btn) btn.disabled = true;
+  try { await fetch('/api/upcoming/run', { method: 'POST' }); } catch (e) { console.warn(e); }
+  // SSE 'upcoming' uppdaterar listan + knappstate när körningen är klar.
+}
+
+async function deliverIn(row) {
+  let msg = 'Öppna Monitor-inleveransrutinen för order ' + (row.order_number || '?') + '?';
+  if (row.material_ok === 'mismatch') {
+    msg = '⚠ MATERIALAVVIKELSE: certet (' + (row.our_material || '?') + ') matchar inte kravet (' +
+      (row.required_material || '?') + ').\n\nDetta blockeras — leverera INTE in utan att reda ut det.\n\nFortsätt ändå?';
+  }
+  if (!confirm(msg)) return;
+  try {
+    const r = await fetch('/api/upcoming/deliver-in', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ delivery_row_id: row.delivery_row_id, confirm: true }),
+    });
+    const data = await r.json().catch(() => ({}));
+    if (r.status === 409 || data.blocked) { alert('Blockerad: ' + (data.reason || 'materialavvikelse')); return; }
+    if (!r.ok) { alert('Fel: ' + (data.reason || r.statusText)); return; }
+    if (data.started) {
+      alert('Monitor-rutinen öppnad för order ' + data.order_number + '.\nRad ' + data.purchase_order_row_id +
+        ', artikel ' + (data.part_number || data.part_id) + ', antal ' + (data.planned_qty || '?') +
+        '.\nBekräfta raden i Monitor-klienten.');
+    }
+  } catch (e) { alert('Fel: ' + e); }
+}
+
+async function markDelivered(rowId) {
+  try {
+    await fetch('/api/upcoming/mark-delivered', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ delivery_row_id: rowId }),
+    });
+  } catch (e) { console.warn(e); }
+}
+
+function fmtWhen(iso) {
+  try { return new Date(iso).toLocaleString('sv-SE', { dateStyle: 'short', timeStyle: 'short' }); }
+  catch (e) { return iso; }
 }
 
 function renderReview(items) {

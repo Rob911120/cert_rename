@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"cert-renamer/internal/monitor"
@@ -47,6 +48,15 @@ type Server struct {
 
 	uploadMu   sync.Mutex
 	workerKick chan struct{}
+
+	// Kommande inleveranser: koalescerande kick (storlek 1) + en running-vakt som
+	// delas av schemat och "Kör nu" så att de aldrig dubbelkörs.
+	refreshKick chan struct{}
+	refreshing  atomic.Bool
+
+	// driveRoutine är indirektion till DriveMonitorRoutine så deliver-in-gaten kan
+	// enhetstestas (tester ersätter den med en räknande stub). Default = riktig.
+	driveRoutine func(routine, orderNumber string, save bool) error
 }
 
 // New bygger en ny Server med Config + Costs från disk och initierar databasen.
@@ -58,13 +68,14 @@ func New() *Server {
 	}
 
 	srv := &Server{
-		cfg:        store.LoadConfig(),
-		db:         db,
-		repo:       store.NewRepository(db),
-		costs:      store.LoadCosts(),
-		subs:       map[chan ssEvent]struct{}{},
-		sickanSess: newSickanSessions(),
-		workerKick: make(chan struct{}, 1),
+		cfg:         store.LoadConfig(),
+		db:          db,
+		repo:        store.NewRepository(db),
+		costs:       store.LoadCosts(),
+		subs:        map[chan ssEvent]struct{}{},
+		sickanSess:  newSickanSessions(),
+		workerKick:  make(chan struct{}, 1),
+		refreshKick: make(chan struct{}, 1),
 	}
 
 	// Kör reconciliation om inbox är satt
@@ -83,6 +94,8 @@ func New() *Server {
 	// Ingen Monitor-inloggning vid start: varje login skickar ForceRelogin:true
 	// och loggar ut den interaktiva Monitor-sessionen. Vi loggar in lazy först
 	// när ett verktyg faktiskt behöver läsa via API:t (ensureMonitor).
+
+	srv.driveRoutine = srv.DriveMonitorRoutine
 
 	return srv
 }
@@ -189,5 +202,9 @@ func NewMux(s *Server) *http.ServeMux {
 	mux.HandleFunc("/api/sickan/model", s.handleSickanModel)
 	mux.HandleFunc("/api/upload", s.handleUpload)
 	mux.HandleFunc("/api/upload-delivery-note", s.handleUploadDeliveryNote)
+	mux.HandleFunc("/api/upcoming", s.handleUpcoming)
+	mux.HandleFunc("/api/upcoming/run", s.handleUpcomingRun)
+	mux.HandleFunc("/api/upcoming/mark-delivered", s.handleUpcomingMarkDelivered)
+	mux.HandleFunc("/api/upcoming/deliver-in", s.handleUpcomingDeliverIn)
 	return mux
 }

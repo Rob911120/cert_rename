@@ -76,6 +76,17 @@ Returnera ALLTID via verktyget extract_delivery_note.
 - confidence: "high"/"medium"/"low".
 Lämna fält tomma (eller 0 för quantity) om de inte framgår. Svara inte med text utanför verktyget.`
 
+const upcomingSystemPrompt = `Du är materialgranskare på en stålverkstad. Du får en BESTÄLLD artikel (med beskrivning och en extra beskrivning som ofta innehåller stålsort och cert-krav) och det MATERIALCERT vi redan har matchat mot ordern. Avgör om certets material stämmer med det beställda.
+
+Returnera ALLTID via verktyget judge_material:
+- required_material: den ståldesignation som är BESTÄLLD enligt artikelns beskrivningar (t.ex. "S355J2"). Tom om det inte framgår.
+- required_cert: vilken certnivå som krävs om det framgår (t.ex. "3.1"). Tom annars.
+- our_material: materialet enligt certet vi har (normalisera från det givna cert-materialet).
+- material_ok: "ok" om certets material uppfyller det beställda, "mismatch" om de tydligt skiljer sig (annan stålsort/-klass, t.ex. S275 mot S355), "unknown" om underlaget inte räcker för en säker dom.
+- notes: kort motivering på svenska — peka på det som avgjorde domen.
+
+Var konservativ: hellre "unknown" än en gissad "ok". Likvärdiga beteckningar (S355J2 vs S355J2+N) kan vara ok; faktiska avvikelser i stålsort/-klass är mismatch.`
+
 var extractionTool = anthropic.ToolParam{
 	Name:        "submit_extraction",
 	Description: anthropic.String("Lämna extraherade fält från certifikatet."),
@@ -153,5 +164,20 @@ var verifyTool = anthropic.ToolParam{
 			"reason":      map[string]any{"type": "string"},
 		},
 		Required: []string{"any_is_cert", "reason"},
+	},
+}
+
+var upcomingTool = anthropic.ToolParam{
+	Name:        "judge_material",
+	Description: anthropic.String("Lämna materialdomen för en kommande inleverans (beställt vs cert)."),
+	InputSchema: anthropic.ToolInputSchemaParam{
+		Properties: map[string]any{
+			"required_material": map[string]any{"type": "string"},
+			"required_cert":     map[string]any{"type": "string"},
+			"our_material":      map[string]any{"type": "string"},
+			"material_ok":       map[string]any{"type": "string", "enum": []string{"ok", "mismatch", "unknown"}},
+			"notes":             map[string]any{"type": "string"},
+		},
+		Required: []string{"required_material", "required_cert", "our_material", "material_ok", "notes"},
 	},
 }

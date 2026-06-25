@@ -4,16 +4,18 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 )
 
-// Query bygger OData-query-options ($filter/$select/$expand/$orderby/$top) för
-// Monitors queryable endpoints. Chainbar: NewQuery().Filter(...).Top(...).
+// Query bygger OData-query-options ($filter/$select/$expand/$orderby/$top/$skip)
+// för Monitors queryable endpoints. Chainbar: NewQuery().Filter(...).Top(...).
 type Query struct {
 	filter  string
 	selects []string
 	expand  []string
 	orderby string
 	top     int
+	skip    int
 }
 
 // NewQuery skapar en tom query.
@@ -33,6 +35,10 @@ func (q *Query) OrderBy(o string) *Query { q.orderby = o; return q }
 
 // Top begränsar antalet rader ($top).
 func (q *Query) Top(n int) *Query { q.top = n; return q }
+
+// Skip hoppar över de n första raderna ($skip). Används för paginering: hämta
+// sida för sida (Skip(0), Skip(top), Skip(2*top) …) tills en tom sida kommer.
+func (q *Query) Skip(n int) *Query { q.skip = n; return q }
 
 // Values bygger url.Values med OData-options. Tomma options utelämnas.
 func (q *Query) Values() url.Values {
@@ -55,8 +61,21 @@ func (q *Query) Values() url.Values {
 	if q.top > 0 {
 		v.Set("$top", strconv.Itoa(q.top))
 	}
+	if q.skip > 0 {
+		v.Set("$skip", strconv.Itoa(q.skip))
+	}
 	return v
 }
 
 // odataEsc escapar enkel-citattecken i ett OData-strängliteral ('' = ett ').
 func odataEsc(s string) string { return strings.ReplaceAll(s, "'", "''") }
+
+// odataDate formaterar en tidpunkt som ett OData-datumliteral (ISO 8601, UTC),
+// t.ex. "2026-06-25T16:30:00Z" — för filter som "DeliveryDate ge <from>". OData
+// vill ha datum/tid OCITERAT (Edm.DateTimeOffset), till skillnad från strängar.
+//
+// VERIFIERA: om Monitors DeliveryDate är Edm.Date (datum utan tid) vill servern
+// i stället ha "2026-06-25" utan tidsdel — justeras efter Steg-0-dumpen.
+func odataDate(t time.Time) string {
+	return t.UTC().Format("2006-01-02T15:04:05Z")
+}
