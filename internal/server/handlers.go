@@ -27,20 +27,16 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"inbox_dir":          c.InboxDir,
-			"theme":              c.Theme,
-			"autostart":          c.Autostart,
-			"api_key_hint":       hint,
-			"sickan_model":       c.SickanModel,
-			"b_number_mode":      c.BNumberMode,
-			"monitor_url":        c.MonitorURL,
-			"monitor_user":       c.MonitorUser,
-			"monitor_configured": c.MonitorURL != "" && c.MonitorUser != "" && c.MonitorPassword != "",
-
-			"monitor_link_report_arrival": c.MonitorLinkReportArrival,
-			"monitor_link_inspection":     c.MonitorLinkInspection,
-			"monitor_window_title":        c.MonitorWindowTitle,
-			"monitor_ui_auto_save":        c.MonitorUIAutoSave,
+			"inbox_dir":            c.InboxDir,
+			"theme":                c.Theme,
+			"autostart":            c.Autostart,
+			"api_key_hint":         hint,
+			"sickan_model":         c.SickanModel,
+			"b_number_mode":        c.BNumberMode,
+			"monitor_url":          c.MonitorURL,
+			"monitor_user":         c.MonitorUser,
+			"monitor_configured":   c.MonitorURL != "" && c.MonitorUser != "" && c.MonitorPassword != "",
+			"monitor_ui_auto_save": c.MonitorUIAutoSave,
 		})
 		return
 	}
@@ -68,27 +64,12 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		if c.MonitorPassword == "" {
 			c.MonitorPassword = s.cfg.MonitorPassword
 		}
-		// UI-automationslänkar/titel: tomma = behåll sparade (samma som ovan).
 		// MonitorUIAutoSave (bool) skickas alltid med av UI:t, som autostart.
-		if c.MonitorLinkReportArrival == "" {
-			c.MonitorLinkReportArrival = s.cfg.MonitorLinkReportArrival
-		}
-		if c.MonitorLinkInspection == "" {
-			c.MonitorLinkInspection = s.cfg.MonitorLinkInspection
-		}
-		if c.MonitorWindowTitle == "" {
-			c.MonitorWindowTitle = s.cfg.MonitorWindowTitle
-		}
-		monitorChanged := c.MonitorURL != s.cfg.MonitorURL ||
-			c.MonitorUser != s.cfg.MonitorUser ||
-			c.MonitorPassword != s.cfg.MonitorPassword
+		// Ingen Monitor-inloggning här — den sker lazy först vid faktisk
+		// API-användning (annars loggas den interaktiva Monitor-sessionen ut).
 		s.cfg = c
 		s.mu.Unlock()
 		_ = store.SaveConfig(c)
-		// Anslut om mot Monitor när uppgifterna ändrats, utan omstart.
-		if monitorChanged {
-			s.connectMonitor()
-		}
 		w.WriteHeader(204)
 		return
 	}

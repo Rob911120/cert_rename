@@ -234,16 +234,13 @@
       <div class="panel-section">
         <div class="panel-label">🖥️ Monitor UI-styrning (Windows)</div>
         <div class="text-xs text-slate-500 dark:text-slate-400 mb-2">
-          Styr Monitor-klienten direkt när skriv-API:t inte är licensierat. Klistra in
-          monitor://-länkarna till rutinerna. Ctrl+S (spara) skickas bara om auto-spara är på.
+          Styr Monitor-klienten direkt (skriv-API:t är inte licensierat). Rutinerna är
+          inbyggda. Ctrl+S (spara) skickas bara om auto-spara är på.
         </div>
         <div class="flex flex-col gap-2">
-          <input type="text" id="monitorLinkArrivalInput" placeholder="monitor://… Rapportera inleverans" autocomplete="off" class="input-field">
-          <input type="text" id="monitorLinkInspectionInput" placeholder="monitor://… Mottagningskontroll" autocomplete="off" class="input-field">
           <label class="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-200">
-            <input type="checkbox" id="monitorAutoSaveInput"> Auto-spara (skicka Ctrl+S automatiskt)
+            <input type="checkbox" id="monitorAutoSaveInput" onchange="saveMonitorUI()"> Auto-spara (skicka Ctrl+S automatiskt)
           </label>
-          <button class="btn-primary" onclick="saveMonitorUI()">Spara UI-styrning</button>
         </div>
       </div>
 
@@ -396,8 +393,6 @@ async function loadConfig() {
   }
   // Monitor UI-styrning
   cfg.monitor_ui_auto_save = !!data.monitor_ui_auto_save;
-  if (data.monitor_link_report_arrival) document.getElementById('monitorLinkArrivalInput').value = data.monitor_link_report_arrival;
-  if (data.monitor_link_inspection)     document.getElementById('monitorLinkInspectionInput').value = data.monitor_link_inspection;
   document.getElementById('monitorAutoSaveInput').checked = cfg.monitor_ui_auto_save;
   document.documentElement.dataset.theme = cfg.theme;
   setActiveSegment('themeMode', cfg.theme);
@@ -438,12 +433,7 @@ async function saveMonitor() {
 
 async function saveMonitorUI() {
   cfg.monitor_ui_auto_save = document.getElementById('monitorAutoSaveInput').checked;
-  const overrides = {
-    monitor_link_report_arrival: document.getElementById('monitorLinkArrivalInput').value.trim(),
-    monitor_link_inspection:     document.getElementById('monitorLinkInspectionInput').value.trim(),
-    monitor_ui_auto_save:        cfg.monitor_ui_auto_save,
-  };
-  const r = await postConfig(overrides);
+  const r = await postConfig({ monitor_ui_auto_save: cfg.monitor_ui_auto_save });
   if (!r.ok) { alert(await r.text()); return; }
   loadConfig();
 }

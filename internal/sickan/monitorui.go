@@ -10,7 +10,7 @@ import (
 // ---------------------------------------------------------------------------
 // Monitor UI-automation-verktyg. När Monitors skriv-API inte är licensierat
 // (403 "Monitor.API is not available for this system") styr vi i stället
-// skrivbordsklienten: öppna rutinen via monitor://-länk, fyll i ordernummer,
+// skrivbordsklienten: öppna rutinen via mond://-länk, fyll i ordernummer,
 // hämta listan (Ctrl+L) och — efter uttrycklig bekräftelse — spara (Ctrl+S).
 // Själva OS-anropet ligger i server-paketet (Notifier.DriveMonitorRoutine).
 // ---------------------------------------------------------------------------
@@ -63,13 +63,8 @@ func (tb *Toolbox) monitorUIReportArrival(input json.RawMessage) (string, error)
 	}
 
 	routineName := "Rapportera inleverans"
-	link := tb.Cfg.MonitorLinkReportArrival
 	if routine == "inspection" {
 		routineName = "Mottagningskontroll"
-		link = tb.Cfg.MonitorLinkInspection
-	}
-	if link == "" {
-		return "", fmt.Errorf("ingen monitor://-länk konfigurerad för %q — fyll i den under ⚙️ Inställningar → Monitor", routineName)
 	}
 
 	// GATE: utan confirm=true → förhandsvisa, gör inget.

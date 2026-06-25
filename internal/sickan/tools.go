@@ -31,13 +31,15 @@ type Notifier interface {
 }
 
 // Toolbox knyter ihop config + notifier + repo för en chat-session.
-// Monitor är inköps-ERP-klienten (kan vara nil om Monitor inte är konfigurerad
-// eller login misslyckats — verktygen hanterar det gracefully).
+// Monitor är inköps-ERP-klienten. Den är nil tills ett verktyg faktiskt behöver
+// API:t: då anropar monitorReady() MonitorConnect för att logga in lazy (varje
+// login loggar ut den interaktiva Monitor-sessionen, så vi gör det inte i onödan).
 type Toolbox struct {
-	Cfg     store.Config
-	N       Notifier
-	Repo    *store.Repository
-	Monitor *monitor.Client
+	Cfg            store.Config
+	N              Notifier
+	Repo           *store.Repository
+	Monitor        *monitor.Client
+	MonitorConnect func() (*monitor.Client, error)
 }
 
 // ToolDefs returnerar tool-defs som skickas till Claude i varje request.
