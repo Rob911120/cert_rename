@@ -146,6 +146,7 @@ func main() {
 	srv := server.New()
 	mux := server.NewMux(srv)
 	go srv.Autostart()
+	srv.StartUpcomingSchedule() // väggklocks-poller + catch-up (no-op tills UpcomingEnabled)
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

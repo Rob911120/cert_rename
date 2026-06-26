@@ -53,11 +53,36 @@ func main() {
 		limit     = flag.Int("limit", 0, "kör bara de N första kandidaterna (0 = alla)")
 		inter     = flag.Bool("interactive", false, "fråga efter varje kandidat om den landade på ordern (j/n)")
 		dryRun    = flag.Bool("dry-run", false, "generera bara kandidatlistan, öppna ingenting")
+
+		// Steg-0-dump (läs-läge): logga in mot Monitor och dumpa rå JSON så att de
+		// osäkra fälten i planen kan verifieras innan UpcomingEnabled slås på.
+		dump     = flag.Bool("dump", false, "läs-läge: logga in och dumpa rå JSON (PurchaseOrderDeliveryRows + PurchaseOrderRows + Parts) för Steg-0-grinden")
+		dumpURL  = flag.String("url", "", "Monitor-URL (annars MONITOR_URL / config.json)")
+		dumpUser = flag.String("user", "", "Monitor-användare (annars MONITOR_USER / config.json)")
+		dumpPass = flag.String("password", "", "Monitor-lösenord (annars MONITOR_PASSWORD / config.json)")
+		dumpLang = flag.String("lang", "sv", "språksegment i API-pathen (sv/se/en) — VERIFIERA mot servern")
+		dumpOut  = flag.String("dumpout", "monitor-dump-out", "mapp för rå-JSON-dumparna")
+		dumpTop  = flag.Int("top", 3, "antal rader per endpoint ($top)")
 	)
 	flag.Parse()
 
 	if *capture {
 		if err := runCapture(); err != nil {
+			fmt.Fprintln(os.Stderr, "fel:", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	if *dump {
+		if err := runDump(dumpOptions{
+			url:    *dumpURL,
+			user:   *dumpUser,
+			pass:   *dumpPass,
+			lang:   *dumpLang,
+			outDir: *dumpOut,
+			top:    *dumpTop,
+		}); err != nil {
 			fmt.Fprintln(os.Stderr, "fel:", err)
 			os.Exit(1)
 		}

@@ -19,6 +19,7 @@ import (
 
 	"cert-renamer/internal/cert"
 	"cert-renamer/internal/eml"
+	"cert-renamer/internal/monitor"
 	"cert-renamer/internal/store"
 )
 
@@ -180,6 +181,8 @@ const (
 type testNotifier struct {
 	okCount int
 	repo    *store.Repository
+	mon     *monitor.Client // nil i de flesta tester
+	monErr  error           // returneras av MonitorClient() när mon är nil
 }
 
 func (n *testNotifier) Logf(format string, args ...any)                    {}
@@ -189,6 +192,7 @@ func (n *testNotifier) BroadcastStats()                                     {}
 func (n *testNotifier) BroadcastQueue()                                     {}
 func (n *testNotifier) BroadcastReview()                                    {}
 func (n *testNotifier) Repo() *store.Repository                             { return n.repo }
+func (n *testNotifier) MonitorClient() (*monitor.Client, error)             { return n.mon, n.monErr }
 
 // startStubAnthropic returnerar en httptest-server som svarar på POST
 // /v1/messages baserat på request-bodyns tool_choice.name (eller tools[0].name
@@ -281,8 +285,16 @@ func setupTestInbox(t *testing.T) (store.Config, *testNotifier) {
 	t.Cleanup(func() { db.Close() })
 	repo := store.NewRepository(db)
 
-	return cfg, &testNotifier{repo: repo}
+	return cfg, &testNotifier{repo: repo, monErr: errNoMonitorInTest}
 }
+
+// errNoMonitorInTest gör att MonitorClient() failar tydligt om något test råkar
+// kalla den utan att ha satt en stub-klient.
+var errNoMonitorInTest = errTest("ingen Monitor-klient i test")
+
+type errTest string
+
+func (e errTest) Error() string { return string(e) }
 
 // copyFixture kopierar en fixture från testdata/ till inbox-roten och
 // returnerar den nya sökvägen.

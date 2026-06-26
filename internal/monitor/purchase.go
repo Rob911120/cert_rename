@@ -3,15 +3,25 @@ package monitor
 import (
 	"context"
 	"fmt"
+	"strings"
+	"time"
 )
 
 // Endpoint-paths (relativt apiBase()). Verifierade mot dokumentationscrawlen.
 const (
-	pathPurchaseOrders    = "/api/v1/Purchase/PurchaseOrders"
-	pathPurchaseOrderRows = "/api/v1/Purchase/PurchaseOrderRows"
-	pathSuppliers         = "/api/v1/Purchase/Suppliers"
-	pathProductRecords    = "/api/v1/Inventory/ProductRecords"
+	pathPurchaseOrders            = "/api/v1/Purchase/PurchaseOrders"
+	pathPurchaseOrderRows         = "/api/v1/Purchase/PurchaseOrderRows"
+	pathPurchaseOrderDeliveryRows = "/api/v1/Purchase/PurchaseOrderDeliveryRows"
+	pathSuppliers                 = "/api/v1/Purchase/Suppliers"
+	pathProductRecords            = "/api/v1/Inventory/ProductRecords"
+	pathParts                     = "/api/v1/Inventory/Parts"
 )
+
+// upcomingPageSize är $top per sida vid hämtning av kommande inleveranser.
+const upcomingPageSize = 200
+
+// partsBatchSize är hur många artikel-ID:n som slås ihop per "Id eq … or …"-anrop.
+const partsBatchSize = 20
 
 // ListPurchaseOrders listar inköpsorder enligt query (nil = default Top 50).
 func (c *Client) ListPurchaseOrders(ctx context.Context, q *Query) ([]PurchaseOrder, error) {
@@ -98,4 +108,65 @@ func (c *Client) FindProductRecords(ctx context.Context, charge string) ([]Produ
 	var out []ProductRecord
 	err := c.getList(ctx, pathProductRecords, q, &out)
 	return out, err
+}
+
+// GetUpcomingDeliveryRows hämtar kommande inleveransrader i fönstret [from, to]:
+// rader vars DeliveryDate ligger i intervallet och som ännu inte anlänt
+// (ArrivedQuantity eq 0). Orderraden och dess artikel kommer inline via
+// $expand=PurchaseOrderRow($expand=Part) (eliminerar ett GetPart-anrop per rad).
+// Paginerat via getAllPages (loopar tills tom sida / följer @odata.nextLink).
+//
+// VERIFIERA (Steg 0): att PurchaseOrderDeliveryRows används i Pellys Monitor
+// (annars fallback till PurchaseOrderRows + RestQuantity gt 0), exakt semantik
+// för "ej anländ" (ArrivedQuantity eq 0?), samt att DeliveryDate är ifyllt.
+func (c *Client) GetUpcomingDeliveryRows(ctx context.Context, from, to time.Time) ([]PurchaseOrderDeliveryRow, error) {
+	filter := fmt.Sprintf(
+		"DeliveryDate ge %s and DeliveryDate le %s and ArrivedQuantity eq 0",
+		odataDate(from), odataDate(to),
+	)
+	q := NewQuery().
+		Filter(filter).
+		Expand("PurchaseOrderRow($expand=Part)").
+		OrderBy("DeliveryDate asc")
+	return getAllPages[PurchaseOrderDeliveryRow](ctx, c, pathPurchaseOrderDeliveryRows, q, upcomingPageSize)
+}
+
+// GetPartsByIds hämtar artiklar för en uppsättning ID:n, batchat i bitar om
+// partsBatchSize ("Id eq A or Id eq B …"), och returnerar dem som en karta per ID.
+// Tänkt som komplement när inline-$expand-datan saknas för någon rad — anroparen
+// faller annars tillbaka på Part som redan kom via GetUpcomingDeliveryRows.
+func (c *Client) GetPartsByIds(ctx context.Context, ids []ID) (map[ID]Part, error) {
+	out := map[ID]Part{}
+	uniq := dedupeIDs(ids)
+	for i := 0; i < len(uniq); i += partsBatchSize {
+		end := min(i+partsBatchSize, len(uniq))
+		chunk := uniq[i:end]
+		clauses := make([]string, 0, len(chunk))
+		for _, id := range chunk {
+			clauses = append(clauses, fmt.Sprintf("Id eq %d", id))
+		}
+		q := NewQuery().Filter(strings.Join(clauses, " or ")).Top(len(chunk))
+		var parts []Part
+		if err := c.getList(ctx, pathParts, q, &parts); err != nil {
+			return out, err
+		}
+		for _, p := range parts {
+			out[p.ID] = p
+		}
+	}
+	return out, nil
+}
+
+// dedupeIDs returnerar de unika ID:na (0 utelämnas) i ursprunglig ordning.
+func dedupeIDs(ids []ID) []ID {
+	seen := make(map[ID]bool, len(ids))
+	out := make([]ID, 0, len(ids))
+	for _, id := range ids {
+		if id == 0 || seen[id] {
+			continue
+		}
+		seen[id] = true
+		out = append(out, id)
+	}
+	return out
 }

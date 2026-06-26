@@ -7,6 +7,15 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
+	"strings"
+	"time"
+)
+
+// Defaultvärden för "Kommande inleveranser"-schemat.
+const (
+	DefaultUpcomingTime       = "16:30"
+	DefaultUpcomingWindowDays = 14
 )
 
 type Config struct {
@@ -28,6 +37,29 @@ type Config struct {
 	// (se internal/server/monitorui.go). AutoSave avgör om Ctrl+S
 	// (spara/registrera) får skickas automatiskt.
 	MonitorUIAutoSave bool `json:"monitor_ui_auto_save,omitempty"`
+
+	// Kommande inleveranser. UpcomingEnabled är HÅRD live-grind: av som default
+	// tills Steg 0 (auth + en riktig query) är grön på jobbdatorn. UpcomingTime
+	// är väggklockstid "HH:MM" för dagens schemalagda körning (default 16:30,
+	// ogiltig avvisas). UpcomingWindowDays är hur långt framåt vi hämtar (default 14).
+	UpcomingEnabled    bool   `json:"upcoming_enabled"`
+	UpcomingTime       string `json:"upcoming_time,omitempty"`
+	UpcomingWindowDays int    `json:"upcoming_window_days,omitempty"`
+}
+
+// NormalizeUpcoming sätter defaults och avvisar ogiltig UpcomingTime. Anropas
+// från LoadConfig och vid spara (handleConfig) så att resten av koden kan lita
+// på fälten.
+func (c *Config) NormalizeUpcoming() {
+	if strings.TrimSpace(c.UpcomingTime) == "" {
+		c.UpcomingTime = DefaultUpcomingTime
+	} else if _, err := time.Parse("15:04", c.UpcomingTime); err != nil {
+		log.Printf("⚠️  ogiltig upcoming_time %q — använder default %s", c.UpcomingTime, DefaultUpcomingTime)
+		c.UpcomingTime = DefaultUpcomingTime
+	}
+	if c.UpcomingWindowDays <= 0 {
+		c.UpcomingWindowDays = DefaultUpcomingWindowDays
+	}
 }
 
 func QueueDir(c Config) string         { return filepath.Join(c.InboxDir, "queue") }
@@ -77,6 +109,19 @@ func LoadConfig() Config {
 	if v := os.Getenv("MONITOR_PASSWORD"); v != "" {
 		c.MonitorPassword = v
 	}
+	// Kommande inleveranser: env-override (samma mönster som Monitor).
+	if v := os.Getenv("UPCOMING_ENABLED"); v != "" {
+		c.UpcomingEnabled = v == "1" || strings.EqualFold(v, "true")
+	}
+	if v := os.Getenv("UPCOMING_TIME"); v != "" {
+		c.UpcomingTime = v
+	}
+	if v := os.Getenv("UPCOMING_WINDOW_DAYS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			c.UpcomingWindowDays = n
+		}
+	}
+	c.NormalizeUpcoming()
 	return c
 }
 

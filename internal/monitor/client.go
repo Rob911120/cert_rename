@@ -230,6 +230,162 @@ func (c *Client) getList(ctx context.Context, path string, q *Query, out any) er
 	return decodeList(data, out)
 }
 
+// GetRaw gör en autentiserad GET mot apiBase()+path med OData-query och
+// returnerar de OAVKODADE svarsbytena (envelopen {"value":...} bevaras). Tänkt
+// för diagnostik (cmd/monitor-probe Steg-0-dump) som behöver inspektera de
+// exakta fältnamn Monitor skickar innan typerna i types.go fästs. Vid icke-2xx
+// returneras bodyn tillsammans med felet så att felmeddelanden kan dumpas.
+func (c *Client) GetRaw(ctx context.Context, path string, q *Query) ([]byte, error) {
+	u := c.apiBase() + path
+	if vals := q.Values(); len(vals) > 0 {
+		u += "?" + vals.Encode()
+	}
+	resp, err := c.send(ctx, func() (*http.Request, error) {
+		r, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+		if err != nil {
+			return nil, err
+		}
+		r.Header.Set("Accept", "application/json")
+		return r, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	data, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return data, fmt.Errorf("GET %s: status %d: %s", path, resp.StatusCode, strings.TrimSpace(string(data)))
+	}
+	return data, nil
+}
+
+// maxPages är ett skydd mot en server som ignorerar $skip (annars oändlig loop).
+const maxPages = 10000
+
+// getAllPages hämtar ALLA rader för en query genom paginering. Strategin väljs
+// efter vad servern gör på första sidan:
+//   - bär svaret @odata.nextLink → följ länkarna tills ingen mer kommer
+//     (server-driven, självterminerande).
+//   - annars → paginera själva med $skip och stanna FÖRST på en TOM sida (inte
+//     på "färre än begärt": Monitor kan ha ett eget sidtak under vårt $top, och
+//     att stanna där skulle tyst trunkera resultatet).
+//
+// Auto-relogin på 401 bevaras eftersom varje sida går via c.getPage → c.send.
+func getAllPages[T any](ctx context.Context, c *Client, path string, q *Query, pageSize int) ([]T, error) {
+	if pageSize <= 0 {
+		pageSize = 200
+	}
+	base := *q // kopia så anroparens query inte muteras
+	base.top = pageSize
+	if base.skip < 0 {
+		base.skip = 0
+	}
+
+	pageURL := func(skip int) string {
+		pq := base
+		pq.skip = skip
+		u := c.apiBase() + path
+		if vals := pq.Values(); len(vals) > 0 {
+			u += "?" + vals.Encode()
+		}
+		return u
+	}
+
+	var all []T
+
+	// Sida 1.
+	var first []T
+	next, err := c.getPage(ctx, pageURL(base.skip), &first)
+	if err != nil {
+		return all, err
+	}
+	all = append(all, first...)
+
+	if next != "" {
+		// Server-driven paginering: följ @odata.nextLink tills slut.
+		for i := 0; i < maxPages && next != ""; i++ {
+			var batch []T
+			next, err = c.getPage(ctx, c.resolveNext(next), &batch)
+			if err != nil {
+				return all, err
+			}
+			all = append(all, batch...)
+		}
+		return all, nil
+	}
+
+	// Klient-driven $skip-paginering: fortsätt tills en tom sida.
+	if len(first) == 0 {
+		return all, nil
+	}
+	skip := base.skip + len(first)
+	for i := 0; i < maxPages; i++ {
+		var batch []T
+		if _, err := c.getPage(ctx, pageURL(skip), &batch); err != nil {
+			return all, err
+		}
+		if len(batch) == 0 {
+			break
+		}
+		all = append(all, batch...)
+		skip += len(batch)
+	}
+	return all, nil
+}
+
+// getPage gör en autentiserad GET mot en absolut URL och avkodar svaret till out.
+// Returnerar ev. @odata.nextLink. Auto-relogin på 401 via c.send.
+func (c *Client) getPage(ctx context.Context, fullURL string, out any) (string, error) {
+	resp, err := c.send(ctx, func() (*http.Request, error) {
+		r, err := http.NewRequestWithContext(ctx, http.MethodGet, fullURL, nil)
+		if err != nil {
+			return nil, err
+		}
+		r.Header.Set("Accept", "application/json")
+		return r, nil
+	})
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	data, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("GET %s: status %d: %s", fullURL, resp.StatusCode, strings.TrimSpace(string(data)))
+	}
+	return decodePage(data, out)
+}
+
+// resolveNext gör en @odata.nextLink absolut. Monitor skickar (oftast) en absolut
+// URL; en relativ länk tolkas relativt service-roten apiBase().
+// VERIFIERA (Steg 0): exakt form på nextLink (absolut vs relativ, $skip vs $skiptoken).
+func (c *Client) resolveNext(next string) string {
+	if strings.HasPrefix(next, "http://") || strings.HasPrefix(next, "https://") {
+		return next
+	}
+	return c.apiBase() + "/" + strings.TrimLeft(next, "/")
+}
+
+// decodePage avkodar en sida ({"value":[...],"@odata.nextLink":"..."} eller en
+// bar array) till out och returnerar ev. nextLink.
+func decodePage(data []byte, out any) (string, error) {
+	t := bytes.TrimSpace(data)
+	if len(t) > 0 && t[0] == '{' {
+		var wrap struct {
+			Value    json.RawMessage `json:"value"`
+			NextLink string          `json:"@odata.nextLink"`
+		}
+		if err := json.Unmarshal(t, &wrap); err != nil {
+			return "", err
+		}
+		if len(wrap.Value) > 0 {
+			return wrap.NextLink, json.Unmarshal(wrap.Value, out)
+		}
+		// Objekt utan "value" — kan vara en enskild post.
+		return wrap.NextLink, json.Unmarshal(t, out)
+	}
+	return "", json.Unmarshal(t, out)
+}
+
 // decodeList avkodar antingen ett OData-wrappat svar {"value":[...]} eller en
 // bar JSON-array [...] till out.
 func decodeList(data []byte, out any) error {

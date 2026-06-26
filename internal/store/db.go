@@ -113,6 +113,55 @@ CREATE TABLE IF NOT EXISTS delivery_notes (
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- Kommande inleveranser (Monitor PurchaseOrderDeliveryRows) matchade mot cert.
+-- PK = Monitor-radens stabila Id (delivery_row_id) → merge dedupar delleveranser
+-- och bevarar operatörens local_status över en refresh.
+CREATE TABLE IF NOT EXISTS upcoming_deliveries (
+    delivery_row_id INTEGER PRIMARY KEY,
+    purchase_order_id INTEGER NOT NULL DEFAULT 0,
+    purchase_order_row_id INTEGER NOT NULL DEFAULT 0,
+    order_number TEXT NOT NULL DEFAULT '',
+    supplier_name TEXT NOT NULL DEFAULT '',
+    part_id INTEGER NOT NULL DEFAULT 0,
+    part_number TEXT NOT NULL DEFAULT '',
+    dimensions TEXT NOT NULL DEFAULT '',
+    planned_qty REAL NOT NULL DEFAULT 0,
+    delivery_date TEXT NOT NULL DEFAULT '',
+    cert_required BOOLEAN NOT NULL DEFAULT FALSE,
+    cert_status TEXT NOT NULL DEFAULT 'none_required',   -- none_required|missing|matched
+    cert_filename TEXT NOT NULL DEFAULT '',
+    match_by TEXT NOT NULL DEFAULT 'none',               -- b_number|charge_part|none
+    required_material TEXT NOT NULL DEFAULT '',
+    required_cert TEXT NOT NULL DEFAULT '',
+    our_material TEXT NOT NULL DEFAULT '',
+    material_ok TEXT NOT NULL DEFAULT 'unknown',         -- ok|mismatch|unknown
+    notes TEXT NOT NULL DEFAULT '',
+    evidence_json TEXT NOT NULL DEFAULT '',
+    delivery_raw TEXT NOT NULL DEFAULT '',
+    part_raw TEXT NOT NULL DEFAULT '',
+    local_status TEXT NOT NULL DEFAULT 'pending',        -- pending|delivered
+    first_seen TEXT NOT NULL DEFAULT (datetime('now')),
+    last_seen TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Nyckel/värde-tabell för app-tillstånd (t.ex. last_upcoming_run för schemat).
+CREATE TABLE IF NOT EXISTS app_state (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL DEFAULT ''
+);
+
+-- Cache för AI-materialdomen (sonnet) per innehålls-hash, så att identiska rader
+-- (samma artikel-ExtraDescription + samma cert) inte betalas varje kväll.
+CREATE TABLE IF NOT EXISTS upcoming_classifications (
+    cache_key TEXT PRIMARY KEY,
+    required_material TEXT NOT NULL DEFAULT '',
+    required_cert TEXT NOT NULL DEFAULT '',
+    our_material TEXT NOT NULL DEFAULT '',
+    material_ok TEXT NOT NULL DEFAULT 'unknown',
+    notes TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE INDEX IF NOT EXISTS idx_certificates_status ON certificates(status);
 CREATE INDEX IF NOT EXISTS idx_certificates_email_id ON certificates(email_id);
 CREATE INDEX IF NOT EXISTS idx_certificates_pdf_hash ON certificates(pdf_hash);
@@ -120,6 +169,8 @@ CREATE INDEX IF NOT EXISTS idx_ai_decisions_email_id ON ai_decisions(email_id);
 CREATE INDEX IF NOT EXISTS idx_ai_decisions_certificate_id ON ai_decisions(certificate_id);
 CREATE INDEX IF NOT EXISTS idx_cost_entries_certificate_id ON cost_entries(certificate_id);
 CREATE INDEX IF NOT EXISTS idx_delivery_notes_status ON delivery_notes(status);
+CREATE INDEX IF NOT EXISTS idx_upcoming_delivery_date ON upcoming_deliveries(delivery_date);
+CREATE INDEX IF NOT EXISTS idx_upcoming_cert_status ON upcoming_deliveries(cert_status);
 `
 
 // InitDB öppnar (eller skapar) SQLite-databasen och kör migrations.

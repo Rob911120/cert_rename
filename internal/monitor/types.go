@@ -1,6 +1,7 @@
 package monitor
 
 import (
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -59,6 +60,101 @@ type PurchaseOrderRow struct {
 	UnitId            ID      `json:"UnitId"`
 	ArrivalReporting  bool    `json:"ArrivalReporting"`
 	RowStatus         int     `json:"RowStatus"`
+	// Part fylls inline när raden hämtas med $expand=Part (eller nästlat via
+	// PurchaseOrderDeliveryRows $expand=PurchaseOrderRow($expand=Part)).
+	Part *Part `json:"Part,omitempty"`
+}
+
+// EnumValue tål att ett Monitor-enumfält serialiseras antingen som tal (3) eller
+// som sträng ("VariableInspection"). Lagras normaliserat som sträng så jämförelser
+// kan göras oavsett form. VERIFIERA (Steg 0) vilken form Monitor faktiskt skickar.
+type EnumValue string
+
+// UnmarshalJSON accepterar både 3 (tal), "VariableInspection" (sträng) och null.
+func (e *EnumValue) UnmarshalJSON(data []byte) error {
+	s := strings.Trim(strings.TrimSpace(string(data)), `"`)
+	if s == "null" {
+		s = ""
+	}
+	*e = EnumValue(s)
+	return nil
+}
+
+// Part — /api/v1/Inventory/Parts. Beskrivning + ExtraDescription (förväntas bära
+// stålsort + ev. cert-krav i fritext). ReceivingInspectionType + TraceabilityMode
+// styr om artikeln kräver materialcert (se RequiresCert). Raw bär hela artikelns
+// JSON för evidens i UI:t.
+//
+// VERIFIERA (Steg 0): att ExtraDescription bär stålsort/cert-krav; exakt
+// serialisering och värdemängd för ReceivingInspectionType (None/Always/
+// VariableInspection) och TraceabilityMode (Batch?); om CurrentAlloyId finns.
+type Part struct {
+	ID                      ID              `json:"Id"`
+	PartNumber              string          `json:"PartNumber"`
+	Description             string          `json:"Description"`
+	ExtraDescription        string          `json:"ExtraDescription"`
+	ReceivingInspectionType EnumValue       `json:"ReceivingInspectionType"` // VERIFIERA
+	TraceabilityMode        EnumValue       `json:"TraceabilityMode"`        // VERIFIERA
+	CurrentAlloyId          ID              `json:"CurrentAlloyId"`          // VERIFIERA
+	Raw                     json.RawMessage `json:"-"`                       // hela artikel-JSON:en
+}
+
+// UnmarshalJSON avkodar de kända fälten och fångar samtidigt råbytes i Raw.
+func (p *Part) UnmarshalJSON(data []byte) error {
+	type alias Part
+	var a alias
+	if err := json.Unmarshal(data, &a); err != nil {
+		return err
+	}
+	*p = Part(a)
+	p.Raw = append(json.RawMessage(nil), data...)
+	return nil
+}
+
+// RequiresCert avgör om artikeln kräver materialcert. VERIFIERA: exakt vilka
+// värden som gäller — defaulttolkningen är att tomt/None/0 inte kräver cert,
+// allt annat på ReceivingInspectionType kräver cert, samt TraceabilityMode=Batch.
+func (p *Part) RequiresCert() bool {
+	rit := normEnum(string(p.ReceivingInspectionType))
+	if rit != "" && rit != "none" && rit != "0" {
+		return true
+	}
+	tm := normEnum(string(p.TraceabilityMode))
+	return tm == "batch" || tm == "2" // VERIFIERA enum-värdet för Batch
+}
+
+func normEnum(s string) string { return strings.ToLower(strings.TrimSpace(s)) }
+
+// PurchaseOrderDeliveryRow — /api/v1/Purchase/PurchaseOrderDeliveryRows. Detta är
+// "kommande inleverans" per orderrad och dedupar delleveranser naturligt.
+// PurchaseOrderRow (och dess Part) kommer inline via
+// $expand=PurchaseOrderRow($expand=Part). Raw bär hela radens JSON för evidens.
+//
+// VERIFIERA (Steg 0): ArrivedQuantity-semantik (=0 = ej anländ?), att DeliveryDate
+// är ifyllt, samt ApprovedQuantity/GoodsMessage-fältnamn och RowStatus-enum.
+type PurchaseOrderDeliveryRow struct {
+	ID                 ID                `json:"Id"`
+	PurchaseOrderId    ID                `json:"PurchaseOrderId"`
+	PurchaseOrderRowId ID                `json:"PurchaseOrderRowId"`
+	DeliveryDate       string            `json:"DeliveryDate"`
+	ArrivedQuantity    float64           `json:"ArrivedQuantity"`
+	ApprovedQuantity   float64           `json:"ApprovedQuantity"`
+	GoodsMessage       string            `json:"GoodsMessage"` // VERIFIERA: fältnamn
+	PurchaseOrderRow   *PurchaseOrderRow `json:"PurchaseOrderRow,omitempty"`
+	Raw                json.RawMessage   `json:"-"` // hela radens JSON
+}
+
+// UnmarshalJSON avkodar de kända fälten (inkl. nästlad PurchaseOrderRow/Part) och
+// fångar samtidigt råbytes i Raw.
+func (r *PurchaseOrderDeliveryRow) UnmarshalJSON(data []byte) error {
+	type alias PurchaseOrderDeliveryRow
+	var a alias
+	if err := json.Unmarshal(data, &a); err != nil {
+		return err
+	}
+	*r = PurchaseOrderDeliveryRow(a)
+	r.Raw = append(json.RawMessage(nil), data...)
+	return nil
 }
 
 // Supplier — /api/v1/Purchase/Suppliers.
