@@ -269,28 +269,28 @@ func TestQuery_BuildsODataParams(t *testing.T) {
 
 // Paginering via @odata.nextLink: sida 1 (2 rader + nextLink) + sida 2 (1 rad,
 // ingen nextLink) → 3 rader. Verifierar också gemena operatorer i $filter och
-// nästlad $expand=PurchaseOrderRow($expand=Part).
-func TestGetUpcomingDeliveryRows_PaginatesViaNextLink(t *testing.T) {
+// $expand=Part.
+func TestGetUpcomingOrderRows_PaginatesViaNextLink(t *testing.T) {
 	var srv *httptest.Server
 	var hits int
 	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/001.1/login"):
 			_, _ = w.Write([]byte(`{"SessionId":"s1"}`))
-		case strings.Contains(r.URL.Path, "PurchaseOrderDeliveryRows"):
+		case strings.Contains(r.URL.Path, "PurchaseOrderRows"):
 			hits++
 			if hits == 1 {
-				// Sida 1 bär den fulla queryn — verifiera gemena operatorer + nästlad expand.
+				// Sida 1 bär den fulla queryn — verifiera gemena operatorer + expand.
 				f := r.URL.Query().Get("$filter")
-				for _, want := range []string{"DeliveryDate ge ", "DeliveryDate le ", "ArrivedQuantity eq 0"} {
+				for _, want := range []string{"DeliveryDate ge ", "DeliveryDate le ", "RestQuantity gt 0"} {
 					if !strings.Contains(f, want) {
 						t.Errorf("$filter %q saknar %q (gemena operatorer?)", f, want)
 					}
 				}
-				if exp := r.URL.Query().Get("$expand"); !strings.Contains(exp, "PurchaseOrderRow") || !strings.Contains(exp, "Part") {
-					t.Errorf("$expand = %q, saknar nästlad Part", exp)
+				if exp := r.URL.Query().Get("$expand"); !strings.Contains(exp, "Part") {
+					t.Errorf("$expand = %q, saknar Part", exp)
 				}
-				next := srv.URL + "/sv/001.1/api/v1/Purchase/PurchaseOrderDeliveryRows?%24skip=2"
+				next := srv.URL + "/sv/001.1/api/v1/Purchase/PurchaseOrderRows?%24skip=2"
 				_, _ = fmt.Fprintf(w, `{"value":[{"Id":"1"},{"Id":"2"}],"@odata.nextLink":%q}`, next)
 			} else {
 				// Sida 2 via nextLink (bär bara $skip i den här stubben).
@@ -307,9 +307,9 @@ func TestGetUpcomingDeliveryRows_PaginatesViaNextLink(t *testing.T) {
 		t.Fatalf("login: %v", err)
 	}
 	from := time.Date(2026, 6, 25, 0, 0, 0, 0, time.UTC)
-	rows, err := c.GetUpcomingDeliveryRows(context.Background(), from, from.AddDate(0, 0, 14))
+	rows, err := c.GetUpcomingOrderRows(context.Background(), from, from.AddDate(0, 0, 14))
 	if err != nil {
-		t.Fatalf("GetUpcomingDeliveryRows: %v", err)
+		t.Fatalf("GetUpcomingOrderRows: %v", err)
 	}
 	if len(rows) != 3 {
 		t.Fatalf("vill ha 3 rader (sida1=2 + sida2=1), fick %d: %+v", len(rows), rows)
@@ -321,13 +321,13 @@ func TestGetUpcomingDeliveryRows_PaginatesViaNextLink(t *testing.T) {
 
 // Servern har eget sidtak (2/sida) under vårt $top. Paginering MÅSTE fortsätta
 // tills en TOM sida — inte stanna på "färre än begärt" (tyst trunkering).
-func TestGetUpcomingDeliveryRows_SkipUntilEmptyDespiteServerCap(t *testing.T) {
+func TestGetUpcomingOrderRows_SkipUntilEmptyDespiteServerCap(t *testing.T) {
 	all := []string{`{"Id":"1"}`, `{"Id":"2"}`, `{"Id":"3"}`, `{"Id":"4"}`, `{"Id":"5"}`}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/001.1/login"):
 			_, _ = w.Write([]byte(`{"SessionId":"s1"}`))
-		case strings.Contains(r.URL.Path, "PurchaseOrderDeliveryRows"):
+		case strings.Contains(r.URL.Path, "PurchaseOrderRows"):
 			skip, _ := strconv.Atoi(r.URL.Query().Get("$skip"))
 			rows := []string{}
 			if skip < len(all) {
@@ -347,9 +347,9 @@ func TestGetUpcomingDeliveryRows_SkipUntilEmptyDespiteServerCap(t *testing.T) {
 	c := New(srv.URL)
 	_ = c.Login(context.Background(), "kalle", "hemligt")
 	from := time.Date(2026, 6, 25, 0, 0, 0, 0, time.UTC)
-	rows, err := c.GetUpcomingDeliveryRows(context.Background(), from, from.AddDate(0, 0, 14))
+	rows, err := c.GetUpcomingOrderRows(context.Background(), from, from.AddDate(0, 0, 14))
 	if err != nil {
-		t.Fatalf("GetUpcomingDeliveryRows: %v", err)
+		t.Fatalf("GetUpcomingOrderRows: %v", err)
 	}
 	if len(rows) != 5 {
 		t.Fatalf("vill ha 5 rader trots sidtak 2, fick %d", len(rows))
@@ -357,7 +357,7 @@ func TestGetUpcomingDeliveryRows_SkipUntilEmptyDespiteServerCap(t *testing.T) {
 }
 
 // En 401 mitt i pagineringen ska trigga relogin och fortsätta utan att tappa rader.
-func TestGetUpcomingDeliveryRows_ReloginMidPagination(t *testing.T) {
+func TestGetUpcomingOrderRows_ReloginMidPagination(t *testing.T) {
 	var srv *httptest.Server
 	var logins, hits int
 	var session string
@@ -367,11 +367,11 @@ func TestGetUpcomingDeliveryRows_ReloginMidPagination(t *testing.T) {
 			logins++
 			session = "s" + strconv.Itoa(logins)
 			_, _ = w.Write([]byte(`{"SessionId":"` + session + `"}`))
-		case strings.Contains(r.URL.Path, "PurchaseOrderDeliveryRows"):
+		case strings.Contains(r.URL.Path, "PurchaseOrderRows"):
 			hits++
 			switch hits {
 			case 1:
-				next := srv.URL + "/sv/001.1/api/v1/Purchase/PurchaseOrderDeliveryRows?%24skip=2"
+				next := srv.URL + "/sv/001.1/api/v1/Purchase/PurchaseOrderRows?%24skip=2"
 				_, _ = fmt.Fprintf(w, `{"value":[{"Id":"1"},{"Id":"2"}],"@odata.nextLink":%q}`, next)
 			case 2:
 				http.Error(w, "session expired", http.StatusUnauthorized) // utgången mitt i pagineringen
@@ -390,9 +390,9 @@ func TestGetUpcomingDeliveryRows_ReloginMidPagination(t *testing.T) {
 	c := New(srv.URL)
 	_ = c.Login(context.Background(), "kalle", "hemligt")
 	from := time.Date(2026, 6, 25, 0, 0, 0, 0, time.UTC)
-	rows, err := c.GetUpcomingDeliveryRows(context.Background(), from, from.AddDate(0, 0, 14))
+	rows, err := c.GetUpcomingOrderRows(context.Background(), from, from.AddDate(0, 0, 14))
 	if err != nil {
-		t.Fatalf("GetUpcomingDeliveryRows: %v", err)
+		t.Fatalf("GetUpcomingOrderRows: %v", err)
 	}
 	if len(rows) != 3 {
 		t.Fatalf("vill ha 3 rader över relogin, fick %d: %+v", len(rows), rows)
@@ -494,49 +494,43 @@ func TestPart_RequiresCert(t *testing.T) {
 	}
 }
 
-// En delivery-row med nästlad PurchaseOrderRow($expand=Part) ska avkoda alla nivåer
-// och bevara råbytes på både rad- och artikelnivå (för evidens i UI:t).
-func TestDeliveryRow_DecodesNestedAndCapturesRaw(t *testing.T) {
+// En orderrad med inline $expand=Part ska avkoda båda nivåer och bevara råbytes på
+// både rad- och artikelnivå (för evidens i UI:t).
+func TestOrderRow_DecodesInlinePartAndCapturesRaw(t *testing.T) {
 	body := []byte(`{
-		"Id": "555",
-		"PurchaseOrderId": "100",
-		"PurchaseOrderRowId": "11",
+		"Id": "11",
+		"ParentOrderId": "100",
+		"PartId": "5",
+		"OrderRowType": 1,
 		"DeliveryDate": "2026-07-01T00:00:00Z",
-		"ArrivedQuantity": 0,
-		"ApprovedQuantity": 0,
-		"PurchaseOrderRow": {
-			"Id": "11",
-			"ParentOrderId": "100",
-			"PartId": "5",
-			"RestQuantity": 10,
-			"Part": {
-				"Id": "5",
-				"PartNumber": "PL-S355-10",
-				"Description": "Plåt 10mm",
-				"ExtraDescription": "S355J2 +N, cert 3.1",
-				"ReceivingInspectionType": "Always",
-				"TraceabilityMode": "Batch"
-			}
+		"RestQuantity": 10,
+		"Part": {
+			"Id": "5",
+			"PartNumber": "PL-S355-10",
+			"Description": "Plåt 10mm",
+			"ExtraDescription": "S355J2 +N, cert 3.1",
+			"ReceivingInspectionType": "Always",
+			"TraceabilityMode": "Batch"
 		}
 	}`)
-	var row PurchaseOrderDeliveryRow
+	var row PurchaseOrderRow
 	if err := json.Unmarshal(body, &row); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if row.ID != 555 || row.PurchaseOrderId != 100 || row.PurchaseOrderRowId != 11 {
-		t.Fatalf("rad-ID:n fel: %+v", row)
+	if row.ID != 11 || row.ParentOrderId != 100 || row.PartId != 5 || row.RestQuantity != 10 {
+		t.Fatalf("rad-fält fel: %+v", row)
 	}
-	if row.PurchaseOrderRow == nil || row.PurchaseOrderRow.Part == nil {
-		t.Fatalf("nästlad PurchaseOrderRow/Part saknas: %+v", row.PurchaseOrderRow)
+	if row.Part == nil {
+		t.Fatalf("inline Part saknas: %+v", row)
 	}
-	part := row.PurchaseOrderRow.Part
+	part := row.Part
 	if part.PartNumber != "PL-S355-10" || part.ExtraDescription != "S355J2 +N, cert 3.1" {
 		t.Fatalf("artikelfält fel: %+v", part)
 	}
 	if !part.RequiresCert() {
 		t.Errorf("artikeln borde kräva cert (ReceivingInspectionType=Always)")
 	}
-	if len(row.Raw) == 0 || !strings.Contains(string(row.Raw), "PurchaseOrderRow") {
+	if len(row.Raw) == 0 || !strings.Contains(string(row.Raw), "RestQuantity") {
 		t.Errorf("row.Raw inte fångad")
 	}
 	if len(part.Raw) == 0 || !strings.Contains(string(part.Raw), "ExtraDescription") {

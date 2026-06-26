@@ -113,8 +113,8 @@ CREATE TABLE IF NOT EXISTS delivery_notes (
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
--- Kommande inleveranser (Monitor PurchaseOrderDeliveryRows) matchade mot cert.
--- PK = Monitor-radens stabila Id (delivery_row_id) → merge dedupar delleveranser
+-- Kommande inleveranser (Monitor PurchaseOrderRows) matchade mot cert.
+-- PK = Monitor-orderradens stabila Id (delivery_row_id) → merge dedupar delleveranser
 -- och bevarar operatörens local_status över en refresh.
 CREATE TABLE IF NOT EXISTS upcoming_deliveries (
     delivery_row_id INTEGER PRIMARY KEY,
