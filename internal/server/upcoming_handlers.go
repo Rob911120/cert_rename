@@ -39,7 +39,7 @@ func (s *Server) handleUpcomingMarkDelivered(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	var body struct {
-		DeliveryRowID int64 `json:"delivery_row_id"`
+		DeliveryRowID int64 `json:"delivery_row_id,string"` // sträng: 64-bitars-id, JS-precision
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -69,7 +69,7 @@ func (s *Server) handleUpcomingDeliverIn(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	var body struct {
-		DeliveryRowID int64 `json:"delivery_row_id"`
+		DeliveryRowID int64 `json:"delivery_row_id,string"` // sträng: 64-bitars-id, JS-precision
 		Confirm       bool  `json:"confirm"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {

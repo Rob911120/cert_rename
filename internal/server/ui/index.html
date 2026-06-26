@@ -1006,7 +1006,7 @@ function renderArticle(row, enabled) {
   deliverBtn.className = 'btn-primary btn-sm';
   deliverBtn.textContent = '📦 Leverera in';
   deliverBtn.disabled = !enabled || row.local_status === 'delivered';
-  deliverBtn.addEventListener('click', (e) => { e.stopPropagation(); deliverIn(row); });
+  deliverBtn.addEventListener('click', (e) => { e.stopPropagation(); deliverIn(row, deliverBtn); });
   actions.appendChild(deliverBtn);
   if (row.local_status !== 'delivered') {
     const markBtn = document.createElement('button');
@@ -1078,13 +1078,10 @@ async function runUpcoming() {
   // SSE 'upcoming' uppdaterar listan + knappstate när körningen är klar.
 }
 
-async function deliverIn(row) {
-  let msg = 'Öppna Monitor-inleveransrutinen för order ' + (row.order_number || '?') + '?';
-  if (row.material_ok === 'mismatch') {
-    msg = '⚠ MATERIALAVVIKELSE: certet (' + (row.our_material || '?') + ') matchar inte kravet (' +
-      (row.required_material || '?') + ').\n\nDetta blockeras — leverera INTE in utan att reda ut det.\n\nFortsätt ändå?';
-  }
-  if (!confirm(msg)) return;
+async function deliverIn(row, btn) {
+  // Öppnar Monitor-rutinen automatiskt (ingen bekräftelsedialog). Materialavvikelse
+  // blockeras hårt på servern (409). Resultatet syns i UI-loggen (📦 Leverera in …).
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Öppnar…'; }
   try {
     const r = await fetch('/api/upcoming/deliver-in', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
@@ -1092,13 +1089,13 @@ async function deliverIn(row) {
     });
     const data = await r.json().catch(() => ({}));
     if (r.status === 409 || data.blocked) { alert('Blockerad: ' + (data.reason || 'materialavvikelse')); return; }
-    if (!r.ok) { alert('Fel: ' + (data.reason || r.statusText)); return; }
-    if (data.started) {
-      alert('Monitor-rutinen öppnad för order ' + data.order_number + '.\nRad ' + data.purchase_order_row_id +
-        ', artikel ' + (data.part_number || data.part_id) + ', antal ' + (data.planned_qty || '?') +
-        '.\nBekräfta raden i Monitor-klienten.');
-    }
-  } catch (e) { alert('Fel: ' + e); }
+    if (!r.ok) { alert('Kunde inte öppna Monitor-rutinen: ' + (data.reason || r.statusText)); return; }
+    // Lyckades: Monitor-fönstret öppnas och loggraden visas — ingen popup behövs.
+  } catch (e) {
+    alert('Fel: ' + e);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '📦 Leverera in'; }
+  }
 }
 
 async function markDelivered(rowId) {

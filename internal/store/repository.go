@@ -695,12 +695,15 @@ const AppStateLastUpcomingRun = "last_upcoming_run"
 // UpcomingDelivery är en kommande inleveransrad (Monitor) matchad mot cert.
 // delivery_row_id (Monitor-radens stabila Id) är naturlig nyckel.
 type UpcomingDelivery struct {
-	DeliveryRowID      int64   `json:"delivery_row_id"`
-	PurchaseOrderID    int64   `json:"purchase_order_id"`
-	PurchaseOrderRowID int64   `json:"purchase_order_row_id"`
+	// Monitor-id:n är 64-bitars och överstiger JavaScripts säkra heltalsgräns
+	// (2^53). Serialiseras som JSON-STRÄNGAR (,string) så webbläsaren inte tappar
+	// precision och skickar tillbaka rätt delivery_row_id vid leverera-in/markera.
+	DeliveryRowID      int64   `json:"delivery_row_id,string"`
+	PurchaseOrderID    int64   `json:"purchase_order_id,string"`
+	PurchaseOrderRowID int64   `json:"purchase_order_row_id,string"`
 	OrderNumber        string  `json:"order_number"`
 	SupplierName       string  `json:"supplier_name"`
-	PartID             int64   `json:"part_id"`
+	PartID             int64   `json:"part_id,string"`
 	PartNumber         string  `json:"part_number"`
 	Dimensions         string  `json:"dimensions"`
 	PlannedQty         float64 `json:"planned_qty"`

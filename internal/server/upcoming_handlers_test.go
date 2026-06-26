@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -42,7 +43,7 @@ func seedRow(t *testing.T, s *Server, row store.UpcomingDelivery) {
 
 func postDeliverIn(t *testing.T, s *Server, rowID int64, confirm bool) *httptest.ResponseRecorder {
 	t.Helper()
-	body, _ := json.Marshal(map[string]any{"delivery_row_id": rowID, "confirm": confirm})
+	body, _ := json.Marshal(map[string]any{"delivery_row_id": strconv.FormatInt(rowID, 10), "confirm": confirm})
 	req := httptest.NewRequest(http.MethodPost, "/api/upcoming/deliver-in", strings.NewReader(string(body)))
 	rec := httptest.NewRecorder()
 	s.handleUpcomingDeliverIn(rec, req)
@@ -143,11 +144,44 @@ func TestDeliverIn_NotFound(t *testing.T) {
 	}
 }
 
+// Regression: Monitor-radens 64-bitars-id (> 2^53) ska överleva JSON-rundturen.
+// Tidigare serialiserades det som ett JSON-tal → webbläsaren tappade precision →
+// leverera-in skickade ett avrundat id → 404 "Not Found". Nu sträng (,string).
+func TestDeliverIn_LargeID_RoundTrips(t *testing.T) {
+	const bigID int64 = 648862260677180110 // verkligt Monitor-id ur Steg-0-dumpen
+	s, calls := newGateTestServer(t)
+	seedRow(t, s, store.UpcomingDelivery{
+		DeliveryRowID: bigID, OrderNumber: "B127575", PurchaseOrderRowID: 11,
+		PartID: 5, MaterialOK: store.MaterialOK,
+	})
+
+	// Listan serialiseras med id:t som EXAKT sträng (inte ett avrundat tal).
+	var listed map[string]any
+	rec := httptest.NewRecorder()
+	s.handleUpcoming(rec, httptest.NewRequest(http.MethodGet, "/api/upcoming", nil))
+	_ = json.Unmarshal(rec.Body.Bytes(), &listed)
+	rows, _ := listed["rows"].([]any)
+	if len(rows) != 1 {
+		t.Fatalf("vill ha 1 rad i listan, fick %d", len(rows))
+	}
+	if got := rows[0].(map[string]any)["delivery_row_id"]; got != "648862260677180110" {
+		t.Fatalf("delivery_row_id = %v (%T), vill ha exakt sträng", got, got)
+	}
+
+	// Och det stora id:t (som sträng) hittar rätt rad → körs, inte 404.
+	if rec2 := postDeliverIn(t, s, bigID, true); rec2.Code != http.StatusOK {
+		t.Fatalf("leverera-in med stort id: status %d, vill ha 200", rec2.Code)
+	}
+	if len(*calls) != 1 || (*calls)[0].order != "B127575" {
+		t.Errorf("DriveMonitorRoutine kördes inte för stort id: %+v", *calls)
+	}
+}
+
 // mark-delivered markerar raden och överlever en efterföljande refresh-merge.
 func TestMarkDelivered_Endpoint(t *testing.T) {
 	s, _ := newGateTestServer(t)
 	seedRow(t, s, store.UpcomingDelivery{DeliveryRowID: 7, OrderNumber: "B1"})
-	body, _ := json.Marshal(map[string]any{"delivery_row_id": 7})
+	body, _ := json.Marshal(map[string]any{"delivery_row_id": "7"})
 	req := httptest.NewRequest(http.MethodPost, "/api/upcoming/mark-delivered", strings.NewReader(string(body)))
 	rec := httptest.NewRecorder()
 	s.handleUpcomingMarkDelivered(rec, req)
