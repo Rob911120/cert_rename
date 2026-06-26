@@ -40,6 +40,7 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 			"upcoming_enabled":     c.UpcomingEnabled,
 			"upcoming_time":        c.UpcomingTime,
 			"upcoming_window_days": c.UpcomingWindowDays,
+			"upcoming_back_days":   c.UpcomingBackDays,
 		})
 		return
 	}

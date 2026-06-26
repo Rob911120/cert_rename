@@ -27,8 +27,9 @@ import (
 // matchade rader, och merge:ar resultatet. Returnerar antal rader. Avbrytbar via
 // ctx (select mellan Monitor-anrop, respekterar Pellys flaky nät).
 func RefreshUpcoming(ctx context.Context, mc *monitor.Client, repo *store.Repository, cfg store.Config, n Notifier) (int, error) {
-	from := time.Now()
-	to := from.AddDate(0, 0, cfg.UpcomingWindowDays)
+	now := time.Now()
+	from := now.AddDate(0, 0, -cfg.UpcomingBackDays) // bakåt: ta med försenade/överförda
+	to := now.AddDate(0, 0, cfg.UpcomingWindowDays)
 	windowRows, stats, err := mc.GetUpcomingOrderRows(ctx, from, to)
 	if err != nil {
 		return 0, fmt.Errorf("hämta kommande inleveranser: %w", err)

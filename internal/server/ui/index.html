@@ -272,6 +272,10 @@
             <span>Fönster (dagar framåt)</span>
             <input type="number" id="upcomingWindowInput" min="1" max="365" onchange="saveUpcomingSettings()" class="input-field !py-1 w-28">
           </label>
+          <label class="flex items-center justify-between gap-2 text-sm text-slate-700 dark:text-slate-200">
+            <span>Bakåt (dagar) — tar med försenade</span>
+            <input type="number" id="upcomingBackInput" min="0" max="1095" onchange="saveUpcomingSettings()" class="input-field !py-1 w-28">
+          </label>
         </div>
       </div>
 
@@ -347,7 +351,7 @@
 </aside>
 
 <script>
-let cfg = { inbox_dir: '', theme: 'light', autostart: false, api_key_set: false, b_number_mode: 'session', monitor_ui_auto_save: false, upcoming_enabled: false, upcoming_time: '16:30', upcoming_window_days: 14 };
+let cfg = { inbox_dir: '', theme: 'light', autostart: false, api_key_set: false, b_number_mode: 'session', monitor_ui_auto_save: false, upcoming_enabled: false, upcoming_time: '16:30', upcoming_window_days: 14, upcoming_back_days: 365 };
 let running = false;
 let approvedCount = 0;
 
@@ -382,6 +386,7 @@ function postConfig(overrides = {}) {
     upcoming_enabled: !!cfg.upcoming_enabled,
     upcoming_time: cfg.upcoming_time || '16:30',
     upcoming_window_days: cfg.upcoming_window_days || 14,
+    upcoming_back_days: cfg.upcoming_back_days ?? 365,
     ...overrides,
   };
   return fetch('/api/config', {
@@ -432,9 +437,11 @@ async function loadConfig() {
   cfg.upcoming_enabled = !!data.upcoming_enabled;
   cfg.upcoming_time = data.upcoming_time || '16:30';
   cfg.upcoming_window_days = data.upcoming_window_days || 14;
+  cfg.upcoming_back_days = data.upcoming_back_days ?? 365;
   document.getElementById('upcomingEnabledInput').checked = cfg.upcoming_enabled;
   document.getElementById('upcomingTimeInput').value = cfg.upcoming_time;
   document.getElementById('upcomingWindowInput').value = cfg.upcoming_window_days;
+  document.getElementById('upcomingBackInput').value = cfg.upcoming_back_days;
   document.documentElement.dataset.theme = cfg.theme;
   setActiveSegment('themeMode', cfg.theme);
   setActiveSegment('bnumModeSeg', cfg.b_number_mode);
@@ -483,10 +490,13 @@ async function saveUpcomingSettings() {
   cfg.upcoming_enabled = document.getElementById('upcomingEnabledInput').checked;
   cfg.upcoming_time = document.getElementById('upcomingTimeInput').value || '16:30';
   cfg.upcoming_window_days = parseInt(document.getElementById('upcomingWindowInput').value, 10) || 14;
+  const backRaw = parseInt(document.getElementById('upcomingBackInput').value, 10);
+  cfg.upcoming_back_days = Number.isFinite(backRaw) ? backRaw : 365;
   const r = await postConfig({
     upcoming_enabled: cfg.upcoming_enabled,
     upcoming_time: cfg.upcoming_time,
     upcoming_window_days: cfg.upcoming_window_days,
+    upcoming_back_days: cfg.upcoming_back_days,
   });
   if (!r.ok) { alert(await r.text()); return; }
   loadUpcoming();
@@ -847,6 +857,16 @@ function upcomingBadge(row) {
 // vid varje SSE-omritning (t.ex. under en pågående uppdatering).
 const upcomingOpen = { orders: new Set(), rows: new Set() };
 
+// Dagens datum som YYYY-MM-DD (sorterar lexikalt = kronologiskt).
+function upcomingToday() {
+  const d = new Date(), z = n => String(n).padStart(2, '0');
+  return d.getFullYear() + '-' + z(d.getMonth() + 1) + '-' + z(d.getDate());
+}
+// En rad är försenad om leveransdatumet passerat och den ännu inte är levererad.
+function isOverdue(row) {
+  return !!row.delivery_date && row.local_status !== 'delivered' && row.delivery_date < upcomingToday();
+}
+
 function renderUpcoming(data) {
   if (data) upcomingState = data;
   const st = upcomingState;
@@ -855,7 +875,7 @@ function renderUpcoming(data) {
 
   const parts = [];
   if (!enabled) parts.push('Av — aktivera i ⚙️ efter Steg 0');
-  else { parts.push('Schemalagt ' + (st.time || '16:30')); parts.push('fönster ' + (st.window_days || 14) + ' dgr'); }
+  else { parts.push('Schemalagt ' + (st.time || '16:30')); parts.push('fönster −' + (st.back_days ?? 365) + ' / +' + (st.window_days || 14) + ' dgr'); }
   if (st.last_run) parts.push('senast ' + fmtWhen(st.last_run));
   if (st.running) parts.push('⏳ uppdaterar…');
   document.getElementById('upcomingStatus').textContent = parts.join(' · ');
@@ -870,31 +890,44 @@ function renderUpcoming(data) {
     return;
   }
 
-  // Nivå 1: gruppera på ordernummer (fallback: PO-id) i inkommen ordning.
+  // Nivå 1: gruppera på ordernummer (fallback: PO-id), sedan sortera så ordrar med
+  // försenade rader hamnar överst (sekundärt på tidigaste leveransdatum).
   const groups = new Map();
   for (const row of rows) {
     const key = row.order_number || ('PO ' + row.purchase_order_id);
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(row);
   }
-  for (const [key, items] of groups) body.appendChild(renderOrderGroup(key, items, enabled));
+  const ordered = [...groups.entries()].map(([key, items]) => ({
+    key, items,
+    overdue: items.some(isOverdue),
+    minDate: items.map(r => r.delivery_date).filter(Boolean).sort()[0] || '9999-99-99',
+  })).sort((a, b) => (Number(b.overdue) - Number(a.overdue)) || a.minDate.localeCompare(b.minDate));
+  for (const g of ordered) body.appendChild(renderOrderGroup(g.key, g.items, enabled));
 }
 
 // Nivå 1: ett hopfällbart kort per unikt ordernummer med en sammanfattande
-// status-roll-up (avvikelser > saknade cert > allt ok).
+// status-roll-up (försenade > avvikelser > saknade cert > allt ok).
 function renderOrderGroup(orderKey, items, enabled) {
   const wrap = document.createElement('div');
   wrap.className = 'border border-slate-200 dark:border-slate-800 rounded-lg overflow-hidden';
 
+  // Försenade artiklar överst, sedan på leveransdatum.
+  items = items.slice().sort((a, b) =>
+    (Number(isOverdue(b)) - Number(isOverdue(a))) ||
+    String(a.delivery_date || '9999-99-99').localeCompare(String(b.delivery_date || '9999-99-99')));
+
   const supplier = (items.find(r => r.supplier_name) || {}).supplier_name || '';
   const dates = items.map(r => r.delivery_date).filter(Boolean).sort();
   const dateLabel = dates.length ? (dates[0] === dates[dates.length - 1] ? dates[0] : dates[0] + ' – ' + dates[dates.length - 1]) : '';
+  const overdue = items.filter(isOverdue).length;
   const mismatches = items.filter(r => r.material_ok === 'mismatch').length;
   const missing = items.filter(r => r.cert_status === 'missing').length;
-  let badge;
-  if (mismatches) badge = '<span class="badge-red">⚠ ' + mismatches + ' avvikelse' + (mismatches > 1 ? 'r' : '') + '</span>';
-  else if (missing) badge = '<span class="badge-yellow">⚠ ' + missing + ' saknar cert</span>';
-  else badge = '<span class="badge-green">✓ allt ok</span>';
+  let status;
+  if (mismatches) status = '<span class="badge-red">⚠ ' + mismatches + ' avvikelse' + (mismatches > 1 ? 'r' : '') + '</span>';
+  else if (missing) status = '<span class="badge-yellow">⚠ ' + missing + ' saknar cert</span>';
+  else status = '<span class="badge-green">✓ allt ok</span>';
+  const badge = (overdue ? '<span class="badge-red">⏰ ' + overdue + ' försenad' + (overdue > 1 ? 'e' : '') + '</span> ' : '') + status;
   const allDelivered = items.every(r => r.local_status === 'delivered');
   const open = upcomingOpen.orders.has(orderKey);
 
@@ -939,7 +972,7 @@ function renderArticle(row, enabled) {
     '<span class="font-medium truncate">' + escapeHtml(row.part_number || ('art ' + row.part_id)) + '</span>' +
     (row.dimensions ? '<span class="text-xs text-slate-400 shrink-0">· ' + escapeHtml(row.dimensions) + '</span>' : '') +
     (row.planned_qty ? '<span class="text-xs text-slate-400 shrink-0">· ' + escapeHtml(String(row.planned_qty)) + ' st</span>' : '') +
-    '<span class="ml-1 shrink-0">' + upcomingBadge(row) + (row.local_status === 'delivered' ? ' <span class="badge-gray">levererad</span>' : '') + '</span>';
+    '<span class="ml-1 shrink-0">' + (isOverdue(row) ? '<span class="badge-red">⏰ försenad</span> ' : '') + upcomingBadge(row) + (row.local_status === 'delivered' ? ' <span class="badge-gray">levererad</span>' : '') + '</span>';
   header.appendChild(left);
 
   const actions = document.createElement('div');
@@ -975,24 +1008,26 @@ function renderArticle(row, enabled) {
   return art;
 }
 
-// Nivå 3: fältlista (krav-material / krav-cert / vårt material / status …) + evidens.
+// Nivå 3: tvåkolumns "Krav | Vårt" + meta-rad + evidens. Fast etikettbredd ger
+// jämn vänsterkant.
 function renderArticleDetail(row) {
-  const field = (k, v, cls) => v ? '<div><span class="text-slate-400">' + escapeHtml(k) + ':</span> <span class="' + (cls || '') + '">' + escapeHtml(String(v)) + '</span></div>' : '';
+  const f = (k, v, cls) => v ? '<div class="flex gap-2"><span class="text-slate-400 w-24 shrink-0">' + escapeHtml(k) + '</span><span class="' + (cls || '') + '">' + escapeHtml(String(v)) + '</span></div>' : '';
+  const dash = '<span class="italic text-slate-400">—</span>';
   const matOkLabel = { ok: '✓ matchar', mismatch: '⚠ AVVIKELSE', unknown: 'okänt' }[row.material_ok] || row.material_ok || '';
   const matOkCls = row.material_ok === 'mismatch' ? 'text-red-600 dark:text-red-400 font-semibold'
     : (row.material_ok === 'ok' ? 'text-green-600 dark:text-green-400' : '');
-  const grid = [
-    field('Krav-material', row.required_material),
-    field('Krav-cert', row.required_cert),
-    field('Vårt material', row.our_material),
-    field('Material-status', matOkLabel, matOkCls),
-    field('Mått', row.dimensions),
-    field('Antal', row.planned_qty),
-    field('Leveransdatum', row.delivery_date),
-    field('Not', row.notes),
+  const krav = [f('Material', row.required_material), f('Cert', row.required_cert)].filter(Boolean).join('') || dash;
+  const vart = [f('Material', row.our_material), f('Status', matOkLabel, matOkCls), f('Cert-fil', row.cert_filename)].filter(Boolean).join('') || dash;
+  const meta = [
+    f('Mått', row.dimensions),
+    f('Antal', row.planned_qty),
+    f('Leveransdatum', row.delivery_date + (isOverdue(row) ? ' ⏰' : ''), isOverdue(row) ? 'text-red-600 dark:text-red-400' : ''),
+    f('Not', row.notes),
   ].filter(Boolean).join('');
-  const gridHtml = grid ? '<div class="grid grid-cols-2 gap-x-4 gap-y-0.5">' + grid + '</div>' : '';
-  return gridHtml + '<div class="mt-2 pt-2 border-t border-slate-200 dark:border-slate-700 font-mono">' + renderEvidence(row) + '</div>';
+  const col = (title, inner) => '<div><div class="font-semibold text-slate-500 dark:text-slate-400 mb-1 uppercase tracking-wide text-[10px]">' + title + '</div>' + inner + '</div>';
+  return '<div class="grid grid-cols-2 gap-x-6 gap-y-1">' + col('Krav', krav) + col('Vårt', vart) + '</div>' +
+    (meta ? '<div class="mt-2 pt-2 border-t border-slate-200 dark:border-slate-700 grid grid-cols-2 gap-x-6 gap-y-0.5">' + meta + '</div>' : '') +
+    '<div class="mt-2 pt-2 border-t border-slate-200 dark:border-slate-700 font-mono">' + renderEvidence(row) + '</div>';
 }
 
 function renderEvidence(row) {

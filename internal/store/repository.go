@@ -821,9 +821,11 @@ func deleteUnseenUpcoming(tx *sql.Tx, seen []int64) error {
 	return err
 }
 
-// ListUpcoming returnerar alla kommande inleveranser, sorterade på leveransdatum.
+// ListUpcoming returnerar kommande inleveranser för UI:t, sorterade på
+// leveransdatum. Levererade rader (manuellt markerade) döljs medvetet — de
+// behålls i tabellen för att inte återuppstå vid refresh men ska inte visas.
 func (r *Repository) ListUpcoming() ([]UpcomingDelivery, error) {
-	rows, err := r.db.Query(`SELECT ` + upcomingColumns + ` FROM upcoming_deliveries ORDER BY delivery_date ASC, order_number ASC`)
+	rows, err := r.db.Query(`SELECT `+upcomingColumns+` FROM upcoming_deliveries WHERE local_status != ? ORDER BY delivery_date ASC, order_number ASC`, UpcomingDelivered)
 	if err != nil {
 		return nil, err
 	}

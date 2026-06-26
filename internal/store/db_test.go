@@ -135,15 +135,16 @@ func TestMergeUpcomingDeliveries_Lifecycle(t *testing.T) {
 	}
 	list, _ := repo.ListUpcoming()
 	ids := upcomingIDs(list)
-	if !ids[1] {
-		t.Errorf("levererad rad 1 raderades vid refresh (KÄRN-REGRESSION)")
+	if ids[1] {
+		t.Errorf("levererad rad 1 ska döljas från listan")
 	}
 	if !ids[2] || !ids[3] {
 		t.Errorf("rad 2/3 saknas efter merge3: %v", ids)
 	}
+	// Kärn-regression: den levererade raden måste överleva refreshen i tabellen.
 	got1, _ = repo.GetUpcomingByRowID(1)
 	if got1 == nil || got1.LocalStatus != UpcomingDelivered {
-		t.Errorf("rad 1 local_status = %+v, vill ha %q", got1, UpcomingDelivered)
+		t.Errorf("rad 1 local_status = %+v, vill ha %q (borde överleva refresh)", got1, UpcomingDelivered)
 	}
 
 	// Försvunnen PENDING-rad (3) → borttagen vid nästa refresh; delivered (1) kvar.
@@ -154,8 +155,11 @@ func TestMergeUpcomingDeliveries_Lifecycle(t *testing.T) {
 	if ids[3] {
 		t.Errorf("pending rad 3 (ej sedd) borde ha raderats")
 	}
-	if !ids[1] {
-		t.Errorf("delivered rad 1 borde fortfarande finnas")
+	if ids[1] {
+		t.Errorf("delivered rad 1 ska döljas från listan")
+	}
+	if got, _ := repo.GetUpcomingByRowID(1); got == nil {
+		t.Errorf("delivered rad 1 borde fortfarande finnas i tabellen")
 	}
 	if !ids[2] {
 		t.Errorf("rad 2 borde finnas")
@@ -201,8 +205,8 @@ func TestMergeUpcomingDeliveries_EmptyRefreshClearsPendingKeepsDelivered(t *test
 	if ids[1] {
 		t.Errorf("pending rad 1 borde raderats av tom refresh")
 	}
-	if !ids[2] {
-		t.Errorf("delivered rad 2 borde överleva tom refresh")
+	if got, _ := repo.GetUpcomingByRowID(2); got == nil {
+		t.Errorf("delivered rad 2 borde överleva tom refresh (i tabellen)")
 	}
 }
 
@@ -335,6 +339,15 @@ func TestConfig_NormalizeUpcoming(t *testing.T) {
 	c.NormalizeUpcoming()
 	if c.UpcomingTime != DefaultUpcomingTime || c.UpcomingWindowDays != DefaultUpcomingWindowDays {
 		t.Errorf("defaults fel: %+v", c)
+	}
+	if c.UpcomingBackDays != DefaultUpcomingBackDays {
+		t.Errorf("back-days default fel: %d, vill ha %d", c.UpcomingBackDays, DefaultUpcomingBackDays)
+	}
+	// Giltigt back-värde behålls.
+	c = Config{UpcomingBackDays: 90}
+	c.NormalizeUpcoming()
+	if c.UpcomingBackDays != 90 {
+		t.Errorf("giltigt back-värde borde behållas, fick %d", c.UpcomingBackDays)
 	}
 	// Ogiltig tid → default.
 	c = Config{UpcomingTime: "25:99", UpcomingWindowDays: 7}

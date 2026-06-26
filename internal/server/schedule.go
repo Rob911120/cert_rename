@@ -141,6 +141,7 @@ func (s *Server) upcomingResponse() map[string]any {
 		"enabled":     cfg.UpcomingEnabled,
 		"time":        cfg.UpcomingTime,
 		"window_days": cfg.UpcomingWindowDays,
+		"back_days":   cfg.UpcomingBackDays,
 		"last_run":    s.appStateString(store.AppStateLastUpcomingRun),
 	}
 }

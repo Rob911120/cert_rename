@@ -16,6 +16,7 @@ import (
 const (
 	DefaultUpcomingTime       = "16:30"
 	DefaultUpcomingWindowDays = 14
+	DefaultUpcomingBackDays   = 365
 )
 
 type Config struct {
@@ -42,9 +43,12 @@ type Config struct {
 	// tills Steg 0 (auth + en riktig query) är grön på jobbdatorn. UpcomingTime
 	// är väggklockstid "HH:MM" för dagens schemalagda körning (default 16:30,
 	// ogiltig avvisas). UpcomingWindowDays är hur långt framåt vi hämtar (default 14).
+	// UpcomingBackDays är hur långt BAKÅT vi tar med (default 365) så överförda/
+	// försenade rader som borde ha kommit redan också syns.
 	UpcomingEnabled    bool   `json:"upcoming_enabled"`
 	UpcomingTime       string `json:"upcoming_time,omitempty"`
 	UpcomingWindowDays int    `json:"upcoming_window_days,omitempty"`
+	UpcomingBackDays   int    `json:"upcoming_back_days,omitempty"`
 }
 
 // NormalizeUpcoming sätter defaults och avvisar ogiltig UpcomingTime. Anropas
@@ -59,6 +63,9 @@ func (c *Config) NormalizeUpcoming() {
 	}
 	if c.UpcomingWindowDays <= 0 {
 		c.UpcomingWindowDays = DefaultUpcomingWindowDays
+	}
+	if c.UpcomingBackDays <= 0 {
+		c.UpcomingBackDays = DefaultUpcomingBackDays
 	}
 }
 
@@ -119,6 +126,11 @@ func LoadConfig() Config {
 	if v := os.Getenv("UPCOMING_WINDOW_DAYS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			c.UpcomingWindowDays = n
+		}
+	}
+	if v := os.Getenv("UPCOMING_BACK_DAYS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			c.UpcomingBackDays = n
 		}
 	}
 	c.NormalizeUpcoming()
