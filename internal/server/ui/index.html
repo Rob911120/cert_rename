@@ -79,19 +79,8 @@
         <span class="text-xs text-slate-500 dark:text-slate-400" id="upcomingStatus">…</span>
         <button id="upcomingRunBtn" class="btn-secondary btn-sm" onclick="runUpcoming()">🔄 Kör nu</button>
       </div>
-      <div class="flex-1 min-h-0 overflow-auto">
-        <table class="w-full text-sm">
-          <thead class="table-head">
-            <tr>
-              <th>Leveransdatum</th><th>Order</th><th>Leverantör</th><th>Artikel</th>
-              <th>Krav-material</th><th>Krav-cert</th><th>Vårt cert/material</th>
-              <th>Status</th><th>Not</th><th>Mått</th><th>Antal</th><th></th>
-            </tr>
-          </thead>
-          <tbody id="upcomingBody">
-            <tr class="empty-row"><td colspan="12" class="text-center italic text-slate-400 py-6">Inga kommande inleveranser</td></tr>
-          </tbody>
-        </table>
+      <div id="upcomingBody" class="flex-1 min-h-0 overflow-auto p-2 space-y-1.5 text-sm">
+        <div class="text-center italic text-slate-400 py-6">Inga kommande inleveranser</div>
       </div>
     </div>
   </div>
@@ -854,6 +843,10 @@ function upcomingBadge(row) {
   return '<span class="badge-gray">cert matchat</span>';
 }
 
+// upcomingOpen minns vilka ordrar/artiklar som är utfällda så de inte slår igen
+// vid varje SSE-omritning (t.ex. under en pågående uppdatering).
+const upcomingOpen = { orders: new Set(), rows: new Set() };
+
 function renderUpcoming(data) {
   if (data) upcomingState = data;
   const st = upcomingState;
@@ -869,64 +862,137 @@ function renderUpcoming(data) {
   const runBtn = document.getElementById('upcomingRunBtn');
   if (runBtn) runBtn.disabled = !enabled || !!st.running;
 
-  const tbody = document.getElementById('upcomingBody');
-  tbody.innerHTML = '';
+  const body = document.getElementById('upcomingBody');
+  body.innerHTML = '';
   if (rows.length === 0) {
-    tbody.innerHTML = '<tr class="empty-row"><td colspan="12" class="text-center italic text-slate-400 py-6">' +
-      (enabled ? 'Inga kommande inleveranser — kör en uppdatering' : 'Funktionen är av — aktivera i ⚙️ Inställningar') + '</td></tr>';
+    body.innerHTML = '<div class="text-center italic text-slate-400 py-6">' +
+      (enabled ? 'Inga kommande inleveranser — kör en uppdatering' : 'Funktionen är av — aktivera i ⚙️ Inställningar') + '</div>';
     return;
   }
+
+  // Nivå 1: gruppera på ordernummer (fallback: PO-id) i inkommen ordning.
+  const groups = new Map();
   for (const row of rows) {
-    const tr = document.createElement('tr');
-    tr.className = 'table-row cursor-pointer';
-    if (row.local_status === 'delivered') tr.classList.add('opacity-50');
-    for (const v of [row.delivery_date, row.order_number, row.supplier_name, row.part_number,
-                     row.required_material, row.required_cert, row.our_material]) {
-      const td = document.createElement('td');
-      td.textContent = v || '';
-      tr.appendChild(td);
-    }
-    const tdBadge = document.createElement('td');
-    tdBadge.innerHTML = upcomingBadge(row) + (row.local_status === 'delivered' ? ' <span class="badge-gray">levererad</span>' : '');
-    tr.appendChild(tdBadge);
-    const tdNote = document.createElement('td');
-    tdNote.className = 'text-xs text-slate-500 dark:text-slate-400 max-w-[200px] truncate';
-    tdNote.textContent = row.notes || '';
-    tdNote.title = row.notes || '';
-    tr.appendChild(tdNote);
-    const tdDim = document.createElement('td'); tdDim.textContent = row.dimensions || ''; tr.appendChild(tdDim);
-    const tdQty = document.createElement('td'); tdQty.textContent = row.planned_qty || ''; tr.appendChild(tdQty);
-
-    const tdBtn = document.createElement('td');
-    tdBtn.className = 'whitespace-nowrap';
-    const deliverBtn = document.createElement('button');
-    deliverBtn.className = 'btn-primary btn-sm';
-    deliverBtn.textContent = '📦 Leverera in';
-    deliverBtn.disabled = !enabled || row.local_status === 'delivered';
-    deliverBtn.addEventListener('click', (e) => { e.stopPropagation(); deliverIn(row); });
-    tdBtn.appendChild(deliverBtn);
-    if (row.local_status !== 'delivered') {
-      const markBtn = document.createElement('button');
-      markBtn.className = 'btn-ghost btn-sm ml-1';
-      markBtn.textContent = 'Markera levererad';
-      markBtn.disabled = !enabled;
-      markBtn.addEventListener('click', (e) => { e.stopPropagation(); markDelivered(row.delivery_row_id); });
-      tdBtn.appendChild(markBtn);
-    }
-    tr.appendChild(tdBtn);
-
-    const detail = document.createElement('tr');
-    detail.className = 'hidden bg-slate-50 dark:bg-main';
-    const detailTd = document.createElement('td');
-    detailTd.colSpan = 12;
-    detailTd.className = 'text-xs text-slate-600 dark:text-slate-300 px-4 py-2 font-mono';
-    detailTd.innerHTML = renderEvidence(row);
-    detail.appendChild(detailTd);
-    tr.addEventListener('click', () => detail.classList.toggle('hidden'));
-
-    tbody.appendChild(tr);
-    tbody.appendChild(detail);
+    const key = row.order_number || ('PO ' + row.purchase_order_id);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(row);
   }
+  for (const [key, items] of groups) body.appendChild(renderOrderGroup(key, items, enabled));
+}
+
+// Nivå 1: ett hopfällbart kort per unikt ordernummer med en sammanfattande
+// status-roll-up (avvikelser > saknade cert > allt ok).
+function renderOrderGroup(orderKey, items, enabled) {
+  const wrap = document.createElement('div');
+  wrap.className = 'border border-slate-200 dark:border-slate-800 rounded-lg overflow-hidden';
+
+  const supplier = (items.find(r => r.supplier_name) || {}).supplier_name || '';
+  const dates = items.map(r => r.delivery_date).filter(Boolean).sort();
+  const dateLabel = dates.length ? (dates[0] === dates[dates.length - 1] ? dates[0] : dates[0] + ' – ' + dates[dates.length - 1]) : '';
+  const mismatches = items.filter(r => r.material_ok === 'mismatch').length;
+  const missing = items.filter(r => r.cert_status === 'missing').length;
+  let badge;
+  if (mismatches) badge = '<span class="badge-red">⚠ ' + mismatches + ' avvikelse' + (mismatches > 1 ? 'r' : '') + '</span>';
+  else if (missing) badge = '<span class="badge-yellow">⚠ ' + missing + ' saknar cert</span>';
+  else badge = '<span class="badge-green">✓ allt ok</span>';
+  const allDelivered = items.every(r => r.local_status === 'delivered');
+  const open = upcomingOpen.orders.has(orderKey);
+
+  const header = document.createElement('button');
+  header.type = 'button';
+  header.className = 'w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-slate-50 dark:hover:bg-slate-800/50' + (allDelivered ? ' opacity-50' : '');
+  header.innerHTML =
+    '<span class="caret text-slate-400 w-3 shrink-0">' + (open ? '▾' : '▸') + '</span>' +
+    '<span class="font-semibold">' + escapeHtml(orderKey) + '</span>' +
+    (supplier ? '<span class="text-slate-500 dark:text-slate-400 truncate">· ' + escapeHtml(supplier) + '</span>' : '') +
+    '<span class="text-xs text-slate-400 shrink-0">· ' + items.length + ' art.</span>' +
+    (dateLabel ? '<span class="text-xs text-slate-400 shrink-0">· ' + escapeHtml(dateLabel) + '</span>' : '') +
+    '<span class="ml-auto shrink-0">' + badge + '</span>';
+
+  const list = document.createElement('div');
+  list.className = 'divide-y divide-slate-100 dark:divide-slate-800 border-t border-slate-200 dark:border-slate-800' + (open ? '' : ' hidden');
+  for (const row of items) list.appendChild(renderArticle(row, enabled));
+
+  header.addEventListener('click', () => {
+    const nowHidden = list.classList.toggle('hidden');
+    header.querySelector('.caret').textContent = nowHidden ? '▸' : '▾';
+    if (nowHidden) upcomingOpen.orders.delete(orderKey); else upcomingOpen.orders.add(orderKey);
+  });
+
+  wrap.appendChild(header);
+  wrap.appendChild(list);
+  return wrap;
+}
+
+// Nivå 2 + 3: en hopfällbar artikelrad; utfälld visar krav/vårt material m.m.
+function renderArticle(row, enabled) {
+  const art = document.createElement('div');
+  const open = upcomingOpen.rows.has(row.delivery_row_id);
+
+  const header = document.createElement('div');
+  header.className = 'flex items-center gap-2 px-3 py-1.5 pl-7 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50' + (row.local_status === 'delivered' ? ' opacity-50' : '');
+
+  const left = document.createElement('div');
+  left.className = 'flex items-center gap-2 flex-1 min-w-0';
+  left.innerHTML =
+    '<span class="caret text-slate-400 w-3 shrink-0">' + (open ? '▾' : '▸') + '</span>' +
+    '<span class="font-medium truncate">' + escapeHtml(row.part_number || ('art ' + row.part_id)) + '</span>' +
+    (row.dimensions ? '<span class="text-xs text-slate-400 shrink-0">· ' + escapeHtml(row.dimensions) + '</span>' : '') +
+    (row.planned_qty ? '<span class="text-xs text-slate-400 shrink-0">· ' + escapeHtml(String(row.planned_qty)) + ' st</span>' : '') +
+    '<span class="ml-1 shrink-0">' + upcomingBadge(row) + (row.local_status === 'delivered' ? ' <span class="badge-gray">levererad</span>' : '') + '</span>';
+  header.appendChild(left);
+
+  const actions = document.createElement('div');
+  actions.className = 'flex items-center gap-1 shrink-0';
+  const deliverBtn = document.createElement('button');
+  deliverBtn.className = 'btn-primary btn-sm';
+  deliverBtn.textContent = '📦 Leverera in';
+  deliverBtn.disabled = !enabled || row.local_status === 'delivered';
+  deliverBtn.addEventListener('click', (e) => { e.stopPropagation(); deliverIn(row); });
+  actions.appendChild(deliverBtn);
+  if (row.local_status !== 'delivered') {
+    const markBtn = document.createElement('button');
+    markBtn.className = 'btn-ghost btn-sm';
+    markBtn.textContent = 'Markera levererad';
+    markBtn.disabled = !enabled;
+    markBtn.addEventListener('click', (e) => { e.stopPropagation(); markDelivered(row.delivery_row_id); });
+    actions.appendChild(markBtn);
+  }
+  header.appendChild(actions);
+
+  const detail = document.createElement('div');
+  detail.className = 'px-3 py-2 pl-11 bg-slate-50 dark:bg-main text-xs text-slate-600 dark:text-slate-300' + (open ? '' : ' hidden');
+  detail.innerHTML = renderArticleDetail(row);
+
+  header.addEventListener('click', () => {
+    const nowHidden = detail.classList.toggle('hidden');
+    left.querySelector('.caret').textContent = nowHidden ? '▸' : '▾';
+    if (nowHidden) upcomingOpen.rows.delete(row.delivery_row_id); else upcomingOpen.rows.add(row.delivery_row_id);
+  });
+
+  art.appendChild(header);
+  art.appendChild(detail);
+  return art;
+}
+
+// Nivå 3: fältlista (krav-material / krav-cert / vårt material / status …) + evidens.
+function renderArticleDetail(row) {
+  const field = (k, v, cls) => v ? '<div><span class="text-slate-400">' + escapeHtml(k) + ':</span> <span class="' + (cls || '') + '">' + escapeHtml(String(v)) + '</span></div>' : '';
+  const matOkLabel = { ok: '✓ matchar', mismatch: '⚠ AVVIKELSE', unknown: 'okänt' }[row.material_ok] || row.material_ok || '';
+  const matOkCls = row.material_ok === 'mismatch' ? 'text-red-600 dark:text-red-400 font-semibold'
+    : (row.material_ok === 'ok' ? 'text-green-600 dark:text-green-400' : '');
+  const grid = [
+    field('Krav-material', row.required_material),
+    field('Krav-cert', row.required_cert),
+    field('Vårt material', row.our_material),
+    field('Material-status', matOkLabel, matOkCls),
+    field('Mått', row.dimensions),
+    field('Antal', row.planned_qty),
+    field('Leveransdatum', row.delivery_date),
+    field('Not', row.notes),
+  ].filter(Boolean).join('');
+  const gridHtml = grid ? '<div class="grid grid-cols-2 gap-x-4 gap-y-0.5">' + grid + '</div>' : '';
+  return gridHtml + '<div class="mt-2 pt-2 border-t border-slate-200 dark:border-slate-700 font-mono">' + renderEvidence(row) + '</div>';
 }
 
 function renderEvidence(row) {
