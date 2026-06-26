@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -12,6 +13,12 @@ import (
 	"cert-renamer/internal/monitor"
 	"cert-renamer/internal/store"
 )
+
+// soonDate är ett leveransdatum några dagar fram (YYYY-MM-DD) — alltid inom
+// standardfönstret (14 dagar) räknat från time.Now(), så stub-rader hamnar i
+// fönstret oavsett när testet körs. (GetUpcomingOrderRows avgränsar fönstret
+// klientsidan på DeliveryDate.)
+func soonDate() string { return time.Now().AddDate(0, 0, 3).Format("2006-01-02") }
 
 func TestShouldCatchUp(t *testing.T) {
 	cfg := store.Config{UpcomingTime: "16:30"}
@@ -76,12 +83,12 @@ func stubUpcomingMonitor(t *testing.T) *monitor.Client {
 				_, _ = w.Write([]byte(`{"value":[]}`)) // sida 2: slut → paginering stannar
 				return
 			}
-			_, _ = w.Write([]byte(`{"value":[{
+			_, _ = fmt.Fprintf(w, `{"value":[{
 				"Id":"11","ParentOrderId":"100","PartId":"5","OrderRowType":1,"RestQuantity":10,
-				"DeliveryDate":"2026-07-01T00:00:00Z",
+				"DeliveryDate":%q,
 				"Part":{"Id":"5","PartNumber":"PL-S355-10","Description":"Plåt 10mm",
 					"ExtraDescription":"S355J2 +N, cert 3.1","ReceivingInspectionType":"Always"}
-			}]}`))
+			}]}`, soonDate())
 		case strings.Contains(r.URL.Path, "Purchase/PurchaseOrders"):
 			_, _ = w.Write([]byte(`{"value":[{"Id":"100","OrderNumber":"B127575","BusinessContactId":"7"}]}`))
 		case strings.Contains(r.URL.Path, "Purchase/Suppliers"):
@@ -130,7 +137,7 @@ func TestRefreshUpcoming_NoCert(t *testing.T) {
 	if u.DeliveryRowID != 11 || u.OrderNumber != "B127575" || u.SupplierName != "BE Group" {
 		t.Errorf("rad fel: %+v", u)
 	}
-	if u.PartNumber != "PL-S355-10" || u.DeliveryDate != "2026-07-01" || u.PlannedQty != 10 {
+	if u.PartNumber != "PL-S355-10" || u.DeliveryDate != soonDate() || u.PlannedQty != 10 {
 		t.Errorf("part/datum/qty fel: %+v", u)
 	}
 	if !u.CertRequired {
@@ -160,10 +167,10 @@ func TestRefreshUpcoming_FallbackPartFetch(t *testing.T) {
 				return
 			}
 			// Ingen inline Part — bara PartId.
-			_, _ = w.Write([]byte(`{"value":[{
+			_, _ = fmt.Fprintf(w, `{"value":[{
 				"Id":"12","ParentOrderId":"100","PartId":"5","OrderRowType":1,"RestQuantity":3,
-				"DeliveryDate":"2026-07-02"
-			}]}`))
+				"DeliveryDate":%q
+			}]}`, soonDate())
 		case strings.Contains(r.URL.Path, "Purchase/PurchaseOrders"):
 			_, _ = w.Write([]byte(`{"value":[{"Id":"100","OrderNumber":"B1","BusinessContactId":"7"}]}`))
 		case strings.Contains(r.URL.Path, "Purchase/Suppliers"):

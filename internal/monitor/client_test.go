@@ -280,21 +280,23 @@ func TestGetUpcomingOrderRows_PaginatesViaNextLink(t *testing.T) {
 		case strings.Contains(r.URL.Path, "PurchaseOrderRows"):
 			hits++
 			if hits == 1 {
-				// Sida 1 bär den fulla queryn — verifiera gemena operatorer + expand.
+				// Sida 1 bär queryn — datum får INTE ligga i $filter (Monitor 400:ar
+				// på datumliteraler); bara RestQuantity gt 0 + $expand=Part.
 				f := r.URL.Query().Get("$filter")
-				for _, want := range []string{"DeliveryDate ge ", "DeliveryDate le ", "RestQuantity gt 0"} {
-					if !strings.Contains(f, want) {
-						t.Errorf("$filter %q saknar %q (gemena operatorer?)", f, want)
-					}
+				if !strings.Contains(f, "RestQuantity gt 0") {
+					t.Errorf("$filter %q saknar 'RestQuantity gt 0'", f)
+				}
+				if strings.Contains(f, "DeliveryDate") {
+					t.Errorf("$filter %q innehåller DeliveryDate — datum ska filtreras klientsidan", f)
 				}
 				if exp := r.URL.Query().Get("$expand"); !strings.Contains(exp, "Part") {
 					t.Errorf("$expand = %q, saknar Part", exp)
 				}
 				next := srv.URL + "/sv/001.1/api/v1/Purchase/PurchaseOrderRows?%24skip=2"
-				_, _ = fmt.Fprintf(w, `{"value":[{"Id":"1"},{"Id":"2"}],"@odata.nextLink":%q}`, next)
+				_, _ = fmt.Fprintf(w, `{"value":[{"Id":"1","DeliveryDate":"2026-06-26"},{"Id":"2","DeliveryDate":"2026-06-26"}],"@odata.nextLink":%q}`, next)
 			} else {
 				// Sida 2 via nextLink (bär bara $skip i den här stubben).
-				_, _ = w.Write([]byte(`{"value":[{"Id":"3"}]}`))
+				_, _ = w.Write([]byte(`{"value":[{"Id":"3","DeliveryDate":"2026-06-26"}]}`))
 			}
 		default:
 			http.Error(w, "unexpected "+r.URL.Path, http.StatusNotFound)
@@ -322,7 +324,11 @@ func TestGetUpcomingOrderRows_PaginatesViaNextLink(t *testing.T) {
 // Servern har eget sidtak (2/sida) under vårt $top. Paginering MÅSTE fortsätta
 // tills en TOM sida — inte stanna på "färre än begärt" (tyst trunkering).
 func TestGetUpcomingOrderRows_SkipUntilEmptyDespiteServerCap(t *testing.T) {
-	all := []string{`{"Id":"1"}`, `{"Id":"2"}`, `{"Id":"3"}`, `{"Id":"4"}`, `{"Id":"5"}`}
+	all := []string{
+		`{"Id":"1","DeliveryDate":"2026-06-26"}`, `{"Id":"2","DeliveryDate":"2026-06-26"}`,
+		`{"Id":"3","DeliveryDate":"2026-06-26"}`, `{"Id":"4","DeliveryDate":"2026-06-26"}`,
+		`{"Id":"5","DeliveryDate":"2026-06-26"}`,
+	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/001.1/login"):
@@ -372,14 +378,14 @@ func TestGetUpcomingOrderRows_ReloginMidPagination(t *testing.T) {
 			switch hits {
 			case 1:
 				next := srv.URL + "/sv/001.1/api/v1/Purchase/PurchaseOrderRows?%24skip=2"
-				_, _ = fmt.Fprintf(w, `{"value":[{"Id":"1"},{"Id":"2"}],"@odata.nextLink":%q}`, next)
+				_, _ = fmt.Fprintf(w, `{"value":[{"Id":"1","DeliveryDate":"2026-06-26"},{"Id":"2","DeliveryDate":"2026-06-26"}],"@odata.nextLink":%q}`, next)
 			case 2:
 				http.Error(w, "session expired", http.StatusUnauthorized) // utgången mitt i pagineringen
 			default:
 				if got := r.Header.Get(SessionHeader); got != session {
 					t.Errorf("retry använde fel session: %q != %q", got, session)
 				}
-				_, _ = w.Write([]byte(`{"value":[{"Id":"3"}]}`))
+				_, _ = w.Write([]byte(`{"value":[{"Id":"3","DeliveryDate":"2026-06-26"}]}`))
 			}
 		default:
 			http.Error(w, "unexpected "+r.URL.Path, http.StatusNotFound)
