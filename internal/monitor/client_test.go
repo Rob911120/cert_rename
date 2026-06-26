@@ -309,7 +309,7 @@ func TestGetUpcomingOrderRows_PaginatesViaNextLink(t *testing.T) {
 		t.Fatalf("login: %v", err)
 	}
 	from := time.Date(2026, 6, 25, 0, 0, 0, 0, time.UTC)
-	rows, err := c.GetUpcomingOrderRows(context.Background(), from, from.AddDate(0, 0, 14))
+	rows, _, err := c.GetUpcomingOrderRows(context.Background(), from, from.AddDate(0, 0, 14))
 	if err != nil {
 		t.Fatalf("GetUpcomingOrderRows: %v", err)
 	}
@@ -353,7 +353,7 @@ func TestGetUpcomingOrderRows_SkipUntilEmptyDespiteServerCap(t *testing.T) {
 	c := New(srv.URL)
 	_ = c.Login(context.Background(), "kalle", "hemligt")
 	from := time.Date(2026, 6, 25, 0, 0, 0, 0, time.UTC)
-	rows, err := c.GetUpcomingOrderRows(context.Background(), from, from.AddDate(0, 0, 14))
+	rows, _, err := c.GetUpcomingOrderRows(context.Background(), from, from.AddDate(0, 0, 14))
 	if err != nil {
 		t.Fatalf("GetUpcomingOrderRows: %v", err)
 	}
@@ -396,7 +396,7 @@ func TestGetUpcomingOrderRows_ReloginMidPagination(t *testing.T) {
 	c := New(srv.URL)
 	_ = c.Login(context.Background(), "kalle", "hemligt")
 	from := time.Date(2026, 6, 25, 0, 0, 0, 0, time.UTC)
-	rows, err := c.GetUpcomingOrderRows(context.Background(), from, from.AddDate(0, 0, 14))
+	rows, _, err := c.GetUpcomingOrderRows(context.Background(), from, from.AddDate(0, 0, 14))
 	if err != nil {
 		t.Fatalf("GetUpcomingOrderRows: %v", err)
 	}
@@ -405,6 +405,48 @@ func TestGetUpcomingOrderRows_ReloginMidPagination(t *testing.T) {
 	}
 	if logins != 2 {
 		t.Errorf("vill ha 2 logins (initial + relogin), fick %d", logins)
+	}
+}
+
+// Datumfönstret filtreras klientsidan: bara rader inom [from,to] returneras, men
+// stats rapporterar HELA hämtade mängden + datumspann (för diagnostik-loggen).
+func TestGetUpcomingOrderRows_WindowFilterAndStats(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/001.1/login"):
+			_, _ = w.Write([]byte(`{"SessionId":"s1"}`))
+		case strings.Contains(r.URL.Path, "PurchaseOrderRows"):
+			if r.URL.Query().Get("$skip") != "" && r.URL.Query().Get("$skip") != "0" {
+				_, _ = w.Write([]byte(`{"value":[]}`))
+				return
+			}
+			// Id 1 i fönstret, Id 2 efter fönstret, Id 3 utan datum.
+			_, _ = w.Write([]byte(`{"value":[
+				{"Id":"1","PartId":"5","RestQuantity":1,"DeliveryDate":"2026-06-26T00:00:00+02:00"},
+				{"Id":"2","PartId":"5","RestQuantity":1,"DeliveryDate":"2026-07-20"},
+				{"Id":"3","PartId":"5","RestQuantity":1,"DeliveryDate":""}
+			]}`))
+		default:
+			http.Error(w, "unexpected "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL)
+	_ = c.Login(context.Background(), "kalle", "hemligt")
+	from := time.Date(2026, 6, 25, 0, 0, 0, 0, time.UTC)
+	rows, stats, err := c.GetUpcomingOrderRows(context.Background(), from, from.AddDate(0, 0, 14)) // → 2026-07-09
+	if err != nil {
+		t.Fatalf("GetUpcomingOrderRows: %v", err)
+	}
+	if len(rows) != 1 || rows[0].ID != 1 {
+		t.Fatalf("vill ha bara Id 1 i fönstret, fick %+v", rows)
+	}
+	if stats.Fetched != 3 {
+		t.Errorf("stats.Fetched = %d, vill ha 3 (hela hämtade mängden)", stats.Fetched)
+	}
+	if stats.MinDate != "2026-06-26" || stats.MaxDate != "2026-07-20" {
+		t.Errorf("datumspann = %s–%s, vill ha 2026-06-26–2026-07-20", stats.MinDate, stats.MaxDate)
 	}
 }
 

@@ -126,25 +126,44 @@ func (c *Client) FindProductRecords(ctx context.Context, charge string) ([]Produ
 // RestQuantity gt 0 (+ sorterar på DeliveryDate, vilket dumpen visade fungerar),
 // och vi släpper rader utanför [from, to] efteråt. Externa operationsrader
 // (legoarbete utan artikel, PartId 0) släpps igenom här men filtreras i worker-lagret.
-func (c *Client) GetUpcomingOrderRows(ctx context.Context, from, to time.Time) ([]PurchaseOrderRow, error) {
+func (c *Client) GetUpcomingOrderRows(ctx context.Context, from, to time.Time) ([]PurchaseOrderRow, UpcomingFetchStats, error) {
 	q := NewQuery().
 		Filter("RestQuantity gt 0").
 		Expand("Part").
 		OrderBy("DeliveryDate asc")
 	rows, err := getAllPages[PurchaseOrderRow](ctx, c, pathPurchaseOrderRows, q, upcomingPageSize)
 	if err != nil {
-		return nil, err
+		return nil, UpcomingFetchStats{}, err
 	}
+	stats := UpcomingFetchStats{Fetched: len(rows)}
 	fromD, toD := from.Format("2006-01-02"), to.Format("2006-01-02")
 	out := make([]PurchaseOrderRow, 0, len(rows))
 	for _, r := range rows {
 		d := dateOnly(r.DeliveryDate)
+		if d != "" { // spåra datumspann över ALLA hämtade rader (för diagnostik)
+			if stats.MinDate == "" || d < stats.MinDate {
+				stats.MinDate = d
+			}
+			if d > stats.MaxDate {
+				stats.MaxDate = d
+			}
+		}
 		if d == "" || d < fromD || d > toD {
 			continue // tomt/0001-01-01 eller utanför fönstret
 		}
 		out = append(out, r)
 	}
-	return out, nil
+	return out, stats, nil
+}
+
+// UpcomingFetchStats beskriver vad servern gav INNAN datumfönstret filtrerades
+// bort klientsidan — så worker-loggen kan visa hela tratten och göra det
+// uppenbart om noll rader beror på Monitor (Fetched=0), på fel fönster
+// (datumspann utanför [from,to]) eller på tomma datum (Min/MaxDate tomma).
+type UpcomingFetchStats struct {
+	Fetched int    // antal öppna rader (RestQuantity gt 0) servern gav
+	MinDate string // tidigaste ifyllda DeliveryDate (YYYY-MM-DD), "" om inga
+	MaxDate string // senaste ifyllda DeliveryDate (YYYY-MM-DD), "" om inga
 }
 
 // dateOnly plockar YYYY-MM-DD ur ett Monitor-datum ("2026-06-26T00:00:00+02:00"
