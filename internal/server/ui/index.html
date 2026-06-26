@@ -75,9 +75,13 @@
       </table>
     </div>
     <div class="tab-panel hidden flex-1 min-h-0 overflow-auto flex flex-col" data-panel="upcoming">
-      <div class="flex items-center justify-between px-3 py-2 border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-main">
-        <span class="text-xs text-slate-500 dark:text-slate-400" id="upcomingStatus">…</span>
-        <button id="upcomingRunBtn" class="btn-secondary btn-sm" onclick="runUpcoming()">🔄 Kör nu</button>
+      <div class="flex items-center justify-between gap-3 px-3 py-2 border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-main">
+        <span class="text-xs text-slate-500 dark:text-slate-400 truncate" id="upcomingStatus">…</span>
+        <div class="flex items-center gap-2 shrink-0">
+          <input type="search" id="upcomingFilter" placeholder="Sök order, leverantör, artikel, material…"
+                 autocomplete="off" class="input-field !py-1.5 w-72">
+          <button id="upcomingRunBtn" class="btn-secondary btn-sm" onclick="runUpcoming()">🔄 Kör nu</button>
+        </div>
       </div>
       <div id="upcomingBody" class="flex-1 min-h-0 overflow-auto p-2 space-y-1.5 text-sm">
         <div class="text-center italic text-slate-400 py-6">Inga kommande inleveranser</div>
@@ -856,6 +860,17 @@ function upcomingBadge(row) {
 // upcomingOpen minns vilka ordrar/artiklar som är utfällda så de inte slår igen
 // vid varje SSE-omritning (t.ex. under en pågående uppdatering).
 const upcomingOpen = { orders: new Set(), rows: new Set() };
+let upcomingFilter = '';
+
+// upcomingMatches: fritextsök över order, leverantör, artikel, mått och material.
+function upcomingMatches(row, q) {
+  if (!q) return true;
+  const hay = [
+    row.order_number, row.supplier_name, row.part_number, row.dimensions,
+    row.required_material, row.our_material, row.required_cert, row.notes,
+  ].filter(Boolean).join(' ').toLowerCase();
+  return hay.includes(q);
+}
 
 // Dagens datum som YYYY-MM-DD (sorterar lexikalt = kronologiskt).
 function upcomingToday() {
@@ -870,14 +885,17 @@ function isOverdue(row) {
 function renderUpcoming(data) {
   if (data) upcomingState = data;
   const st = upcomingState;
-  const rows = st.rows || [];
+  const allRows = st.rows || [];
   const enabled = !!st.enabled;
+  const q = upcomingFilter.trim().toLowerCase();
+  const rows = q ? allRows.filter(r => upcomingMatches(r, q)) : allRows;
 
   const parts = [];
   if (!enabled) parts.push('Av — aktivera i ⚙️ efter Steg 0');
   else { parts.push('Schemalagt ' + (st.time || '16:30')); parts.push('fönster −' + (st.back_days ?? 365) + ' / +' + (st.window_days || 14) + ' dgr'); }
   if (st.last_run) parts.push('senast ' + fmtWhen(st.last_run));
   if (st.running) parts.push('⏳ uppdaterar…');
+  if (q) parts.push(rows.length + '/' + allRows.length + ' visas');
   document.getElementById('upcomingStatus').textContent = parts.join(' · ');
   const runBtn = document.getElementById('upcomingRunBtn');
   if (runBtn) runBtn.disabled = !enabled || !!st.running;
@@ -885,8 +903,9 @@ function renderUpcoming(data) {
   const body = document.getElementById('upcomingBody');
   body.innerHTML = '';
   if (rows.length === 0) {
-    body.innerHTML = '<div class="text-center italic text-slate-400 py-6">' +
-      (enabled ? 'Inga kommande inleveranser — kör en uppdatering' : 'Funktionen är av — aktivera i ⚙️ Inställningar') + '</div>';
+    const msg = allRows.length && q ? 'Inga träffar'
+      : (enabled ? 'Inga kommande inleveranser — kör en uppdatering' : 'Funktionen är av — aktivera i ⚙️ Inställningar');
+    body.innerHTML = '<div class="text-center italic text-slate-400 py-6">' + msg + '</div>';
     return;
   }
 
@@ -933,14 +952,16 @@ function renderOrderGroup(orderKey, items, enabled) {
 
   const header = document.createElement('button');
   header.type = 'button';
-  header.className = 'w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-slate-50 dark:hover:bg-slate-800/50' + (allDelivered ? ' opacity-50' : '');
+  header.className = 'w-full grid items-center gap-x-3 px-3 py-2 text-left hover:bg-slate-50 dark:hover:bg-slate-800/50' + (allDelivered ? ' opacity-50' : '');
+  // Fasta kolumner: caret · order · leverantör (växer) · antal · datum · status.
+  header.style.gridTemplateColumns = '1rem 8rem minmax(0,1fr) 4.5rem 11rem auto';
   header.innerHTML =
-    '<span class="caret text-slate-400 w-3 shrink-0">' + (open ? '▾' : '▸') + '</span>' +
-    '<span class="font-semibold">' + escapeHtml(orderKey) + '</span>' +
-    (supplier ? '<span class="text-slate-500 dark:text-slate-400 truncate">· ' + escapeHtml(supplier) + '</span>' : '') +
-    '<span class="text-xs text-slate-400 shrink-0">· ' + items.length + ' art.</span>' +
-    (dateLabel ? '<span class="text-xs text-slate-400 shrink-0">· ' + escapeHtml(dateLabel) + '</span>' : '') +
-    '<span class="ml-auto shrink-0">' + badge + '</span>';
+    '<span class="caret text-slate-400">' + (open ? '▾' : '▸') + '</span>' +
+    '<span class="font-semibold truncate">' + escapeHtml(orderKey) + '</span>' +
+    '<span class="text-slate-500 dark:text-slate-400 truncate">' + escapeHtml(supplier) + '</span>' +
+    '<span class="text-xs text-slate-400 text-right tabular-nums">' + items.length + ' art.</span>' +
+    '<span class="text-xs text-slate-400 truncate">' + escapeHtml(dateLabel) + '</span>' +
+    '<span class="justify-self-end whitespace-nowrap">' + badge + '</span>';
 
   const list = document.createElement('div');
   list.className = 'divide-y divide-slate-100 dark:divide-slate-800 border-t border-slate-200 dark:border-slate-800' + (open ? '' : ' hidden');
@@ -1267,6 +1288,11 @@ document.querySelectorAll('th.sortable').forEach(th => {
 document.getElementById('queueFilter').addEventListener('input', e => {
   queueFilter = e.target.value;
   redrawQueue();
+});
+
+document.getElementById('upcomingFilter').addEventListener('input', e => {
+  upcomingFilter = e.target.value;
+  renderUpcoming();
 });
 
 function updateSortIndicators() {
