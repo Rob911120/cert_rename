@@ -73,6 +73,13 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		s.mu.Unlock()
 	}()
 
+	// Spela upp buffrad logghistorik så en klient som ansluter efteråt (eller
+	// laddar om) ser vad som hänt — inte en tom logg.
+	for _, payload := range s.recentLogs() {
+		fmt.Fprintf(w, "event: log\ndata: %s\n\n", payload)
+	}
+	flusher.Flush()
+
 	// initial state + stats
 	s.BroadcastStats()
 	s.broadcastStateInternal()

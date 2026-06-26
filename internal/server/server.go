@@ -44,6 +44,13 @@ type Server struct {
 	costsMu sync.Mutex
 	costs   store.Costs
 
+	// logBuf är en ring av de senaste loggraderna (marshalade SSE-payloads) som
+	// spelas upp för varje ny SSE-klient i handleEvents. Utan den vore UI-loggen
+	// live-only: öppnar man UI:t efter att något hänt (eller laddar om) är den tom.
+	// Filloggen på disk är fortfarande den fullständiga historiken.
+	logMu  sync.Mutex
+	logBuf []string
+
 	sickanSess *sickanSessions
 
 	uploadMu   sync.Mutex
@@ -131,7 +138,12 @@ func (s *Server) ensureMonitor() (*monitor.Client, error) {
 	return mc, nil
 }
 
-// Logf är en del av ai.Logger och worker.Notifier.
+// logBufMax är hur många loggrader ring-bufferten behåller för uppspelning till
+// nya SSE-klienter.
+const logBufMax = 300
+
+// Logf är en del av ai.Logger och worker.Notifier. Skriver till filloggen,
+// sparar raden i ring-bufferten och broadcastar den live till anslutna klienter.
 func (s *Server) Logf(format string, args ...any) {
 	text := fmt.Sprintf(format, args...)
 	log.Println(text)
@@ -139,7 +151,26 @@ func (s *Server) Logf(format string, args ...any) {
 		"ts":   time.Now().Format("15:04:05"),
 		"text": text,
 	})
+	s.recordLog(string(payload))
 	s.broadcast(ssEvent{Event: "log", Data: string(payload)})
+}
+
+// recordLog lägger en marshalad loggrad i ring-bufferten (kapad till logBufMax).
+func (s *Server) recordLog(payload string) {
+	s.logMu.Lock()
+	defer s.logMu.Unlock()
+	s.logBuf = append(s.logBuf, payload)
+	if len(s.logBuf) > logBufMax {
+		// Kopiera till en fräsch slice så bakomliggande array inte växer obegränsat.
+		s.logBuf = append([]string(nil), s.logBuf[len(s.logBuf)-logBufMax:]...)
+	}
+}
+
+// recentLogs returnerar en kopia av de buffrade loggraderna (äldst först).
+func (s *Server) recentLogs() []string {
+	s.logMu.Lock()
+	defer s.logMu.Unlock()
+	return append([]string(nil), s.logBuf...)
 }
 
 // IncrementOK ökar OK-räknaren — del av worker.Notifier.
