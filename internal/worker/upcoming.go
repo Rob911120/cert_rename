@@ -29,21 +29,25 @@ import (
 func RefreshUpcoming(ctx context.Context, mc *monitor.Client, repo *store.Repository, cfg store.Config, n Notifier) (int, error) {
 	from := time.Now()
 	to := from.AddDate(0, 0, cfg.UpcomingWindowDays)
-	all, err := mc.GetUpcomingOrderRows(ctx, from, to)
+	windowRows, stats, err := mc.GetUpcomingOrderRows(ctx, from, to)
 	if err != nil {
 		return 0, fmt.Errorf("hämta kommande inleveranser: %w", err)
 	}
 	// Släpp rader utan artikel (externa operations-/legorader, OrderRowType 4 i
 	// Steg-0-dumpen): de kan inte bära materialcert och hör inte hemma i listan.
-	rows := make([]monitor.PurchaseOrderRow, 0, len(all))
-	for _, r := range all {
+	rows := make([]monitor.PurchaseOrderRow, 0, len(windowRows))
+	for _, r := range windowRows {
 		if r.PartId != 0 {
 			rows = append(rows, r)
 		}
 	}
-	skipped := len(all) - len(rows)
-	n.Logf("📦 %d kommande inleveransrader i fönstret %s–%s (%d operationsrader utan artikel utelämnade)",
-		len(rows), from.Format("2006-01-02"), to.Format("2006-01-02"), skipped)
+	// Logga hela tratten så 0 rader går att felsöka direkt i UI-loggen: gav
+	// Monitor inget (Fetched=0), ligger datumen utanför fönstret (se datumspann),
+	// eller var alla rader operationsrader utan artikel?
+	n.Logf("📦 Monitor: %d öppna orderrader (leveransdatum %s–%s) → %d i fönstret %s–%s → %d med artikel (%d operationsrader utelämnade)",
+		stats.Fetched, dashIfEmpty(stats.MinDate), dashIfEmpty(stats.MaxDate),
+		len(windowRows), from.Format("2006-01-02"), to.Format("2006-01-02"),
+		len(rows), len(windowRows)-len(rows))
 
 	// Batcha unika ordrar (ordernummer + leverantör) en gång.
 	orders := resolveOrders(ctx, mc, rows, n)
@@ -330,6 +334,14 @@ func normalizeDate(s string) string {
 	}
 	if len(s) >= 10 {
 		return s[:10]
+	}
+	return s
+}
+
+// dashIfEmpty visar "—" för tomma datumspann i loggen.
+func dashIfEmpty(s string) string {
+	if s == "" {
+		return "—"
 	}
 	return s
 }
