@@ -71,17 +71,16 @@ func stubUpcomingMonitor(t *testing.T) *monitor.Client {
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/001.1/login"):
 			_, _ = w.Write([]byte(`{"SessionId":"s1"}`))
-		case strings.Contains(r.URL.Path, "PurchaseOrderDeliveryRows"):
+		case strings.Contains(r.URL.Path, "PurchaseOrderRows"):
 			if r.URL.Query().Get("$skip") != "" && r.URL.Query().Get("$skip") != "0" {
 				_, _ = w.Write([]byte(`{"value":[]}`)) // sida 2: slut → paginering stannar
 				return
 			}
 			_, _ = w.Write([]byte(`{"value":[{
-				"Id":"555","PurchaseOrderId":"100","PurchaseOrderRowId":"11",
-				"DeliveryDate":"2026-07-01T00:00:00Z","ArrivedQuantity":0,"ApprovedQuantity":0,
-				"PurchaseOrderRow":{"Id":"11","ParentOrderId":"100","PartId":"5","RestQuantity":10,
-					"Part":{"Id":"5","PartNumber":"PL-S355-10","Description":"Plåt 10mm",
-						"ExtraDescription":"S355J2 +N, cert 3.1","ReceivingInspectionType":"Always"}}
+				"Id":"11","ParentOrderId":"100","PartId":"5","OrderRowType":1,"RestQuantity":10,
+				"DeliveryDate":"2026-07-01T00:00:00Z",
+				"Part":{"Id":"5","PartNumber":"PL-S355-10","Description":"Plåt 10mm",
+					"ExtraDescription":"S355J2 +N, cert 3.1","ReceivingInspectionType":"Always"}
 			}]}`))
 		case strings.Contains(r.URL.Path, "Purchase/PurchaseOrders"):
 			_, _ = w.Write([]byte(`{"value":[{"Id":"100","OrderNumber":"B127575","BusinessContactId":"7"}]}`))
@@ -128,7 +127,7 @@ func TestRefreshUpcoming_NoCert(t *testing.T) {
 		t.Fatalf("vill ha 1 i DB, fick %d", len(list))
 	}
 	u := list[0]
-	if u.DeliveryRowID != 555 || u.OrderNumber != "B127575" || u.SupplierName != "BE Group" {
+	if u.DeliveryRowID != 11 || u.OrderNumber != "B127575" || u.SupplierName != "BE Group" {
 		t.Errorf("rad fel: %+v", u)
 	}
 	if u.PartNumber != "PL-S355-10" || u.DeliveryDate != "2026-07-01" || u.PlannedQty != 10 {
@@ -155,15 +154,15 @@ func TestRefreshUpcoming_FallbackPartFetch(t *testing.T) {
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/001.1/login"):
 			_, _ = w.Write([]byte(`{"SessionId":"s1"}`))
-		case strings.Contains(r.URL.Path, "PurchaseOrderDeliveryRows"):
+		case strings.Contains(r.URL.Path, "PurchaseOrderRows"):
 			if r.URL.Query().Get("$skip") != "" && r.URL.Query().Get("$skip") != "0" {
 				_, _ = w.Write([]byte(`{"value":[]}`))
 				return
 			}
 			// Ingen inline Part — bara PartId.
 			_, _ = w.Write([]byte(`{"value":[{
-				"Id":"556","PurchaseOrderId":"100","PurchaseOrderRowId":"12","DeliveryDate":"2026-07-02",
-				"PurchaseOrderRow":{"Id":"12","ParentOrderId":"100","PartId":"5","RestQuantity":3}
+				"Id":"12","ParentOrderId":"100","PartId":"5","OrderRowType":1,"RestQuantity":3,
+				"DeliveryDate":"2026-07-02"
 			}]}`))
 		case strings.Contains(r.URL.Path, "Purchase/PurchaseOrders"):
 			_, _ = w.Write([]byte(`{"value":[{"Id":"100","OrderNumber":"B1","BusinessContactId":"7"}]}`))

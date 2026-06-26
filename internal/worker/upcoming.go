@@ -29,11 +29,21 @@ import (
 func RefreshUpcoming(ctx context.Context, mc *monitor.Client, repo *store.Repository, cfg store.Config, n Notifier) (int, error) {
 	from := time.Now()
 	to := from.AddDate(0, 0, cfg.UpcomingWindowDays)
-	rows, err := mc.GetUpcomingDeliveryRows(ctx, from, to)
+	all, err := mc.GetUpcomingOrderRows(ctx, from, to)
 	if err != nil {
 		return 0, fmt.Errorf("hämta kommande inleveranser: %w", err)
 	}
-	n.Logf("📦 %d kommande inleveransrader i fönstret %s–%s", len(rows), from.Format("2006-01-02"), to.Format("2006-01-02"))
+	// Släpp rader utan artikel (externa operations-/legorader, OrderRowType 4 i
+	// Steg-0-dumpen): de kan inte bära materialcert och hör inte hemma i listan.
+	rows := make([]monitor.PurchaseOrderRow, 0, len(all))
+	for _, r := range all {
+		if r.PartId != 0 {
+			rows = append(rows, r)
+		}
+	}
+	skipped := len(all) - len(rows)
+	n.Logf("📦 %d kommande inleveransrader i fönstret %s–%s (%d operationsrader utan artikel utelämnade)",
+		len(rows), from.Format("2006-01-02"), to.Format("2006-01-02"), skipped)
 
 	// Batcha unika ordrar (ordernummer + leverantör) en gång.
 	orders := resolveOrders(ctx, mc, rows, n)
@@ -71,11 +81,11 @@ type orderInfo struct {
 	SupplierName string
 }
 
-// resolveOrders hämtar ordernummer + leverantör för varje unik PurchaseOrderId.
-func resolveOrders(ctx context.Context, mc *monitor.Client, rows []monitor.PurchaseOrderDeliveryRow, n Notifier) map[monitor.ID]orderInfo {
+// resolveOrders hämtar ordernummer + leverantör för varje unik order (ParentOrderId).
+func resolveOrders(ctx context.Context, mc *monitor.Client, rows []monitor.PurchaseOrderRow, n Notifier) map[monitor.ID]orderInfo {
 	infos := map[monitor.ID]orderInfo{}
 	for _, row := range rows {
-		id := row.PurchaseOrderId
+		id := row.ParentOrderId
 		if id == 0 {
 			continue
 		}
@@ -106,11 +116,11 @@ func resolveOrders(ctx context.Context, mc *monitor.Client, rows []monitor.Purch
 
 // fetchMissingParts batch-hämtar artiklar för de rader vars inline-$expand inte
 // gav någon Part. Returnerar en (möjligen tom) karta; fel loggas men stoppar inte.
-func fetchMissingParts(ctx context.Context, mc *monitor.Client, rows []monitor.PurchaseOrderDeliveryRow, n Notifier) map[monitor.ID]monitor.Part {
+func fetchMissingParts(ctx context.Context, mc *monitor.Client, rows []monitor.PurchaseOrderRow, n Notifier) map[monitor.ID]monitor.Part {
 	var missing []monitor.ID
 	for _, row := range rows {
-		if pr := row.PurchaseOrderRow; pr != nil && pr.Part == nil && pr.PartId != 0 {
-			missing = append(missing, pr.PartId)
+		if row.Part == nil && row.PartId != 0 {
+			missing = append(missing, row.PartId)
 		}
 	}
 	if len(missing) == 0 {
@@ -136,12 +146,12 @@ func supplierDisplay(s *monitor.Supplier) string {
 
 // buildUpcomingRow bygger en lagrings-rad: rad→Part-join, cert-matchning,
 // cert_status-härledning, AI-dom (om cert matchat) och evidens.
-func buildUpcomingRow(ctx context.Context, mc *monitor.Client, repo *store.Repository, aiClient *anthropic.Client, n Notifier, row monitor.PurchaseOrderDeliveryRow, orders map[monitor.ID]orderInfo, parts map[monitor.ID]monitor.Part) store.UpcomingDelivery {
-	info := orders[row.PurchaseOrderId]
+func buildUpcomingRow(ctx context.Context, mc *monitor.Client, repo *store.Repository, aiClient *anthropic.Client, n Notifier, row monitor.PurchaseOrderRow, orders map[monitor.ID]orderInfo, parts map[monitor.ID]monitor.Part) store.UpcomingDelivery {
+	info := orders[row.ParentOrderId]
 	ud := store.UpcomingDelivery{
-		DeliveryRowID:      int64(row.ID),
-		PurchaseOrderID:    int64(row.PurchaseOrderId),
-		PurchaseOrderRowID: int64(row.PurchaseOrderRowId),
+		DeliveryRowID:      int64(row.ID), // orderradens Id — unik nyckel + dedupar delleveranser
+		PurchaseOrderID:    int64(row.ParentOrderId),
+		PurchaseOrderRowID: int64(row.ID),
 		OrderNumber:        info.OrderNumber,
 		SupplierName:       info.SupplierName,
 		DeliveryDate:       normalizeDate(row.DeliveryDate),
@@ -150,17 +160,14 @@ func buildUpcomingRow(ctx context.Context, mc *monitor.Client, repo *store.Repos
 		CertStatus:         store.CertNoneRequired,
 		MatchBy:            store.MatchByNone,
 		MaterialOK:         store.MaterialUnknown,
+		PartID:             int64(row.PartId),
+		PlannedQty:         row.RestQuantity, // kvarvarande ej levererat = väntad mängd
 	}
 
-	var part *monitor.Part
-	if pr := row.PurchaseOrderRow; pr != nil {
-		ud.PartID = int64(pr.PartId)
-		ud.PlannedQty = pr.RestQuantity // VERIFIERA: planerad inkommande mängd
-		part = pr.Part
-		if part == nil && pr.PartId != 0 { // inline saknades → använd batch-hämtad
-			if p, ok := parts[pr.PartId]; ok {
-				part = &p
-			}
+	part := row.Part
+	if part == nil && row.PartId != 0 { // inline saknades → använd batch-hämtad
+		if p, ok := parts[row.PartId]; ok {
+			part = &p
 		}
 	}
 	if part != nil {

@@ -9,12 +9,11 @@ import (
 
 // Endpoint-paths (relativt apiBase()). Verifierade mot dokumentationscrawlen.
 const (
-	pathPurchaseOrders            = "/api/v1/Purchase/PurchaseOrders"
-	pathPurchaseOrderRows         = "/api/v1/Purchase/PurchaseOrderRows"
-	pathPurchaseOrderDeliveryRows = "/api/v1/Purchase/PurchaseOrderDeliveryRows"
-	pathSuppliers                 = "/api/v1/Purchase/Suppliers"
-	pathProductRecords            = "/api/v1/Inventory/ProductRecords"
-	pathParts                     = "/api/v1/Inventory/Parts"
+	pathPurchaseOrders    = "/api/v1/Purchase/PurchaseOrders"
+	pathPurchaseOrderRows = "/api/v1/Purchase/PurchaseOrderRows"
+	pathSuppliers         = "/api/v1/Purchase/Suppliers"
+	pathProductRecords    = "/api/v1/Inventory/ProductRecords"
+	pathParts             = "/api/v1/Inventory/Parts"
 )
 
 // upcomingPageSize är $top per sida vid hämtning av kommande inleveranser.
@@ -110,31 +109,33 @@ func (c *Client) FindProductRecords(ctx context.Context, charge string) ([]Produ
 	return out, err
 }
 
-// GetUpcomingDeliveryRows hämtar kommande inleveransrader i fönstret [from, to]:
-// rader vars DeliveryDate ligger i intervallet och som ännu inte anlänt
-// (ArrivedQuantity eq 0). Orderraden och dess artikel kommer inline via
-// $expand=PurchaseOrderRow($expand=Part) (eliminerar ett GetPart-anrop per rad).
-// Paginerat via getAllPages (loopar tills tom sida / följer @odata.nextLink).
+// GetUpcomingOrderRows hämtar kommande inleveranser i fönstret [from, to] direkt
+// från PurchaseOrderRows: orderrader vars DeliveryDate ligger i intervallet och
+// som inte är fullt levererade (RestQuantity gt 0). Artikeln kommer inline via
+// $expand=Part (eliminerar ett GetPart-anrop per rad). Paginerat via getAllPages
+// (loopar tills tom sida / följer @odata.nextLink).
 //
-// VERIFIERA (Steg 0): att PurchaseOrderDeliveryRows används i Pellys Monitor
-// (annars fallback till PurchaseOrderRows + RestQuantity gt 0), exakt semantik
-// för "ej anländ" (ArrivedQuantity eq 0?), samt att DeliveryDate är ifyllt.
-func (c *Client) GetUpcomingDeliveryRows(ctx context.Context, from, to time.Time) ([]PurchaseOrderDeliveryRow, error) {
+// Steg-0-dumpen bekräftade valet: PurchaseOrderDeliveryRows bar bara REDAN
+// inlevererat gods (tomt DeliveryDate, ArrivedQuantity alltid >0, ingen nästlad
+// orderrad via $expand), medan PurchaseOrderRows har ifyllt DeliveryDate,
+// RestQuantity och fungerande $expand=Part. Externa operationsrader (legoarbete
+// utan artikel, PartId 0) släpps igenom här men filtreras i worker-lagret.
+func (c *Client) GetUpcomingOrderRows(ctx context.Context, from, to time.Time) ([]PurchaseOrderRow, error) {
 	filter := fmt.Sprintf(
-		"DeliveryDate ge %s and DeliveryDate le %s and ArrivedQuantity eq 0",
+		"DeliveryDate ge %s and DeliveryDate le %s and RestQuantity gt 0",
 		odataDate(from), odataDate(to),
 	)
 	q := NewQuery().
 		Filter(filter).
-		Expand("PurchaseOrderRow($expand=Part)").
+		Expand("Part").
 		OrderBy("DeliveryDate asc")
-	return getAllPages[PurchaseOrderDeliveryRow](ctx, c, pathPurchaseOrderDeliveryRows, q, upcomingPageSize)
+	return getAllPages[PurchaseOrderRow](ctx, c, pathPurchaseOrderRows, q, upcomingPageSize)
 }
 
 // GetPartsByIds hämtar artiklar för en uppsättning ID:n, batchat i bitar om
 // partsBatchSize ("Id eq A or Id eq B …"), och returnerar dem som en karta per ID.
 // Tänkt som komplement när inline-$expand-datan saknas för någon rad — anroparen
-// faller annars tillbaka på Part som redan kom via GetUpcomingDeliveryRows.
+// faller annars tillbaka på Part som redan kom via GetUpcomingOrderRows.
 func (c *Client) GetPartsByIds(ctx context.Context, ids []ID) (map[ID]Part, error) {
 	out := map[ID]Part{}
 	uniq := dedupeIDs(ids)

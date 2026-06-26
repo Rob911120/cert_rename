@@ -43,26 +43,44 @@ type PurchaseOrder struct {
 	BusinessContactId ID     `json:"BusinessContactId"`
 }
 
-// PurchaseOrderRow — /api/v1/Purchase/PurchaseOrderRows. Länkas till sin order
-// via ParentOrderId och till artikeln via PartId. ArrivalReporting är en
-// Monitor-flagga vars exakta semantik är OVERIFIERAD (troligen: om raden ingår i
-// godsmottagnings-/inleveransrapporteringsflödet, ev. text-/tjänsterad utan
-// lagerartikel) — den används som varning, inte spärr. RestQuantity är
-// kvarvarande ej levererat.
+// PurchaseOrderRow — /api/v1/Purchase/PurchaseOrderRows. KÄLLAN för "kommande
+// inleveranser": en orderrad med RestQuantity gt 0 (ej fullt levererat) och
+// DeliveryDate i fönstret = väntat gods. (PurchaseOrderDeliveryRows visade sig i
+// Steg-0-dumpen vara REDAN inlevererat gods — tomt DeliveryDate, ArrivedQuantity
+// alltid >0, och $expand gav ingen nästlad orderrad — och dög inte.) Länkas till
+// sin order via ParentOrderId och till artikeln via PartId. DeliveryDate är
+// önskat/planerat leveransdatum. OrderRowType skiljer materialrader (PartId satt)
+// från externa operationsrader (legoarbete utan artikel, PartId 0 — hoppas över).
+// ArrivalReporting är en Monitor-flagga vars exakta semantik är OVERIFIERAD.
+// RestQuantity är kvarvarande ej levererat. Raw bär hela radens JSON för evidens.
 type PurchaseOrderRow struct {
-	ID                ID      `json:"Id"`
-	ParentOrderId     ID      `json:"ParentOrderId"`
-	PartId            ID      `json:"PartId"`
-	RowIndex          int     `json:"RowIndex"`
-	OrderedQuantity   float64 `json:"OrderedQuantity"`
-	DeliveredQuantity float64 `json:"DeliveredQuantity"`
-	RestQuantity      float64 `json:"RestQuantity"`
-	UnitId            ID      `json:"UnitId"`
-	ArrivalReporting  bool    `json:"ArrivalReporting"`
-	RowStatus         int     `json:"RowStatus"`
-	// Part fylls inline när raden hämtas med $expand=Part (eller nästlat via
-	// PurchaseOrderDeliveryRows $expand=PurchaseOrderRow($expand=Part)).
-	Part *Part `json:"Part,omitempty"`
+	ID                ID              `json:"Id"`
+	ParentOrderId     ID              `json:"ParentOrderId"`
+	PartId            ID              `json:"PartId"`
+	RowIndex          int             `json:"RowIndex"`
+	OrderRowType      int             `json:"OrderRowType"`
+	DeliveryDate      string          `json:"DeliveryDate"`
+	OrderedQuantity   float64         `json:"OrderedQuantity"`
+	DeliveredQuantity float64         `json:"DeliveredQuantity"`
+	RestQuantity      float64         `json:"RestQuantity"`
+	UnitId            ID              `json:"UnitId"`
+	ArrivalReporting  bool            `json:"ArrivalReporting"`
+	RowStatus         int             `json:"RowStatus"`
+	Part              *Part           `json:"Part,omitempty"` // inline via $expand=Part
+	Raw               json.RawMessage `json:"-"`              // hela radens JSON
+}
+
+// UnmarshalJSON avkodar de kända fälten (inkl. inline Part) och fångar samtidigt
+// råbytes i Raw.
+func (r *PurchaseOrderRow) UnmarshalJSON(data []byte) error {
+	type alias PurchaseOrderRow
+	var a alias
+	if err := json.Unmarshal(data, &a); err != nil {
+		return err
+	}
+	*r = PurchaseOrderRow(a)
+	r.Raw = append(json.RawMessage(nil), data...)
+	return nil
 }
 
 // EnumValue tål att ett Monitor-enumfält serialiseras antingen som tal (3) eller
@@ -124,38 +142,6 @@ func (p *Part) RequiresCert() bool {
 }
 
 func normEnum(s string) string { return strings.ToLower(strings.TrimSpace(s)) }
-
-// PurchaseOrderDeliveryRow — /api/v1/Purchase/PurchaseOrderDeliveryRows. Detta är
-// "kommande inleverans" per orderrad och dedupar delleveranser naturligt.
-// PurchaseOrderRow (och dess Part) kommer inline via
-// $expand=PurchaseOrderRow($expand=Part). Raw bär hela radens JSON för evidens.
-//
-// VERIFIERA (Steg 0): ArrivedQuantity-semantik (=0 = ej anländ?), att DeliveryDate
-// är ifyllt, samt ApprovedQuantity/GoodsMessage-fältnamn och RowStatus-enum.
-type PurchaseOrderDeliveryRow struct {
-	ID                 ID                `json:"Id"`
-	PurchaseOrderId    ID                `json:"PurchaseOrderId"`
-	PurchaseOrderRowId ID                `json:"PurchaseOrderRowId"`
-	DeliveryDate       string            `json:"DeliveryDate"`
-	ArrivedQuantity    float64           `json:"ArrivedQuantity"`
-	ApprovedQuantity   float64           `json:"ApprovedQuantity"`
-	GoodsMessage       string            `json:"GoodsMessage"` // VERIFIERA: fältnamn
-	PurchaseOrderRow   *PurchaseOrderRow `json:"PurchaseOrderRow,omitempty"`
-	Raw                json.RawMessage   `json:"-"` // hela radens JSON
-}
-
-// UnmarshalJSON avkodar de kända fälten (inkl. nästlad PurchaseOrderRow/Part) och
-// fångar samtidigt råbytes i Raw.
-func (r *PurchaseOrderDeliveryRow) UnmarshalJSON(data []byte) error {
-	type alias PurchaseOrderDeliveryRow
-	var a alias
-	if err := json.Unmarshal(data, &a); err != nil {
-		return err
-	}
-	*r = PurchaseOrderDeliveryRow(a)
-	r.Raw = append(json.RawMessage(nil), data...)
-	return nil
-}
 
 // Supplier — /api/v1/Purchase/Suppliers.
 type Supplier struct {

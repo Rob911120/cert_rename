@@ -83,16 +83,16 @@ func runDump(opt dumpOptions) error {
 	}
 	targets := []dumpTarget{
 		{
-			name:  "delivery-rows",
-			path:  "/api/v1/Purchase/PurchaseOrderDeliveryRows",
-			query: monitor.NewQuery().Top(top).Expand("PurchaseOrderRow($expand=Part)").OrderBy("DeliveryDate asc"),
-			note:  "PRIMÄR KÄLLA. VERIFIERA: DeliveryDate ifyllt? ArrivedQuantity-semantik (=0 = ej anländ?)? PurchaseOrderRow+Part inline via $expand? RowStatus-enum?",
+			name:  "purchase-order-rows",
+			path:  "/api/v1/Purchase/PurchaseOrderRows",
+			query: monitor.NewQuery().Top(top).Expand("Part").OrderBy("DeliveryDate asc"),
+			note:  "PRIMÄR KÄLLA (bekräftad i Steg 0). 'Kommande' = RestQuantity gt 0 + DeliveryDate i fönstret. Part kommer inline via $expand=Part. Materialrader har PartId; operationsrader (OrderRowType 4) saknar artikel och hoppas över.",
 		},
 		{
-			name:  "purchase-order-rows-fallback",
-			path:  "/api/v1/Purchase/PurchaseOrderRows",
-			query: monitor.NewQuery().Top(top).Expand("Part"),
-			note:  "FALLBACK om delivery-rows inte används i Pellys Monitor. VERIFIERA: RestQuantity gt 0 som 'kommande'? Kan Part expanderas?",
+			name:  "delivery-rows-rejected",
+			path:  "/api/v1/Purchase/PurchaseOrderDeliveryRows",
+			query: monitor.NewQuery().Top(top).Expand("PurchaseOrderRow($expand=Part)").OrderBy("DeliveryDate asc"),
+			note:  "FÖRKASTAD som källa: bar REDAN inlevererat gods (DeliveryDate tomt/0001-01-01, ArrivedQuantity alltid >0) och $expand gav ingen nästlad orderrad. Dumpas kvar för jämförelse.",
 		},
 		{
 			name:  "parts",
