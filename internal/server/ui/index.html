@@ -938,30 +938,34 @@ function renderOrderGroup(orderKey, items, enabled) {
 
   const supplier = (items.find(r => r.supplier_name) || {}).supplier_name || '';
   const dates = items.map(r => r.delivery_date).filter(Boolean).sort();
-  const dateLabel = dates.length ? (dates[0] === dates[dates.length - 1] ? dates[0] : dates[0] + ' – ' + dates[dates.length - 1]) : '';
+  const firstDate = dates[0] || '';
+  const multiDate = dates.length > 1 && dates[0] !== dates[dates.length - 1];
   const overdue = items.filter(isOverdue).length;
   const mismatches = items.filter(r => r.material_ok === 'mismatch').length;
   const missing = items.filter(r => r.cert_status === 'missing').length;
-  let status;
-  if (mismatches) status = '<span class="badge-red">⚠ ' + mismatches + ' avvikelse' + (mismatches > 1 ? 'r' : '') + '</span>';
-  else if (missing) status = '<span class="badge-yellow">⚠ ' + missing + ' saknar cert</span>';
-  else status = '<span class="badge-green">✓ allt ok</span>';
-  const badge = (overdue ? '<span class="badge-red">⏰ ' + overdue + ' försenad' + (overdue > 1 ? 'e' : '') + '</span> ' : '') + status;
+  // Visa bara åtgärdsbara flaggor (mindre plotter) — släpp redundant "allt ok".
+  const flags = [];
+  if (overdue) flags.push('<span class="badge-red">⏰ ' + overdue + ' försenad' + (overdue > 1 ? 'e' : '') + '</span>');
+  if (mismatches) flags.push('<span class="badge-red">⚠ ' + mismatches + ' avvikelse' + (mismatches > 1 ? 'r' : '') + '</span>');
+  else if (missing) flags.push('<span class="badge-yellow">⚠ ' + missing + ' saknar cert</span>');
+  const badge = flags.length ? flags.join(' ') : '<span class="text-slate-300 dark:text-slate-600">✓</span>';
   const allDelivered = items.every(r => r.local_status === 'delivered');
   const open = upcomingOpen.orders.has(orderKey);
 
   const header = document.createElement('button');
   header.type = 'button';
   header.className = 'w-full grid items-center gap-x-3 px-3 py-2 text-left hover:bg-slate-50 dark:hover:bg-slate-800/50' + (allDelivered ? ' opacity-50' : '');
-  // Fasta kolumner: caret · order · leverantör (växer) · antal · datum · status.
-  header.style.gridTemplateColumns = '1rem 8rem minmax(0,1fr) 4.5rem 11rem auto';
+  // Alla kolumner UTOM leverantör (1fr) har fast bredd. Eftersom varje orderrad är
+  // ett eget grid är det fasta bredder + identisk totalbredd som gör att datum och
+  // taggar linjerar lodrätt mellan rader. Statuskolumnen vänsterställs och klipps.
+  header.style.gridTemplateColumns = '1rem 7rem minmax(0,1fr) 4rem 6rem 13.5rem';
   header.innerHTML =
     '<span class="caret text-slate-400">' + (open ? '▾' : '▸') + '</span>' +
     '<span class="font-semibold truncate">' + escapeHtml(orderKey) + '</span>' +
     '<span class="text-slate-500 dark:text-slate-400 truncate">' + escapeHtml(supplier) + '</span>' +
     '<span class="text-xs text-slate-400 text-right tabular-nums">' + items.length + ' art.</span>' +
-    '<span class="text-xs text-slate-400 truncate">' + escapeHtml(dateLabel) + '</span>' +
-    '<span class="justify-self-end whitespace-nowrap">' + badge + '</span>';
+    '<span class="text-xs ' + (overdue ? 'text-red-500 dark:text-red-400' : 'text-slate-400') + ' tabular-nums whitespace-nowrap">' + escapeHtml(firstDate) + (multiDate ? ' <span class="text-slate-300 dark:text-slate-600">+</span>' : '') + '</span>' +
+    '<span class="justify-self-start whitespace-nowrap overflow-hidden">' + badge + '</span>';
 
   const list = document.createElement('div');
   list.className = 'divide-y divide-slate-100 dark:divide-slate-800 border-t border-slate-200 dark:border-slate-800' + (open ? '' : ' hidden');
