@@ -49,6 +49,10 @@ type Config struct {
 	UpcomingTime       string `json:"upcoming_time,omitempty"`
 	UpcomingWindowDays int    `json:"upcoming_window_days,omitempty"`
 	UpcomingBackDays   int    `json:"upcoming_back_days,omitempty"`
+
+	// HiddenSuppliers är leverantörsnamn dolda av operatören i "Kommande
+	// inleveranser"-vyn (rent UI-filter, raderna finns kvar i databasen).
+	HiddenSuppliers []string `json:"hidden_suppliers,omitempty"`
 }
 
 // NormalizeUpcoming sätter defaults och avvisar ogiltig UpcomingTime. Anropas

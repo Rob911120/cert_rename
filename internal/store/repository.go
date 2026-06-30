@@ -49,6 +49,7 @@ type Certificate struct {
 	Charge               string `json:"charge"`
 	Material             string `json:"material"`
 	EnStandardPresent    bool   `json:"en_standard_present"`
+	IsEnglish            bool   `json:"is_english"`
 	ProductForm          string `json:"product_form"`
 	Dimensions           string `json:"dimensions"`
 	CountryOfOrigin      string `json:"country_of_origin"`
@@ -78,7 +79,7 @@ type Certificate struct {
 // "SELECT *" skulle då ge olika kolumnordning på nya vs migrerade databaser.
 const certificateColumns = `
 	id, email_id, pdf_hash, filename, original_filename,
-	cert_type, charge, material, en_standard_present, product_form, dimensions,
+	cert_type, charge, material, en_standard_present, is_english, product_form, dimensions,
 	country_of_origin, b_numbers, confidence, issues, model_used, tokens_input, tokens_output,
 	processing_ms, status, extracted_at, human_corrected,
 	corrected_charge, corrected_material,
@@ -197,7 +198,7 @@ func scanCertificate(s interface {
 	var correctionNotes, correctionLog sql.NullString
 	err := s.Scan(
 		&c.ID, &c.EmailID, &c.PDFHash, &c.Filename, &c.OriginalFilename,
-		&c.CertType, &c.Charge, &c.Material, &c.EnStandardPresent, &c.ProductForm, &c.Dimensions,
+		&c.CertType, &c.Charge, &c.Material, &c.EnStandardPresent, &c.IsEnglish, &c.ProductForm, &c.Dimensions,
 		&c.CountryOfOrigin, &c.BNumbers, &c.Confidence, &c.Issues, &c.ModelUsed, &c.TokensInput, &c.TokensOutput,
 		&c.ProcessingMs, &c.Status, &c.ExtractedAt, &c.HumanCorrected,
 		&correctedCharge, &correctedMaterial,
@@ -221,12 +222,12 @@ func (r *Repository) InsertCertificate(c *Certificate) (int64, error) {
 	result, err := r.db.Exec(`
 		INSERT INTO certificates (
 			email_id, pdf_hash, filename, original_filename,
-			cert_type, charge, material, en_standard_present, product_form, dimensions,
+			cert_type, charge, material, en_standard_present, is_english, product_form, dimensions,
 			country_of_origin, b_numbers, confidence, issues, model_used, tokens_input, tokens_output,
 			processing_ms, status, extracted_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		c.EmailID, c.PDFHash, c.Filename, c.OriginalFilename,
-		c.CertType, c.Charge, c.Material, c.EnStandardPresent, c.ProductForm, c.Dimensions,
+		c.CertType, c.Charge, c.Material, c.EnStandardPresent, c.IsEnglish, c.ProductForm, c.Dimensions,
 		c.CountryOfOrigin, c.BNumbers, c.Confidence, c.Issues, c.ModelUsed, c.TokensInput, c.TokensOutput,
 		c.ProcessingMs, c.Status, c.ExtractedAt)
 	if err != nil {
@@ -636,6 +637,7 @@ func (r *Repository) ReconcileQueue(queueDir string) (added, removed int, err er
 				cert.Charge = m.Charge
 				cert.Material = m.Material
 				cert.EnStandardPresent = m.EnStandardPresent
+				cert.IsEnglish = m.IsEnglish
 				cert.ProductForm = m.ProductForm
 				cert.Dimensions = m.Dimensions
 				cert.BNumbers = marshalStringSlice(m.BNumbers)
@@ -729,6 +731,8 @@ type UpcomingDelivery struct {
 	RequiredCert       string  `json:"required_cert"`
 	OurMaterial        string  `json:"our_material"`
 	MaterialOK         string  `json:"material_ok"`
+	RequiredProductForm string `json:"required_product_form"`
+	ProductFormOK      string  `json:"product_form_ok"`
 	Notes              string  `json:"notes"`
 	EvidenceJSON       string  `json:"evidence_json"`
 	DeliveryRaw        string  `json:"delivery_raw"`
@@ -736,9 +740,16 @@ type UpcomingDelivery struct {
 	LocalStatus        string  `json:"local_status"`
 	FirstSeen          string  `json:"first_seen"`
 	LastSeen           string  `json:"last_seen"`
+	CertCharge         string  `json:"cert_charge"`
+	CertProductForm    string  `json:"cert_product_form"`
+	CertMaterial       string  `json:"cert_material"`
+	CertBNumbers       string  `json:"cert_b_numbers"`
+	CertDimensions     string  `json:"cert_dimensions"`
+	CertType           string  `json:"cert_type"`
+	CertIsEnglish      bool    `json:"cert_is_english"`
 }
 
-const upcomingColumns = `delivery_row_id, purchase_order_id, purchase_order_row_id, order_number, supplier_name, part_id, part_number, dimensions, planned_qty, delivery_date, cert_required, cert_status, cert_filename, match_by, required_material, required_cert, our_material, material_ok, notes, evidence_json, delivery_raw, part_raw, local_status, first_seen, last_seen`
+const upcomingColumns = `delivery_row_id, purchase_order_id, purchase_order_row_id, order_number, supplier_name, part_id, part_number, dimensions, planned_qty, delivery_date, cert_required, cert_status, cert_filename, match_by, required_material, required_cert, our_material, material_ok, required_product_form, product_form_ok, notes, evidence_json, delivery_raw, part_raw, local_status, first_seen, last_seen, cert_charge, cert_product_form, cert_material, cert_b_numbers, cert_dimensions, cert_type, cert_is_english`
 
 func scanUpcoming(s interface {
 	Scan(dest ...any) error
@@ -748,8 +759,11 @@ func scanUpcoming(s interface {
 		&u.DeliveryRowID, &u.PurchaseOrderID, &u.PurchaseOrderRowID, &u.OrderNumber,
 		&u.SupplierName, &u.PartID, &u.PartNumber, &u.Dimensions, &u.PlannedQty,
 		&u.DeliveryDate, &u.CertRequired, &u.CertStatus, &u.CertFilename, &u.MatchBy,
-		&u.RequiredMaterial, &u.RequiredCert, &u.OurMaterial, &u.MaterialOK, &u.Notes,
+		&u.RequiredMaterial, &u.RequiredCert, &u.OurMaterial, &u.MaterialOK,
+		&u.RequiredProductForm, &u.ProductFormOK, &u.Notes,
 		&u.EvidenceJSON, &u.DeliveryRaw, &u.PartRaw, &u.LocalStatus, &u.FirstSeen, &u.LastSeen,
+		&u.CertCharge, &u.CertProductForm, &u.CertMaterial, &u.CertBNumbers, &u.CertDimensions,
+		&u.CertType, &u.CertIsEnglish,
 	)
 	return u, err
 }
@@ -774,7 +788,7 @@ func (r *Repository) MergeUpcomingDeliveries(rows []UpcomingDelivery) error {
 		}
 		_, err := tx.Exec(`
 			INSERT INTO upcoming_deliveries (`+upcomingColumns+`)
-			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 			ON CONFLICT(delivery_row_id) DO UPDATE SET
 				purchase_order_id=excluded.purchase_order_id,
 				purchase_order_row_id=excluded.purchase_order_row_id,
@@ -793,17 +807,29 @@ func (r *Repository) MergeUpcomingDeliveries(rows []UpcomingDelivery) error {
 				required_cert=excluded.required_cert,
 				our_material=excluded.our_material,
 				material_ok=excluded.material_ok,
+				required_product_form=excluded.required_product_form,
+				product_form_ok=excluded.product_form_ok,
 				notes=excluded.notes,
 				evidence_json=excluded.evidence_json,
 				delivery_raw=excluded.delivery_raw,
 				part_raw=excluded.part_raw,
-				last_seen=excluded.last_seen`,
+				last_seen=excluded.last_seen,
+				cert_charge=excluded.cert_charge,
+				cert_product_form=excluded.cert_product_form,
+				cert_material=excluded.cert_material,
+				cert_b_numbers=excluded.cert_b_numbers,
+				cert_dimensions=excluded.cert_dimensions,
+				cert_type=excluded.cert_type,
+				cert_is_english=excluded.cert_is_english`,
 			// local_status och first_seen UPPDATERAS MEDVETET INTE ovan.
 			u.DeliveryRowID, u.PurchaseOrderID, u.PurchaseOrderRowID, u.OrderNumber,
 			u.SupplierName, u.PartID, u.PartNumber, u.Dimensions, u.PlannedQty,
 			u.DeliveryDate, u.CertRequired, u.CertStatus, u.CertFilename, u.MatchBy,
-			u.RequiredMaterial, u.RequiredCert, u.OurMaterial, u.MaterialOK, u.Notes,
+			u.RequiredMaterial, u.RequiredCert, u.OurMaterial, u.MaterialOK,
+			u.RequiredProductForm, u.ProductFormOK, u.Notes,
 			u.EvidenceJSON, u.DeliveryRaw, u.PartRaw, ls, now, now,
+			u.CertCharge, u.CertProductForm, u.CertMaterial, u.CertBNumbers, u.CertDimensions,
+			u.CertType, u.CertIsEnglish,
 		)
 		if err != nil {
 			return err
@@ -900,11 +926,13 @@ func (r *Repository) SetAppState(key, value string) error {
 
 // UpcomingClassificationCache är en cachead AI-materialdom (utan ai-import i store).
 type UpcomingClassificationCache struct {
-	RequiredMaterial string `json:"required_material"`
-	RequiredCert     string `json:"required_cert"`
-	OurMaterial      string `json:"our_material"`
-	MaterialOK       string `json:"material_ok"`
-	Notes            string `json:"notes"`
+	RequiredMaterial    string `json:"required_material"`
+	RequiredCert        string `json:"required_cert"`
+	OurMaterial         string `json:"our_material"`
+	MaterialOK          string `json:"material_ok"`
+	RequiredProductForm string `json:"required_product_form"`
+	ProductFormOK       string `json:"product_form_ok"`
+	Notes               string `json:"notes"`
 }
 
 // GetUpcomingClassification slår upp en cachead dom på innehålls-nyckel. nil utan
@@ -912,9 +940,9 @@ type UpcomingClassificationCache struct {
 func (r *Repository) GetUpcomingClassification(cacheKey string) (*UpcomingClassificationCache, error) {
 	var c UpcomingClassificationCache
 	err := r.db.QueryRow(
-		`SELECT required_material, required_cert, our_material, material_ok, notes
+		`SELECT required_material, required_cert, our_material, material_ok, required_product_form, product_form_ok, notes
 		 FROM upcoming_classifications WHERE cache_key = ?`, cacheKey).
-		Scan(&c.RequiredMaterial, &c.RequiredCert, &c.OurMaterial, &c.MaterialOK, &c.Notes)
+		Scan(&c.RequiredMaterial, &c.RequiredCert, &c.OurMaterial, &c.MaterialOK, &c.RequiredProductForm, &c.ProductFormOK, &c.Notes)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -927,14 +955,16 @@ func (r *Repository) GetUpcomingClassification(cacheKey string) (*UpcomingClassi
 // SaveUpcomingClassification cachar en AI-dom på innehålls-nyckel (upsert).
 func (r *Repository) SaveUpcomingClassification(cacheKey string, c UpcomingClassificationCache) error {
 	_, err := r.db.Exec(`
-		INSERT INTO upcoming_classifications (cache_key, required_material, required_cert, our_material, material_ok, notes)
-		VALUES (?, ?, ?, ?, ?, ?)
+		INSERT INTO upcoming_classifications (cache_key, required_material, required_cert, our_material, material_ok, required_product_form, product_form_ok, notes)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(cache_key) DO UPDATE SET
 			required_material=excluded.required_material,
 			required_cert=excluded.required_cert,
 			our_material=excluded.our_material,
 			material_ok=excluded.material_ok,
+			required_product_form=excluded.required_product_form,
+			product_form_ok=excluded.product_form_ok,
 			notes=excluded.notes`,
-		cacheKey, c.RequiredMaterial, c.RequiredCert, c.OurMaterial, c.MaterialOK, c.Notes)
+		cacheKey, c.RequiredMaterial, c.RequiredCert, c.OurMaterial, c.MaterialOK, c.RequiredProductForm, c.ProductFormOK, c.Notes)
 	return err
 }

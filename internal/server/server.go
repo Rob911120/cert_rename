@@ -237,5 +237,6 @@ func NewMux(s *Server) *http.ServeMux {
 	mux.HandleFunc("/api/upcoming/run", s.handleUpcomingRun)
 	mux.HandleFunc("/api/upcoming/mark-delivered", s.handleUpcomingMarkDelivered)
 	mux.HandleFunc("/api/upcoming/deliver-in", s.handleUpcomingDeliverIn)
+	mux.HandleFunc("/api/upcoming/hide-supplier", s.handleUpcomingHideSupplier)
 	return mux
 }

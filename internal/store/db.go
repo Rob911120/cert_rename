@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS certificates (
     charge TEXT NOT NULL,
     material TEXT NOT NULL,
     en_standard_present BOOLEAN NOT NULL DEFAULT FALSE,
+    is_english BOOLEAN NOT NULL DEFAULT TRUE,
     product_form TEXT,
     dimensions TEXT,
     country_of_origin TEXT NOT NULL DEFAULT '',
@@ -135,13 +136,22 @@ CREATE TABLE IF NOT EXISTS upcoming_deliveries (
     required_cert TEXT NOT NULL DEFAULT '',
     our_material TEXT NOT NULL DEFAULT '',
     material_ok TEXT NOT NULL DEFAULT 'unknown',         -- ok|mismatch|unknown
+    required_product_form TEXT NOT NULL DEFAULT '',
+    product_form_ok TEXT NOT NULL DEFAULT 'unknown',     -- ok|mismatch|unknown
     notes TEXT NOT NULL DEFAULT '',
     evidence_json TEXT NOT NULL DEFAULT '',
     delivery_raw TEXT NOT NULL DEFAULT '',
     part_raw TEXT NOT NULL DEFAULT '',
     local_status TEXT NOT NULL DEFAULT 'pending',        -- pending|delivered
     first_seen TEXT NOT NULL DEFAULT (datetime('now')),
-    last_seen TEXT NOT NULL DEFAULT (datetime('now'))
+    last_seen TEXT NOT NULL DEFAULT (datetime('now')),
+    cert_charge TEXT NOT NULL DEFAULT '',
+    cert_product_form TEXT NOT NULL DEFAULT '',
+    cert_material TEXT NOT NULL DEFAULT '',
+    cert_b_numbers TEXT NOT NULL DEFAULT '',
+    cert_dimensions TEXT NOT NULL DEFAULT '',
+    cert_type TEXT NOT NULL DEFAULT '',
+    cert_is_english BOOLEAN NOT NULL DEFAULT TRUE
 );
 
 -- Nyckel/värde-tabell för app-tillstånd (t.ex. last_upcoming_run för schemat).
@@ -158,6 +168,8 @@ CREATE TABLE IF NOT EXISTS upcoming_classifications (
     required_cert TEXT NOT NULL DEFAULT '',
     our_material TEXT NOT NULL DEFAULT '',
     material_ok TEXT NOT NULL DEFAULT 'unknown',
+    required_product_form TEXT NOT NULL DEFAULT '',
+    product_form_ok TEXT NOT NULL DEFAULT 'unknown',
     notes TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -212,6 +224,42 @@ func migrate(db *sql.DB) error {
 		return err
 	}
 	if err := ensureColumn(db, "certificates", "country_of_origin", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := ensureColumn(db, "certificates", "is_english", "BOOLEAN NOT NULL DEFAULT TRUE"); err != nil {
+		return err
+	}
+	if err := ensureColumn(db, "upcoming_deliveries", "cert_charge", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := ensureColumn(db, "upcoming_deliveries", "cert_product_form", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := ensureColumn(db, "upcoming_deliveries", "cert_material", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := ensureColumn(db, "upcoming_deliveries", "cert_b_numbers", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := ensureColumn(db, "upcoming_deliveries", "cert_dimensions", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := ensureColumn(db, "upcoming_deliveries", "cert_type", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := ensureColumn(db, "upcoming_deliveries", "cert_is_english", "BOOLEAN NOT NULL DEFAULT TRUE"); err != nil {
+		return err
+	}
+	if err := ensureColumn(db, "upcoming_deliveries", "required_product_form", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := ensureColumn(db, "upcoming_deliveries", "product_form_ok", "TEXT NOT NULL DEFAULT 'unknown'"); err != nil {
+		return err
+	}
+	if err := ensureColumn(db, "upcoming_classifications", "required_product_form", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := ensureColumn(db, "upcoming_classifications", "product_form_ok", "TEXT NOT NULL DEFAULT 'unknown'"); err != nil {
 		return err
 	}
 	return nil

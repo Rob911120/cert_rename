@@ -69,11 +69,20 @@ func (s *Server) handleUpcomingDeliverIn(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	var body struct {
-		DeliveryRowID int64 `json:"delivery_row_id,string"` // sträng: 64-bitars-id, JS-precision
-		Confirm       bool  `json:"confirm"`
+		DeliveryRowID int64  `json:"delivery_row_id,string"` // sträng: 64-bitars-id, JS-precision
+		Confirm       bool   `json:"confirm"`
+		Routine       string `json:"routine"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	routine := body.Routine
+	if routine == "" {
+		routine = "report_arrival"
+	}
+	if routine != "report_arrival" && routine != "inspection" {
+		http.Error(w, "ogiltig routine", http.StatusBadRequest)
 		return
 	}
 	row, err := s.repo.GetUpcomingByRowID(body.DeliveryRowID)
@@ -102,13 +111,16 @@ func (s *Server) handleUpcomingDeliverIn(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Hård gate: blockera helt vid materialavvikelse.
-	if blocked, reason := deliverInBlocked(row); blocked {
-		writeJSONStatus(w, http.StatusConflict, mergeMap(rowInfo, map[string]any{
-			"blocked": true,
-			"reason":  reason,
-		}))
-		return
+	// Hård gate: blockera helt vid materialavvikelse. Gäller bara report_arrival —
+	// mottagningskontroll är just där en avvikelse reds ut, så den ska inte spärras.
+	if routine == "report_arrival" {
+		if blocked, reason := deliverInBlocked(row); blocked {
+			writeJSONStatus(w, http.StatusConflict, mergeMap(rowInfo, map[string]any{
+				"blocked": true,
+				"reason":  reason,
+			}))
+			return
+		}
 	}
 
 	// Kräver confirm — utan den: förhandsvisning, ingen körning.
@@ -126,11 +138,11 @@ func (s *Server) handleUpcomingDeliverIn(w http.ResponseWriter, r *http.Request)
 	s.mu.Lock()
 	autoSave := s.cfg.MonitorUIAutoSave
 	s.mu.Unlock()
-	if err := s.driveRoutine("report_arrival", row.OrderNumber, autoSave); err != nil {
+	if err := s.driveRoutine(routine, row.OrderNumber, autoSave); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.Logf("📦 Leverera in: öppnade Monitor-rutin för order %s (rad %d)", row.OrderNumber, row.PurchaseOrderRowID)
+	s.Logf("📦 Leverera in (%s): öppnade Monitor-rutin för order %s (rad %d)", routine, row.OrderNumber, row.PurchaseOrderRowID)
 	writeJSONStatus(w, http.StatusOK, mergeMap(rowInfo, map[string]any{"started": true}))
 }
 
@@ -142,6 +154,53 @@ func deliverInBlocked(row *store.UpcomingDelivery) (bool, string) {
 		return true, "materialavvikelse mot certet (mismatch) — red ut innan inleverans"
 	}
 	return false, ""
+}
+
+// handleUpcomingHideSupplier döljer/visar en leverantör i "Kommande
+// inleveranser"-vyn. Sparas i config (server-sidan) så valet överlever refresh
+// och kan återställas i Inställningar.
+func (s *Server) handleUpcomingHideSupplier(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var body struct {
+		Supplier string `json:"supplier"`
+		Hidden   bool   `json:"hidden"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if body.Supplier == "" {
+		http.Error(w, "supplier krävs", http.StatusBadRequest)
+		return
+	}
+
+	s.mu.Lock()
+	hidden := s.cfg.HiddenSuppliers
+	idx := -1
+	for i, name := range hidden {
+		if name == body.Supplier {
+			idx = i
+			break
+		}
+	}
+	if body.Hidden && idx == -1 {
+		hidden = append(hidden, body.Supplier)
+	} else if !body.Hidden && idx != -1 {
+		hidden = append(hidden[:idx], hidden[idx+1:]...)
+	}
+	s.cfg.HiddenSuppliers = hidden
+	cfg := s.cfg
+	s.mu.Unlock()
+
+	if err := store.SaveConfig(cfg); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.BroadcastUpcoming()
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func writeJSONStatus(w http.ResponseWriter, status int, v any) {

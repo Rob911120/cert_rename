@@ -177,6 +177,28 @@ func TestDeliverIn_LargeID_RoundTrips(t *testing.T) {
 	}
 }
 
+// routine:"inspection" skickas vidare till driveRoutine, gates blockerar inte
+// trots materialavvikelse (mottagningskontroll ska kunna reda ut avvikelsen).
+func TestDeliverIn_InspectionRoutine(t *testing.T) {
+	s, calls := newGateTestServer(t)
+	seedRow(t, s, store.UpcomingDelivery{
+		DeliveryRowID: 5, OrderNumber: "B127575", PurchaseOrderRowID: 11, PartID: 5,
+		MaterialOK: store.MaterialMismatch,
+	})
+	body, _ := json.Marshal(map[string]any{
+		"delivery_row_id": "5", "confirm": true, "routine": "inspection",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/upcoming/deliver-in", strings.NewReader(string(body)))
+	rec := httptest.NewRecorder()
+	s.handleUpcomingDeliverIn(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, vill ha 200 (inspection blockeras inte av mismatch)", rec.Code)
+	}
+	if len(*calls) != 1 || (*calls)[0].routine != "inspection" {
+		t.Fatalf("vill ha 1 anrop med routine=inspection, fick %+v", *calls)
+	}
+}
+
 // mark-delivered markerar raden och överlever en efterföljande refresh-merge.
 func TestMarkDelivered_Endpoint(t *testing.T) {
 	s, _ := newGateTestServer(t)

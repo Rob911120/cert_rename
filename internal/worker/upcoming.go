@@ -202,6 +202,13 @@ func buildUpcomingRow(ctx context.Context, mc *monitor.Client, repo *store.Repos
 			ud.CertFilename = matched.Filename
 			ud.OurMaterial = effectiveMaterial(matched)
 			ud.Dimensions = effectiveDimensions(matched)
+			ud.CertCharge = effectiveCharge(matched)
+			ud.CertProductForm = effectiveProductForm(matched)
+			ud.CertMaterial = effectiveMaterial(matched)
+			ud.CertDimensions = effectiveDimensions(matched)
+			ud.CertBNumbers = bNumbersDisplay(matched)
+			ud.CertType = matched.CertType
+			ud.CertIsEnglish = matched.IsEnglish
 			evidence["cert_filename"] = matched.Filename
 			evidence["cert_material"] = effectiveMaterial(matched)
 			evidence["cert_charge"] = effectiveCharge(matched)
@@ -214,6 +221,8 @@ func buildUpcomingRow(ctx context.Context, mc *monitor.Client, repo *store.Repos
 					ud.OurMaterial = dom.OurMaterial
 				}
 				ud.MaterialOK = dom.MaterialOK
+				ud.RequiredProductForm = dom.RequiredProductForm
+				ud.ProductFormOK = dom.ProductFormOK
 				ud.Notes = dom.Notes
 			}
 		}
@@ -255,11 +264,13 @@ func classifyWithCache(ctx context.Context, repo *store.Repository, client *anth
 	key := classifyCacheKey(part, cert, certRequired)
 	if cached, _ := repo.GetUpcomingClassification(key); cached != nil {
 		return ai.UpcomingClassification{
-			RequiredMaterial: cached.RequiredMaterial,
-			RequiredCert:     cached.RequiredCert,
-			OurMaterial:      cached.OurMaterial,
-			MaterialOK:       cached.MaterialOK,
-			Notes:            cached.Notes,
+			RequiredMaterial:    cached.RequiredMaterial,
+			RequiredCert:        cached.RequiredCert,
+			OurMaterial:         cached.OurMaterial,
+			MaterialOK:          cached.MaterialOK,
+			RequiredProductForm: cached.RequiredProductForm,
+			ProductFormOK:       cached.ProductFormOK,
+			Notes:               cached.Notes,
 		}
 	}
 	in := ai.UpcomingClassifyInput{
@@ -270,18 +281,21 @@ func classifyWithCache(ctx context.Context, repo *store.Repository, client *anth
 		CertMaterial:     effectiveMaterial(cert),
 		CertType:         cert.CertType,
 		CertDimensions:   effectiveDimensions(cert),
+		CertProductForm:  effectiveProductForm(cert),
 	}
 	dom, err := ai.ClassifyUpcoming(ctx, n, client, in)
 	if err != nil {
 		n.Logf("⚠️ materialdom misslyckades: %v", err)
-		return ai.UpcomingClassification{MaterialOK: store.MaterialUnknown}
+		return ai.UpcomingClassification{MaterialOK: store.MaterialUnknown, ProductFormOK: store.MaterialUnknown}
 	}
 	_ = repo.SaveUpcomingClassification(key, store.UpcomingClassificationCache{
-		RequiredMaterial: dom.RequiredMaterial,
-		RequiredCert:     dom.RequiredCert,
-		OurMaterial:      dom.OurMaterial,
-		MaterialOK:       dom.MaterialOK,
-		Notes:            dom.Notes,
+		RequiredMaterial:    dom.RequiredMaterial,
+		RequiredCert:        dom.RequiredCert,
+		OurMaterial:         dom.OurMaterial,
+		MaterialOK:          dom.MaterialOK,
+		RequiredProductForm: dom.RequiredProductForm,
+		ProductFormOK:       dom.ProductFormOK,
+		Notes:               dom.Notes,
 	})
 	return *dom
 }
@@ -313,6 +327,30 @@ func effectiveDimensions(c *store.Certificate) string {
 		return c.CorrectedDimensions
 	}
 	return c.Dimensions
+}
+
+func effectiveProductForm(c *store.Certificate) string {
+	if strings.TrimSpace(c.CorrectedProductForm) != "" {
+		return c.CorrectedProductForm
+	}
+	return c.ProductForm
+}
+
+// bNumbersDisplay parsar den JSON-array-kodade B-nummersträngen (CorrectedBNumbers
+// före BNumbers) till en mellanslagsjoinad visningssträng, t.ex. "B1 B2".
+func bNumbersDisplay(c *store.Certificate) string {
+	raw := c.BNumbers
+	if strings.TrimSpace(c.CorrectedBNumbers) != "" {
+		raw = c.CorrectedBNumbers
+	}
+	if strings.TrimSpace(raw) == "" {
+		return ""
+	}
+	var nums []string
+	if err := json.Unmarshal([]byte(raw), &nums); err != nil {
+		return raw
+	}
+	return strings.Join(nums, " ")
 }
 
 func partField(p *monitor.Part, get func(*monitor.Part) string) string {

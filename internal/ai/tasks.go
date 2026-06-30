@@ -266,15 +266,18 @@ type UpcomingClassifyInput struct {
 	CertMaterial     string // matchat certs lagrade Material (vårt material)
 	CertType         string // matchat certs CertType (t.ex. "3.1")
 	CertDimensions   string // matchat certs Dimensions
+	CertProductForm  string // matchat certs ProductForm (t.ex. "rundstång")
 }
 
-// UpcomingClassification är AI-domen för en rad. material_ok ∈ {ok,mismatch,unknown}.
+// UpcomingClassification är AI-domen för en rad. material_ok/product_form_ok ∈ {ok,mismatch,unknown}.
 type UpcomingClassification struct {
-	RequiredMaterial string `json:"required_material"`
-	RequiredCert     string `json:"required_cert"`
-	OurMaterial      string `json:"our_material"`
-	MaterialOK       string `json:"material_ok"`
-	Notes            string `json:"notes"`
+	RequiredMaterial    string `json:"required_material"`
+	RequiredCert        string `json:"required_cert"`
+	OurMaterial         string `json:"our_material"`
+	MaterialOK          string `json:"material_ok"`
+	RequiredProductForm string `json:"required_product_form"`
+	ProductFormOK       string `json:"product_form_ok"`
+	Notes               string `json:"notes"`
 }
 
 // ClassifyUpcoming låter ren AI döma om certets material matchar det beställda
@@ -293,9 +296,10 @@ ARTIKEL
 CERT VI HAR (redan extraherat vid intag — extrahera inte om)
 - Material: %s
 - Cert-typ: %s
-- Dimension: %s`,
+- Dimension: %s
+- Produktform: %s`,
 		dash(in.PartNumber), dash(in.Description), dash(in.ExtraDescription), in.CertRequired,
-		dash(in.CertMaterial), dash(in.CertType), dash(in.CertDimensions))
+		dash(in.CertMaterial), dash(in.CertType), dash(in.CertDimensions), dash(in.CertProductForm))
 
 	return logAICall(log, "sonnet ClassifyUpcoming("+in.PartNumber+")",
 		func() (*UpcomingClassification, anthropic.Usage, error) {

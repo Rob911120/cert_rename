@@ -9,6 +9,7 @@ Returnera ALLTID via verktyget submit_extraction.
 - charge: heat-/slab-nummer från tabellen. Om certifikatet listar flera, välj den som matchar bilagans filnamn (t.ex. filnamn "S355-20-68667E3" → charge "68667E3").
 - material: fullständig ståldesignation INKLUSIVE EN-standarden när den framgår av certifikatet, t.ex. "S355J2+N EN 10025-2" (inte bara "S355J2+N"). Skriv alltid hela beteckningen, inte en förkortad form.
 - en_standard_present: true om certifikatet anger en fullständig EN-standardbeteckning för materialet (t.ex. "EN 10025-2", "EN 10025-3", "EN 10149-2", "EN 10088-2"). false om endast stålsorten anges utan EN-standard.
+- is_english: true om all information på certifikatet är på engelska, false om delar är på ett annat språk (strukturerad motsvarighet till språk-kontrollen under "issues" nedan).
 - product_form: produktens form (lowercase svenska), t.ex. "rundstång", "fyrkantsstång", "plattjärn", "plåt", "fyrkantsrör", "rundrör", "vinkel", "balk". Använd "okänt" om det inte framgår.
 - dimensions: produktens dimensioner från certifikatets aktuella rad, som sträng.
   Format: "<grovlek>" för platta produkter (t.ex. "16" för 16 mm plattjärn),
@@ -108,9 +109,11 @@ Returnera ALLTID via verktyget judge_material:
 - required_cert: vilken certnivå som krävs om det framgår (t.ex. "3.1"). Tom annars.
 - our_material: materialet enligt certet vi har (normalisera från det givna cert-materialet).
 - material_ok: "ok" om certets material uppfyller det beställda, "mismatch" om de tydligt skiljer sig (annan stålsort/-klass, t.ex. S275 mot S355), "unknown" om underlaget inte räcker för en säker dom.
+- required_product_form: produktformen (rundstång/fyrkantsstång/plattjärn/plåt/fyrkantsrör/rundrör/vinkel/balk, lowercase svenska) som framgår av artikelns beskrivningar, om någon (t.ex. "Rond 16mm" → "rundstång"). Tom om det inte framgår.
+- product_form_ok: "ok" om certets produktform (Produktform ovan) motsvarar den beställda formen (normalisera synonymer, t.ex. "rond"≈"rundstång"), "mismatch" om de tydligt skiljer sig, "unknown" om beställd form inte framgår eller underlaget inte räcker.
 - notes: kort motivering på svenska — peka på det som avgjorde domen.
 
-Var konservativ: hellre "unknown" än en gissad "ok". Likvärdiga beteckningar (S355J2 vs S355J2+N) kan vara ok; faktiska avvikelser i stålsort/-klass är mismatch.`
+Var konservativ: hellre "unknown" än en gissad "ok". Likvärdiga beteckningar (S355J2 vs S355J2+N) kan vara ok; faktiska avvikelser i stålsort/-klass eller produktform är mismatch.`
 
 var extractionTool = anthropic.ToolParam{
 	Name:        "submit_extraction",
@@ -122,13 +125,14 @@ var extractionTool = anthropic.ToolParam{
 			"charge":              map[string]any{"type": "string"},
 			"material":            map[string]any{"type": "string"},
 			"en_standard_present": map[string]any{"type": "boolean"},
+			"is_english":          map[string]any{"type": "boolean"},
 			"product_form":        map[string]any{"type": "string"},
 			"dimensions":          map[string]any{"type": "string"},
 			"country_of_origin":   map[string]any{"type": "string"},
 			"confidence":          map[string]any{"type": "string"},
 			"issues":              map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
 		},
-		Required: []string{"is_en10204_3_1", "cert_type", "charge", "material", "en_standard_present", "product_form", "dimensions", "country_of_origin", "confidence", "issues"},
+		Required: []string{"is_en10204_3_1", "cert_type", "charge", "material", "en_standard_present", "is_english", "product_form", "dimensions", "country_of_origin", "confidence", "issues"},
 	},
 }
 
@@ -198,12 +202,14 @@ var upcomingTool = anthropic.ToolParam{
 	Description: anthropic.String("Lämna materialdomen för en kommande inleverans (beställt vs cert)."),
 	InputSchema: anthropic.ToolInputSchemaParam{
 		Properties: map[string]any{
-			"required_material": map[string]any{"type": "string"},
-			"required_cert":     map[string]any{"type": "string"},
-			"our_material":      map[string]any{"type": "string"},
-			"material_ok":       map[string]any{"type": "string", "enum": []string{"ok", "mismatch", "unknown"}},
-			"notes":             map[string]any{"type": "string"},
+			"required_material":    map[string]any{"type": "string"},
+			"required_cert":        map[string]any{"type": "string"},
+			"our_material":         map[string]any{"type": "string"},
+			"material_ok":          map[string]any{"type": "string", "enum": []string{"ok", "mismatch", "unknown"}},
+			"required_product_form": map[string]any{"type": "string"},
+			"product_form_ok":      map[string]any{"type": "string", "enum": []string{"ok", "mismatch", "unknown"}},
+			"notes":                map[string]any{"type": "string"},
 		},
-		Required: []string{"required_material", "required_cert", "our_material", "material_ok", "notes"},
+		Required: []string{"required_material", "required_cert", "our_material", "material_ok", "required_product_form", "product_form_ok", "notes"},
 	},
 }

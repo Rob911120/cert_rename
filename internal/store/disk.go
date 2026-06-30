@@ -99,6 +99,7 @@ func MoveToReview(cfg Config, emlPath string, content *eml.Content, att *eml.Att
 				meta.Charge = ext.Charge
 				meta.Material = ext.Material
 				meta.EnStandardPresent = ext.EnStandardPresent
+				meta.IsEnglish = ext.IsEnglish
 				meta.Dimensions = ext.Dimensions
 				meta.CountryOfOrigin = ext.CountryOfOrigin
 				meta.Confidence = ext.Confidence
@@ -203,6 +204,7 @@ func PromoteReviewToQueue(cfg Config, base, pdfFilename string, ext *cert.Extrac
 		Charge:            ext.Charge,
 		Material:          ext.Material,
 		EnStandardPresent: ext.EnStandardPresent,
+		IsEnglish:         ext.IsEnglish,
 		ProductForm:       ext.ProductForm,
 		Dimensions:        ext.Dimensions,
 		CountryOfOrigin:   ext.CountryOfOrigin,

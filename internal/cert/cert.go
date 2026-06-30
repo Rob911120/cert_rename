@@ -14,6 +14,7 @@ type Extraction struct {
 	Charge            string   `json:"charge"`
 	Material          string   `json:"material"`
 	EnStandardPresent bool     `json:"en_standard_present"`
+	IsEnglish         bool     `json:"is_english"`
 	ProductForm       string   `json:"product_form"`
 	Dimensions        string   `json:"dimensions"`
 	CountryOfOrigin   string   `json:"country_of_origin"`

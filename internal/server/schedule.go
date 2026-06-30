@@ -136,13 +136,14 @@ func (s *Server) upcomingResponse() map[string]any {
 	cfg := s.cfg
 	s.mu.Unlock()
 	return map[string]any{
-		"rows":        rows,
-		"running":     s.refreshing.Load(),
-		"enabled":     cfg.UpcomingEnabled,
-		"time":        cfg.UpcomingTime,
-		"window_days": cfg.UpcomingWindowDays,
-		"back_days":   cfg.UpcomingBackDays,
-		"last_run":    s.appStateString(store.AppStateLastUpcomingRun),
+		"rows":             rows,
+		"running":          s.refreshing.Load(),
+		"enabled":          cfg.UpcomingEnabled,
+		"time":             cfg.UpcomingTime,
+		"window_days":      cfg.UpcomingWindowDays,
+		"back_days":        cfg.UpcomingBackDays,
+		"last_run":         s.appStateString(store.AppStateLastUpcomingRun),
+		"hidden_suppliers": cfg.HiddenSuppliers,
 	}
 }
 

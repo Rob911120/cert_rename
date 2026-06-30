@@ -280,6 +280,10 @@
             <span>Bakåt (dagar) — tar med försenade</span>
             <input type="number" id="upcomingBackInput" min="0" max="1095" onchange="saveUpcomingSettings()" class="input-field !py-1 w-28">
           </label>
+          <div class="pt-1">
+            <div class="text-xs text-slate-400 mb-1">Dolda leverantörer</div>
+            <div id="hiddenSuppliersList" class="flex flex-col gap-1"></div>
+          </div>
         </div>
       </div>
 
@@ -839,7 +843,7 @@ function switchTab(name) {
 }
 
 // --- Kommande inleveranser ---
-let upcomingState = { rows: [], running: false, enabled: false, time: '16:30', window_days: 14, last_run: '' };
+let upcomingState = { rows: [], running: false, enabled: false, time: '16:30', window_days: 14, last_run: '', hidden_suppliers: [] };
 
 async function loadUpcoming() {
   try {
@@ -861,6 +865,9 @@ function upcomingBadge(row) {
 // vid varje SSE-omritning (t.ex. under en pågående uppdatering).
 const upcomingOpen = { orders: new Set(), rows: new Set() };
 let upcomingFilter = '';
+// Av som default — 🚫-knappen ("dölj leverantör") satt farligt nära den
+// klickbara leverantörsraden och ledde till oavsiktligt dolda leverantörer.
+let upcomingShowHideSupplierBtn = false;
 
 // upcomingMatches: fritextsök över order, leverantör, artikel, mått och material.
 function upcomingMatches(row, q) {
@@ -885,18 +892,26 @@ function isOverdue(row) {
 function renderUpcoming(data) {
   if (data) upcomingState = data;
   const st = upcomingState;
-  const allRows = st.rows || [];
+  const hiddenSuppliers = new Set(st.hidden_suppliers || []);
+  const allRows = (st.rows || []).filter(r => !hiddenSuppliers.has(r.supplier_name));
+  const hiddenCount = (st.rows || []).length - allRows.length;
   const enabled = !!st.enabled;
   const q = upcomingFilter.trim().toLowerCase();
   const rows = q ? allRows.filter(r => upcomingMatches(r, q)) : allRows;
 
   const parts = [];
   if (!enabled) parts.push('Av — aktivera i ⚙️ efter Steg 0');
-  else { parts.push('Schemalagt ' + (st.time || '16:30')); parts.push('fönster −' + (st.back_days ?? 365) + ' / +' + (st.window_days || 14) + ' dgr'); }
   if (st.last_run) parts.push('senast ' + fmtWhen(st.last_run));
   if (st.running) parts.push('⏳ uppdaterar…');
   if (q) parts.push(rows.length + '/' + allRows.length + ' visas');
-  document.getElementById('upcomingStatus').textContent = parts.join(' · ');
+  const statusEl = document.getElementById('upcomingStatus');
+  statusEl.innerHTML = parts.map(escapeHtml).join(' · ') +
+    (parts.length ? ' · ' : '') +
+    '<button type="button" class="underline decoration-dotted hover:text-accent" onclick="toggleUpcomingHideSupplierBtn()">' +
+      (upcomingShowHideSupplierBtn ? '🚫 dölj-knapp: på' : '🚫 dölj-knapp: av') +
+    '</button>' +
+    (hiddenCount ? ' · ' + hiddenCount + ' dolda <button type="button" class="underline decoration-dotted hover:text-accent ml-1" onclick="resetHiddenSuppliers()">återställ</button>' : '');
+  renderHiddenSuppliersList(st.hidden_suppliers || []);
   const runBtn = document.getElementById('upcomingRunBtn');
   if (runBtn) runBtn.disabled = !enabled || !!st.running;
 
@@ -952,29 +967,79 @@ function renderOrderGroup(orderKey, items, enabled) {
   const allDelivered = items.every(r => r.local_status === 'delivered');
   const open = upcomingOpen.orders.has(orderKey);
 
-  const header = document.createElement('button');
-  header.type = 'button';
-  header.className = 'w-full grid items-center gap-x-3 px-3 py-2 text-left hover:bg-slate-50 dark:hover:bg-slate-800/50' + (allDelivered ? ' opacity-50' : '');
+  // Headern är en flex-rad: en klickbar yta (toggle utfällning) + primärknappen
+  // för ordern. "Öppna inleverans" är en orderåtgärd i Monitor (en rutinkörning
+  // per order) — därför ligger knappen här och inte per artikelrad.
+  const header = document.createElement('div');
+  header.className = 'w-full flex items-center gap-2 px-3 py-2 hover:bg-slate-50 dark:hover:bg-slate-800/50' + (allDelivered ? ' opacity-50' : '');
+
+  const toggleArea = document.createElement('div');
+  toggleArea.className = 'flex-1 min-w-0 grid items-center gap-x-3 text-left cursor-pointer';
   // Alla kolumner UTOM leverantör (1fr) har fast bredd. Eftersom varje orderrad är
   // ett eget grid är det fasta bredder + identisk totalbredd som gör att datum och
   // taggar linjerar lodrätt mellan rader. Statuskolumnen vänsterställs och klipps.
-  header.style.gridTemplateColumns = '1rem 7rem minmax(0,1fr) 4rem 6rem 13.5rem';
-  header.innerHTML =
+  toggleArea.style.gridTemplateColumns = '1rem 7rem minmax(0,1fr) 4rem 6rem 13.5rem';
+  const supplierCell = document.createElement('span');
+  supplierCell.className = 'text-slate-500 dark:text-slate-400 truncate flex items-center gap-1 min-w-0';
+  const supplierName = document.createElement('span');
+  supplierName.className = 'truncate';
+  supplierName.textContent = supplier;
+  supplierCell.appendChild(supplierName);
+  if (supplier && upcomingShowHideSupplierBtn) {
+    const hideBtn = document.createElement('button');
+    hideBtn.type = 'button';
+    hideBtn.className = 'shrink-0 text-slate-300 hover:text-red-500 dark:text-slate-600 dark:hover:text-red-400';
+    hideBtn.title = 'Dölj leverantör "' + supplier + '"';
+    hideBtn.textContent = '🚫';
+    hideBtn.addEventListener('click', (e) => { e.stopPropagation(); hideSupplier(supplier, true); });
+    supplierCell.appendChild(hideBtn);
+  }
+  toggleArea.innerHTML =
     '<span class="caret text-slate-400">' + (open ? '▾' : '▸') + '</span>' +
-    '<span class="font-semibold truncate">' + escapeHtml(orderKey) + '</span>' +
-    '<span class="text-slate-500 dark:text-slate-400 truncate">' + escapeHtml(supplier) + '</span>' +
+    '<span class="font-semibold truncate">' + escapeHtml(orderKey) + '</span>';
+  toggleArea.appendChild(supplierCell);
+  const restHtml = document.createElement('span');
+  restHtml.innerHTML =
     '<span class="text-xs text-slate-400 text-right tabular-nums">' + items.length + ' art.</span>' +
     '<span class="text-xs ' + (overdue ? 'text-red-500 dark:text-red-400' : 'text-slate-400') + ' tabular-nums whitespace-nowrap">' + escapeHtml(firstDate) + (multiDate ? ' <span class="text-slate-300 dark:text-slate-600">+</span>' : '') + '</span>' +
     '<span class="justify-self-start whitespace-nowrap overflow-hidden">' + badge + '</span>';
+  while (restHtml.firstChild) toggleArea.appendChild(restHtml.firstChild);
+
+  // Representativ rad för anropet: en ev. materialavvikelse ska alltid styra
+  // hård-spärren, oavsett vilken artikelrad som råkar stå först.
+  const blockerRow = items.find(r => r.material_ok === 'mismatch') || items[0];
 
   const list = document.createElement('div');
   list.className = 'divide-y divide-slate-100 dark:divide-slate-800 border-t border-slate-200 dark:border-slate-800' + (open ? '' : ' hidden');
   for (const row of items) list.appendChild(renderArticle(row, enabled));
 
-  header.addEventListener('click', () => {
+  // Knappens text/rutin styrs av om ordergruppen är utfälld (mottagningskontroll)
+  // eller stängd (inleverans) — rent UI-tillstånd, inte sparat i databasen.
+  const isOpenNow = () => !list.classList.contains('hidden');
+  const updateDeliverBtn = () => {
+    deliverBtn.textContent = isOpenNow() ? 'Mottagningskontroll' : 'Inleverans';
+  };
+
+  const actions = document.createElement('div');
+  actions.className = 'shrink-0';
+  const deliverBtn = document.createElement('button');
+  deliverBtn.className = 'btn-primary btn-sm';
+  deliverBtn.disabled = !enabled || allDelivered;
+  deliverBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    deliverIn(blockerRow, deliverBtn, isOpenNow() ? 'inspection' : 'report_arrival');
+  });
+  updateDeliverBtn();
+  actions.appendChild(deliverBtn);
+
+  header.appendChild(toggleArea);
+  header.appendChild(actions);
+
+  toggleArea.addEventListener('click', () => {
     const nowHidden = list.classList.toggle('hidden');
-    header.querySelector('.caret').textContent = nowHidden ? '▸' : '▾';
+    toggleArea.querySelector('.caret').textContent = nowHidden ? '▸' : '▾';
     if (nowHidden) upcomingOpen.orders.delete(orderKey); else upcomingOpen.orders.add(orderKey);
+    updateDeliverBtn();
   });
 
   wrap.appendChild(header);
@@ -1000,27 +1065,43 @@ function renderArticle(row, enabled) {
     '<span class="ml-1 shrink-0">' + (isOverdue(row) ? '<span class="badge-red">⏰ försenad</span> ' : '') + upcomingBadge(row) + (row.local_status === 'delivered' ? ' <span class="badge-gray">levererad</span>' : '') + '</span>';
   header.appendChild(left);
 
-  const actions = document.createElement('div');
-  actions.className = 'flex items-center gap-1 shrink-0';
-  const deliverBtn = document.createElement('button');
-  deliverBtn.className = 'btn-primary btn-sm';
-  deliverBtn.textContent = '📦 Leverera in';
-  deliverBtn.disabled = !enabled || row.local_status === 'delivered';
-  deliverBtn.addEventListener('click', (e) => { e.stopPropagation(); deliverIn(row, deliverBtn); });
-  actions.appendChild(deliverBtn);
   if (row.local_status !== 'delivered') {
     const markBtn = document.createElement('button');
-    markBtn.className = 'btn-ghost btn-sm';
+    markBtn.className = 'btn-ghost btn-sm shrink-0';
     markBtn.textContent = 'Markera levererad';
     markBtn.disabled = !enabled;
     markBtn.addEventListener('click', (e) => { e.stopPropagation(); markDelivered(row.delivery_row_id); });
-    actions.appendChild(markBtn);
+    header.appendChild(markBtn);
   }
-  header.appendChild(actions);
 
   const detail = document.createElement('div');
   detail.className = 'px-3 py-2 pl-11 bg-slate-50 dark:bg-main text-xs text-slate-600 dark:text-slate-300' + (open ? '' : ' hidden');
   detail.innerHTML = renderArticleDetail(row);
+
+  if (row.cert_filename) {
+    detail.appendChild(renderCertCopyBlock(row));
+  }
+
+  if (row.material_ok === 'mismatch') {
+    const diag = renderDiagnostics(row);
+    if (diag) detail.appendChild(diag);
+  }
+
+  const detailActions = document.createElement('div');
+  detailActions.className = 'flex items-center gap-1.5 justify-end mt-2 pt-2 border-t border-slate-200 dark:border-slate-700';
+  if (row.cert_filename) {
+    const fileLabel = document.createElement('span');
+    fileLabel.className = 'text-slate-400 truncate';
+    fileLabel.textContent = row.cert_filename;
+    detailActions.appendChild(fileLabel);
+    const approveBtn = document.createElement('button');
+    approveBtn.className = 'btn-primary btn-sm';
+    approveBtn.textContent = '✓ Spara';
+    approveBtn.title = 'Spara/godkänn cert';
+    approveBtn.addEventListener('click', (e) => { e.stopPropagation(); approveRow(row.cert_filename, approveBtn); });
+    detailActions.appendChild(approveBtn);
+  }
+  detail.appendChild(detailActions);
 
   header.addEventListener('click', () => {
     const nowHidden = detail.classList.toggle('hidden');
@@ -1033,42 +1114,96 @@ function renderArticle(row, enabled) {
   return art;
 }
 
-// Nivå 3: tvåkolumns "Krav | Vårt" + meta-rad + evidens. Fast etikettbredd ger
-// jämn vänsterkant.
-function renderArticleDetail(row) {
-  const f = (k, v, cls) => v ? '<div class="flex gap-2"><span class="text-slate-400 w-24 shrink-0">' + escapeHtml(k) + '</span><span class="' + (cls || '') + '">' + escapeHtml(String(v)) + '</span></div>' : '';
-  const dash = '<span class="italic text-slate-400">—</span>';
-  const matOkLabel = { ok: '✓ matchar', mismatch: '⚠ AVVIKELSE', unknown: 'okänt' }[row.material_ok] || row.material_ok || '';
-  const matOkCls = row.material_ok === 'mismatch' ? 'text-red-600 dark:text-red-400 font-semibold'
-    : (row.material_ok === 'ok' ? 'text-green-600 dark:text-green-400' : '');
-  const krav = [f('Material', row.required_material), f('Cert', row.required_cert)].filter(Boolean).join('') || dash;
-  const vart = [f('Material', row.our_material), f('Status', matOkLabel, matOkCls), f('Cert-fil', row.cert_filename)].filter(Boolean).join('') || dash;
-  const meta = [
-    f('Mått', row.dimensions),
-    f('Antal', row.planned_qty),
-    f('Leveransdatum', row.delivery_date + (isOverdue(row) ? ' ⏰' : ''), isOverdue(row) ? 'text-red-600 dark:text-red-400' : ''),
-    f('Not', row.notes),
-  ].filter(Boolean).join('');
-  const col = (title, inner) => '<div><div class="font-semibold text-slate-500 dark:text-slate-400 mb-1 uppercase tracking-wide text-[10px]">' + title + '</div>' + inner + '</div>';
-  return '<div class="grid grid-cols-2 gap-x-6 gap-y-1">' + col('Krav', krav) + col('Vårt', vart) + '</div>' +
-    (meta ? '<div class="mt-2 pt-2 border-t border-slate-200 dark:border-slate-700 grid grid-cols-2 gap-x-6 gap-y-0.5">' + meta + '</div>' : '') +
-    '<div class="mt-2 pt-2 border-t border-slate-200 dark:border-slate-700 font-mono">' + renderEvidence(row) + '</div>';
+// statusIcon: enkel grön bock (ok) / röd varning (mismatch) / grått streck
+// (inget att jämföra / okänt) — används av jämförelsetabellen nedan.
+function statusIcon(status) {
+  if (status === 'ok') return '<span class="text-green-600 dark:text-green-400">✓</span>';
+  if (status === 'mismatch') return '<span class="text-red-600 dark:text-red-400">⚠</span>';
+  return '<span class="text-slate-300 dark:text-slate-600">–</span>';
 }
 
-function renderEvidence(row) {
+// Nivå 3: jämförelsetabell Krav↔Cert (Material/Cert-typ/Typ/Engelska) + meta-rad.
+// Fast kolumnbredd ger jämn vänsterkant.
+function renderArticleDetail(row) {
+  const dash = '<span class="italic text-slate-400">—</span>';
+  const cmpRow = (label, kravVal, certVal, status) => {
+    if (!kravVal && !certVal) return '';
+    return '<div class="grid grid-cols-[5rem_1fr_1fr_1.25rem] gap-2 items-baseline">' +
+      '<span class="text-slate-400">' + escapeHtml(label) + '</span>' +
+      '<span>' + (kravVal ? escapeHtml(kravVal) : dash) + '</span>' +
+      '<span>' + (certVal ? escapeHtml(certVal) : dash) + '</span>' +
+      '<span>' + statusIcon(status) + '</span></div>';
+  };
+  const certTypeStatus = !row.required_cert ? 'unknown'
+    : (String(row.required_cert).trim().toLowerCase() === String(row.cert_type || '').trim().toLowerCase() ? 'ok' : 'mismatch');
+  const cmp = [
+    cmpRow('Material', row.required_material, row.cert_material, row.material_ok),
+    cmpRow('Cert-typ', row.required_cert, row.cert_type, certTypeStatus),
+    cmpRow('Typ', row.required_product_form, row.cert_product_form, row.product_form_ok),
+    cmpRow('Engelska', row.cert_filename ? 'Engelska' : '', row.cert_filename ? (row.cert_is_english ? 'Ja' : 'Nej') : '', row.cert_filename ? (row.cert_is_english ? 'ok' : 'mismatch') : 'unknown'),
+  ].filter(Boolean).join('');
+  const head = '<div class="grid grid-cols-[5rem_1fr_1fr_1.25rem] gap-2 font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide text-[10px]">' +
+    '<span>Fält</span><span>Krav</span><span>Cert</span><span></span></div>';
+  const mattInfo = row.cert_dimensions ? '<div class="flex gap-2 mt-1"><span class="text-slate-400 w-20 shrink-0">Mått</span><span>' + escapeHtml(row.cert_dimensions) + '</span></div>' : '';
+  const meta = [
+    ['Antal', row.planned_qty],
+    ['Leveransdatum', row.delivery_date + (isOverdue(row) ? ' ⏰' : '')],
+    ['Not', row.notes],
+  ].map(([k, v]) => v ? '<div class="flex gap-2"><span class="text-slate-400 w-24 shrink-0">' + escapeHtml(k) + '</span><span class="' + (k === 'Leveransdatum' && isOverdue(row) ? 'text-red-600 dark:text-red-400' : '') + '">' + escapeHtml(String(v)) + '</span></div>' : '').filter(Boolean).join('');
+  return (cmp ? head + cmp : dash) + mattInfo +
+    (meta ? '<div class="mt-2 pt-2 border-t border-slate-200 dark:border-slate-700 grid grid-cols-2 gap-x-6 gap-y-0.5">' + meta + '</div>' : '');
+}
+
+// renderCertCopyBlock bygger en kopierbar fältlista (charge/typ/mått/material/B-nr)
+// längst in i den utfällda artikeln — klick på ett värde kopierar det, som i Kö.
+function renderCertCopyBlock(row) {
+  const wrap = document.createElement('div');
+  wrap.className = 'mt-2 pt-2 border-t border-slate-200 dark:border-slate-700';
+  const title = document.createElement('div');
+  title.className = 'font-semibold text-slate-500 dark:text-slate-400 mb-1 uppercase tracking-wide text-[10px]';
+  title.textContent = 'Från certifikatet';
+  wrap.appendChild(title);
+  const grid = document.createElement('div');
+  grid.className = 'grid grid-cols-2 gap-x-6 gap-y-0.5';
+  wrap.appendChild(grid);
+  const fields = [
+    ['Charge', row.cert_charge],
+    ['B-nr', row.cert_b_numbers],
+  ];
+  for (const [label, val] of fields) {
+    if (!val) continue;
+    const line = document.createElement('div');
+    line.className = 'flex gap-2';
+    const k = document.createElement('span');
+    k.className = 'text-slate-400 w-24 shrink-0';
+    k.textContent = label;
+    const v = document.createElement('span');
+    v.className = 'cursor-pointer hover:underline';
+    v.title = 'Klicka för att kopiera';
+    v.textContent = val;
+    v.addEventListener('click', (e) => { e.stopPropagation(); copyCell(v, val); });
+    line.appendChild(k);
+    line.appendChild(v);
+    grid.appendChild(line);
+  }
+  return wrap;
+}
+
+// renderDiagnostics visar bara fält som inte redan syns någon annanstans i panelen
+// (extra_description/order_number/match_by) — bara relevant vid avvikelse.
+function renderDiagnostics(row) {
   let ev = {};
   try { ev = JSON.parse(row.evidence_json || '{}'); } catch (e) {}
   const lines = [];
   const add = (k, v) => { if (v) lines.push('<div><span class="text-slate-400">' + escapeHtml(k) + ':</span> ' + escapeHtml(String(v)) + '</div>'); };
-  add('Artikel', ev.part_description);
   add('Extra beskrivning (rå)', ev.extra_description);
-  add('Cert-fil', ev.cert_filename);
-  add('Cert-material', ev.cert_material);
-  add('Cert-charge', ev.cert_charge);
   add('Matchat ordernr (B)', ev.order_number);
   add('Matchning', ev.match_by);
-  add('AI-not', row.notes);
-  return lines.length ? lines.join('') : '<span class="italic text-slate-400">Ingen evidens</span>';
+  if (!lines.length) return null;
+  const wrap = document.createElement('div');
+  wrap.className = 'mt-2 pt-2 border-t border-slate-200 dark:border-slate-700 font-mono';
+  wrap.innerHTML = lines.join('');
+  return wrap;
 }
 
 async function runUpcoming() {
@@ -1078,14 +1213,17 @@ async function runUpcoming() {
   // SSE 'upcoming' uppdaterar listan + knappstate när körningen är klar.
 }
 
-async function deliverIn(row, btn) {
+async function deliverIn(row, btn, routine) {
+  routine = routine || 'report_arrival';
   // Öppnar Monitor-rutinen automatiskt (ingen bekräftelsedialog). Materialavvikelse
-  // blockeras hårt på servern (409). Resultatet syns i UI-loggen (📦 Leverera in …).
+  // blockeras hårt på servern (409, bara för report_arrival). Resultatet syns i
+  // UI-loggen (📦 Leverera in …).
+  const origLabel = btn ? btn.textContent : '';
   if (btn) { btn.disabled = true; btn.textContent = '⏳ Öppnar…'; }
   try {
     const r = await fetch('/api/upcoming/deliver-in', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ delivery_row_id: row.delivery_row_id, confirm: true }),
+      body: JSON.stringify({ delivery_row_id: row.delivery_row_id, confirm: true, routine }),
     });
     const data = await r.json().catch(() => ({}));
     if (r.status === 409 || data.blocked) { alert('Blockerad: ' + (data.reason || 'materialavvikelse')); return; }
@@ -1094,7 +1232,52 @@ async function deliverIn(row, btn) {
   } catch (e) {
     alert('Fel: ' + e);
   } finally {
-    if (btn) { btn.disabled = false; btn.textContent = '📦 Leverera in'; }
+    if (btn) { btn.disabled = false; btn.textContent = origLabel; }
+  }
+}
+
+async function hideSupplier(supplier, hidden) {
+  try {
+    await fetch('/api/upcoming/hide-supplier', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ supplier, hidden }),
+    });
+  } catch (e) { console.warn(e); }
+}
+
+function toggleUpcomingHideSupplierBtn() {
+  upcomingShowHideSupplierBtn = !upcomingShowHideSupplierBtn;
+  renderUpcoming();
+}
+
+async function resetHiddenSuppliers() {
+  const names = (upcomingState.hidden_suppliers || []).slice();
+  await Promise.all(names.map(name => hideSupplier(name, false)));
+}
+
+function renderHiddenSuppliersList(names) {
+  const el = document.getElementById('hiddenSuppliersList');
+  if (!el) return;
+  el.innerHTML = '';
+  if (!names.length) {
+    el.innerHTML = '<div class="text-xs italic text-slate-400">Inga dolda leverantörer</div>';
+    return;
+  }
+  for (const name of names) {
+    const row = document.createElement('div');
+    row.className = 'flex items-center justify-between gap-2 text-sm text-slate-700 dark:text-slate-200';
+    const label = document.createElement('span');
+    label.className = 'truncate';
+    label.textContent = name;
+    const x = document.createElement('button');
+    x.type = 'button';
+    x.className = 'btn-ghost btn-sm';
+    x.textContent = 'x';
+    x.title = 'Visa "' + name + '" igen';
+    x.addEventListener('click', () => hideSupplier(name, false));
+    row.appendChild(label);
+    row.appendChild(x);
+    el.appendChild(row);
   }
 }
 
