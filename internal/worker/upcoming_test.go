@@ -217,7 +217,7 @@ func TestRefreshUpcoming_CertMatchedNoAI(t *testing.T) {
 
 	if _, err := repo.InsertCertificate(&store.Certificate{
 		PDFHash: "h1", Filename: "82908-plat-10-S355-B127575.pdf", OriginalFilename: "o.pdf",
-		CertType: "3.1", Charge: "610042", Material: "S355J2+N", MaterialShort: "S355",
+		CertType: "3.1", Charge: "610042", Material: "S355J2+N", EnStandardPresent: true,
 		Dimensions: "10", BNumbers: `["B127575"]`, Confidence: "high", ModelUsed: "test",
 		Status: "queue", ExtractedAt: "2026-01-01",
 	}); err != nil {

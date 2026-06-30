@@ -128,18 +128,20 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		sum := sha256.Sum256(data)
 		hash := hex.EncodeToString(sum[:])
 		meta := store.PdfMeta{
-			Charge:           extr.Charge,
-			Material:         extr.MaterialShort,
-			ProductForm:      extr.ProductForm,
-			Dimensions:       extr.Dimensions,
-			BNumbers:         bNums,
-			Confidence:       extr.Confidence,
-			Issues:           extr.Issues,
-			OriginalFilename: name,
-			ExtractedAt:      time.Now().Format(time.RFC3339),
-			Schema:           4,
-			Status:           "queue",
-			Hash:             hash,
+			Charge:            extr.Charge,
+			Material:          extr.Material,
+			EnStandardPresent: extr.EnStandardPresent,
+			ProductForm:       extr.ProductForm,
+			Dimensions:        extr.Dimensions,
+			CountryOfOrigin:   extr.CountryOfOrigin,
+			BNumbers:          bNums,
+			Confidence:        extr.Confidence,
+			Issues:            extr.Issues,
+			OriginalFilename:  name,
+			ExtractedAt:       time.Now().Format(time.RFC3339),
+			Schema:            4,
+			Status:            "queue",
+			Hash:              hash,
 		}
 
 		existingPath := filepath.Join(store.QueueDir(c), finalName)
@@ -172,21 +174,22 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		// Skapa DB-post för uppladdad PDF
 		if s.repo != nil {
 			cert := &store.Certificate{
-				PDFHash:          hash,
-				Filename:         filepath.Base(dst),
-				OriginalFilename: name,
-				CertType:         extr.CertType,
-				Charge:           extr.Charge,
-				Material:         extr.Material,
-				MaterialShort:    extr.MaterialShort,
-				ProductForm:      extr.ProductForm,
-				Dimensions:       extr.Dimensions,
-				BNumbers:         marshalJSON(bNums),
-				Confidence:       extr.Confidence,
-				Issues:           marshalJSON(extr.Issues),
-				ModelUsed:        "claude-sonnet-4-5",
-				Status:           "queue",
-				ExtractedAt:      time.Now().Format(time.RFC3339),
+				PDFHash:           hash,
+				Filename:          filepath.Base(dst),
+				OriginalFilename:  name,
+				CertType:          extr.CertType,
+				Charge:            extr.Charge,
+				Material:          extr.Material,
+				EnStandardPresent: extr.EnStandardPresent,
+				ProductForm:       extr.ProductForm,
+				Dimensions:        extr.Dimensions,
+				CountryOfOrigin:   extr.CountryOfOrigin,
+				BNumbers:          marshalJSON(bNums),
+				Confidence:        extr.Confidence,
+				Issues:            marshalJSON(extr.Issues),
+				ModelUsed:         ai.ModelExtract,
+				Status:            "queue",
+				ExtractedAt:       time.Now().Format(time.RFC3339),
 			}
 			if _, insertErr := s.repo.InsertCertificate(cert); insertErr != nil {
 				s.Logf("⚠️  DB-insert misslyckades: %v", insertErr)

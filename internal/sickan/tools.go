@@ -210,12 +210,12 @@ var updateQueueTool = anthropic.ToolParam{
 	Description: anthropic.String("Uppdaterar fält på en kö-post och döper om filen enligt namnkonventionen. Lämna fält tomma som inte ska ändras. Returnerar nytt filnamn."),
 	InputSchema: anthropic.ToolInputSchemaParam{
 		Properties: map[string]any{
-			"filename":       map[string]any{"type": "string", "description": "Nuvarande filnamn i kön."},
-			"charge":         map[string]any{"type": "string"},
-			"material":       map[string]any{"type": "string", "description": "Kort form för filnamn, t.ex. S355."},
-			"product_form":   map[string]any{"type": "string", "description": "rundstång, plåt, fyrkantsrör, ... eller 'okänt'."},
-			"dimensions":     map[string]any{"type": "string"},
-			"b_numbers":      map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+			"filename":     map[string]any{"type": "string", "description": "Nuvarande filnamn i kön."},
+			"charge":       map[string]any{"type": "string"},
+			"material":     map[string]any{"type": "string", "description": "Kort form för filnamn, t.ex. S355."},
+			"product_form": map[string]any{"type": "string", "description": "rundstång, plåt, fyrkantsrör, ... eller 'okänt'."},
+			"dimensions":   map[string]any{"type": "string"},
+			"b_numbers":    map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
 		},
 		Required: []string{"filename"},
 	},
@@ -513,10 +513,10 @@ func (tb *Toolbox) updateQueue(input json.RawMessage) (string, error) {
 		meta.BNumbers = *args.BNumbers
 	}
 	ext := &cert.Extraction{
-		Charge:        meta.Charge,
-		MaterialShort: meta.Material,
-		ProductForm:   meta.ProductForm,
-		Dimensions:    meta.Dimensions,
+		Charge:      meta.Charge,
+		Material:    meta.Material,
+		ProductForm: meta.ProductForm,
+		Dimensions:  meta.Dimensions,
 	}
 	newName := cert.BuildFilename(ext, meta.BNumbers)
 	finalName, err := store.RenameQueueItem(tb.Cfg, args.Filename, newName, *meta)
@@ -554,14 +554,14 @@ func (tb *Toolbox) promoteReview(input json.RawMessage) (string, error) {
 		return "", err
 	}
 	ext := &cert.Extraction{
-		IsEN10204_3_1: true,
-		CertType:      "3.1",
-		Charge:        args.Charge,
-		Material:      args.Material,
-		MaterialShort: args.Material,
-		ProductForm:   args.ProductForm,
-		Dimensions:    args.Dimensions,
-		Confidence:    "high",
+		IsEN10204_3_1:     true,
+		CertType:          "3.1",
+		Charge:            args.Charge,
+		Material:          args.Material,
+		EnStandardPresent: true, // människan har granskat och bekräftat certet manuellt
+		ProductForm:       args.ProductForm,
+		Dimensions:        args.Dimensions,
+		Confidence:        "high",
 	}
 	newName, err := store.PromoteReviewToQueue(tb.Cfg, args.Base, args.PdfFilename, ext, args.BNumbers)
 	if err != nil {
@@ -573,21 +573,22 @@ func (tb *Toolbox) promoteReview(input json.RawMessage) (string, error) {
 		metaPath := filepath.Join(store.QueueDir(tb.Cfg), newName)
 		if m, ok := store.ReadMetadata(metaPath); ok {
 			cert := &store.Certificate{
-				PDFHash:          m.Hash,
-				Filename:         newName,
-				OriginalFilename: m.OriginalFilename,
-				CertType:         "3.1",
-				Charge:           m.Charge,
-				Material:         m.Material,
-				MaterialShort:    m.MaterialShort,
-				ProductForm:      m.ProductForm,
-				Dimensions:       m.Dimensions,
-				BNumbers:         marshalJSON(m.BNumbers),
-				Confidence:       m.Confidence,
-				Issues:           marshalJSON(m.Issues),
-				ModelUsed:        m.ModelUsed,
-				Status:           "queue",
-				ExtractedAt:      m.ExtractedAt,
+				PDFHash:           m.Hash,
+				Filename:          newName,
+				OriginalFilename:  m.OriginalFilename,
+				CertType:          "3.1",
+				Charge:            m.Charge,
+				Material:          m.Material,
+				EnStandardPresent: m.EnStandardPresent,
+				ProductForm:       m.ProductForm,
+				Dimensions:        m.Dimensions,
+				CountryOfOrigin:   m.CountryOfOrigin,
+				BNumbers:          marshalJSON(m.BNumbers),
+				Confidence:        m.Confidence,
+				Issues:            marshalJSON(m.Issues),
+				ModelUsed:         m.ModelUsed,
+				Status:            "queue",
+				ExtractedAt:       m.ExtractedAt,
 			}
 			if _, insertErr := tb.Repo.InsertCertificate(cert); insertErr != nil {
 				tb.N.Logf("⚠️  DB-insert vid promote misslyckades: %v", insertErr)

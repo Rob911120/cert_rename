@@ -104,9 +104,10 @@ const (
 				"cert_type": "3.1",
 				"charge": "610042",
 				"material": "1.4307",
-				"material_short": "1.4307",
+				"en_standard_present": true,
 				"product_form": "rundstång",
 				"dimensions": "5",
+				"country_of_origin": "",
 				"confidence": "high",
 				"issues": []
 			}
@@ -129,9 +130,10 @@ const (
 				"cert_type": "unknown",
 				"charge": "",
 				"material": "",
-				"material_short": "",
+				"en_standard_present": false,
 				"product_form": "",
 				"dimensions": "",
+				"country_of_origin": "",
 				"confidence": "low",
 				"issues": ["okänd dokumenttyp"]
 			}
@@ -185,14 +187,14 @@ type testNotifier struct {
 	monErr  error           // returneras av MonitorClient() när mon är nil
 }
 
-func (n *testNotifier) Logf(format string, args ...any)                    {}
-func (n *testNotifier) RecordUsage(model string, in, out, cc, cr int64)    {}
-func (n *testNotifier) IncrementOK()                                        { n.okCount++ }
-func (n *testNotifier) BroadcastStats()                                     {}
-func (n *testNotifier) BroadcastQueue()                                     {}
-func (n *testNotifier) BroadcastReview()                                    {}
-func (n *testNotifier) Repo() *store.Repository                             { return n.repo }
-func (n *testNotifier) MonitorClient() (*monitor.Client, error)             { return n.mon, n.monErr }
+func (n *testNotifier) Logf(format string, args ...any)                 {}
+func (n *testNotifier) RecordUsage(model string, in, out, cc, cr int64) {}
+func (n *testNotifier) IncrementOK()                                    { n.okCount++ }
+func (n *testNotifier) BroadcastStats()                                 {}
+func (n *testNotifier) BroadcastQueue()                                 {}
+func (n *testNotifier) BroadcastReview()                                {}
+func (n *testNotifier) Repo() *store.Repository                         { return n.repo }
+func (n *testNotifier) MonitorClient() (*monitor.Client, error)         { return n.mon, n.monErr }
 
 // startStubAnthropic returnerar en httptest-server som svarar på POST
 // /v1/messages baserat på request-bodyns tool_choice.name (eller tools[0].name
@@ -406,8 +408,8 @@ func Test_HappyPath_OnePdfValidCert(t *testing.T) {
 		if cert.Charge != "610042" {
 			t.Errorf("cert[%d].Charge = %q, vill ha %q", i, cert.Charge, "610042")
 		}
-		if cert.MaterialShort != "1.4307" {
-			t.Errorf("cert[%d].MaterialShort = %q, vill ha %q", i, cert.MaterialShort, "1.4307")
+		if cert.Material != "1.4307" {
+			t.Errorf("cert[%d].Material = %q, vill ha %q", i, cert.Material, "1.4307")
 		}
 		if cert.Status != "queue" {
 			t.Errorf("cert[%d].Status = %q, vill ha %q", i, cert.Status, "queue")
@@ -685,13 +687,14 @@ func Test_PromoteReviewToQueue_HappyPath(t *testing.T) {
 	base, pdfName := setupReviewItem(t, cfg, "test_promote", true)
 
 	ext := &cert.Extraction{
-		IsEN10204_3_1: true,
-		CertType:      "3.1",
-		Charge:        "999111",
-		MaterialShort: "S355",
-		ProductForm:   "rundstång",
-		Dimensions:    "20",
-		Confidence:    "high",
+		IsEN10204_3_1:     true,
+		CertType:          "3.1",
+		Charge:            "999111",
+		Material:          "S355",
+		EnStandardPresent: true,
+		ProductForm:       "rundstång",
+		Dimensions:        "20",
+		Confidence:        "high",
 	}
 	newName, err := store.PromoteReviewToQueue(cfg, base, pdfName, ext, []string{"B999"})
 	if err != nil {
@@ -713,7 +716,7 @@ func Test_PromoteReviewToQueue_HappyPath(t *testing.T) {
 	if m.Status != "queue" {
 		t.Errorf("Status=%q, vill ha 'queue'", m.Status)
 	}
-	if m.Charge != "999111" || m.MaterialShort != "S355" {
+	if m.Charge != "999111" || m.Material != "S355" {
 		t.Errorf("metadata-fält: %+v", m)
 	}
 	if m.EmailSubject == "" && m.EmailBody == "" {
@@ -726,13 +729,14 @@ func Test_PromoteReviewToQueue_ValidationFails(t *testing.T) {
 	base, pdfName := setupReviewItem(t, cfg, "test_validation", true)
 
 	ext := &cert.Extraction{
-		IsEN10204_3_1: true,
-		CertType:      "3.1",
-		Charge:        "", // tomt → validate-fail
-		MaterialShort: "S355",
-		ProductForm:   "rundstång",
-		Dimensions:    "20",
-		Confidence:    "high",
+		IsEN10204_3_1:     true,
+		CertType:          "3.1",
+		Charge:            "", // tomt → validate-fail
+		Material:          "S355",
+		EnStandardPresent: true,
+		ProductForm:       "rundstång",
+		Dimensions:        "20",
+		Confidence:        "high",
 	}
 	if _, err := store.PromoteReviewToQueue(cfg, base, pdfName, ext, []string{"B1"}); err == nil {
 		t.Fatalf("borde fail när charge saknas")
@@ -750,13 +754,14 @@ func Test_PromoteReviewToQueue_NoEml(t *testing.T) {
 	base, pdfName := setupReviewItem(t, cfg, "test_noeml", false)
 
 	ext := &cert.Extraction{
-		IsEN10204_3_1: true,
-		CertType:      "3.1",
-		Charge:        "777",
-		MaterialShort: "S275",
-		ProductForm:   "plåt",
-		Dimensions:    "10",
-		Confidence:    "high",
+		IsEN10204_3_1:     true,
+		CertType:          "3.1",
+		Charge:            "777",
+		Material:          "S275",
+		EnStandardPresent: true,
+		ProductForm:       "plåt",
+		Dimensions:        "10",
+		Confidence:        "high",
 	}
 	newName, err := store.PromoteReviewToQueue(cfg, base, pdfName, ext, []string{"B7"})
 	if err != nil {
@@ -821,16 +826,15 @@ func Test_ReconcileQueue_RemovesStaleDBEntries(t *testing.T) {
 
 	// Infoga DB-post utan motsvarande fil
 	cert := &store.Certificate{
-		PDFHash:       "test-hash-stale",
-		Filename:      "nonexistent.pdf",
-		CertType:      "3.1",
-		Charge:        "123456",
-		Material:      "S355",
-		MaterialShort: "S355",
-		Confidence:    "high",
-		Status:        "queue",
-		ExtractedAt:   time.Now().Format(time.RFC3339),
-		ModelUsed:     "test",
+		PDFHash:     "test-hash-stale",
+		Filename:    "nonexistent.pdf",
+		CertType:    "3.1",
+		Charge:      "123456",
+		Material:    "S355",
+		Confidence:  "high",
+		Status:      "queue",
+		ExtractedAt: time.Now().Format(time.RFC3339),
+		ModelUsed:   "test",
 	}
 	_, err := n.repo.InsertCertificate(cert)
 	if err != nil {
@@ -867,31 +871,29 @@ func Test_ReconcileQueue_HandlesMixedScenario(t *testing.T) {
 
 	// 1. Infoga DB-post utan fil (stale)
 	staleCert := &store.Certificate{
-		PDFHash:       "hash-stale",
-		Filename:      "stale.pdf",
-		CertType:      "3.1",
-		Charge:        "111111",
-		Material:      "S355",
-		MaterialShort: "S355",
-		Confidence:    "high",
-		Status:        "queue",
-		ExtractedAt:   time.Now().Format(time.RFC3339),
-		ModelUsed:     "test",
+		PDFHash:     "hash-stale",
+		Filename:    "stale.pdf",
+		CertType:    "3.1",
+		Charge:      "111111",
+		Material:    "S355",
+		Confidence:  "high",
+		Status:      "queue",
+		ExtractedAt: time.Now().Format(time.RFC3339),
+		ModelUsed:   "test",
 	}
 	n.repo.InsertCertificate(staleCert)
 
 	// 2. Infoga DB-post med fil (ska bevaras)
 	okCert := &store.Certificate{
-		PDFHash:       "hash-ok",
-		Filename:      "ok.pdf",
-		CertType:      "3.1",
-		Charge:        "222222",
-		Material:      "S355",
-		MaterialShort: "S355",
-		Confidence:    "high",
-		Status:        "queue",
-		ExtractedAt:   time.Now().Format(time.RFC3339),
-		ModelUsed:     "test",
+		PDFHash:     "hash-ok",
+		Filename:    "ok.pdf",
+		CertType:    "3.1",
+		Charge:      "222222",
+		Material:    "S355",
+		Confidence:  "high",
+		Status:      "queue",
+		ExtractedAt: time.Now().Format(time.RFC3339),
+		ModelUsed:   "test",
 	}
 	n.repo.InsertCertificate(okCert)
 
@@ -959,8 +961,8 @@ func Test_HappyPath_VerifiesDBContent(t *testing.T) {
 		if cert.Material != "1.4307" {
 			t.Errorf("cert[%d].Material = %q, vill ha %q", i, cert.Material, "1.4307")
 		}
-		if cert.MaterialShort != "1.4307" {
-			t.Errorf("cert[%d].MaterialShort = %q, vill ha %q", i, cert.MaterialShort, "1.4307")
+		if cert.Material != "1.4307" {
+			t.Errorf("cert[%d].Material = %q, vill ha %q", i, cert.Material, "1.4307")
 		}
 		if cert.Status != "queue" {
 			t.Errorf("cert[%d].Status = %q, vill ha %q", i, cert.Status, "queue")
@@ -1028,13 +1030,14 @@ func Test_PromoteReviewToQueue_InsertsIntoDB(t *testing.T) {
 	base, pdfName := setupReviewItem(t, cfg, "test_promote_db", true)
 
 	ext := &cert.Extraction{
-		IsEN10204_3_1: true,
-		CertType:      "3.1",
-		Charge:        "999111",
-		MaterialShort: "S355",
-		ProductForm:   "rundstång",
-		Dimensions:    "20",
-		Confidence:    "high",
+		IsEN10204_3_1:     true,
+		CertType:          "3.1",
+		Charge:            "999111",
+		Material:          "S355",
+		EnStandardPresent: true,
+		ProductForm:       "rundstång",
+		Dimensions:        "20",
+		Confidence:        "high",
 	}
 	newName, err := store.PromoteReviewToQueue(cfg, base, pdfName, ext, []string{"B999"})
 	if err != nil {
@@ -1045,15 +1048,15 @@ func Test_PromoteReviewToQueue_InsertsIntoDB(t *testing.T) {
 	metaPath := filepath.Join(store.QueueDir(cfg), newName)
 	if m, ok := store.ReadMetadata(metaPath); ok {
 		cert := &store.Certificate{
-			PDFHash:       m.Hash,
-			Filename:      newName,
-			CertType:      "3.1",
-			Charge:        m.Charge,
-			Material:      m.Material,
-			MaterialShort: m.MaterialShort,
-			Status:        "queue",
-			ExtractedAt:   m.ExtractedAt,
-			ModelUsed:     m.ModelUsed,
+			PDFHash:           m.Hash,
+			Filename:          newName,
+			CertType:          "3.1",
+			Charge:            m.Charge,
+			Material:          m.Material,
+			EnStandardPresent: m.EnStandardPresent,
+			Status:            "queue",
+			ExtractedAt:       m.ExtractedAt,
+			ModelUsed:         m.ModelUsed,
 		}
 		_, err = n.repo.InsertCertificate(cert)
 		if err != nil {

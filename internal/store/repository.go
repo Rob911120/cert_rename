@@ -40,67 +40,81 @@ type Email struct {
 
 // Certificate representerar ett extraherat certifikat.
 type Certificate struct {
-	ID               int64   `json:"id"`
-	EmailID          int64   `json:"email_id"`
-	PDFHash          string  `json:"pdf_hash"`
-	Filename         string  `json:"filename"`
-	OriginalFilename string  `json:"original_filename"`
-	CertType         string  `json:"cert_type"`
-	Charge           string  `json:"charge"`
-	Material         string  `json:"material"`
-	MaterialShort    string  `json:"material_short"`
-	ProductForm      string  `json:"product_form"`
-	Dimensions       string  `json:"dimensions"`
-	BNumbers         string  `json:"b_numbers"`
-	Confidence       string  `json:"confidence"`
-	Issues           string  `json:"issues"`
-	ModelUsed        string  `json:"model_used"`
-	TokensInput      int64   `json:"tokens_input"`
-	TokensOutput     int64   `json:"tokens_output"`
-	ProcessingMs     int64   `json:"processing_ms"`
-	Status           string  `json:"status"`
-	ExtractedAt      string  `json:"extracted_at"`
-	HumanCorrected   bool    `json:"human_corrected"`
-	CorrectedCharge  string  `json:"corrected_charge"`
-	CorrectedMaterial string `json:"corrected_material"`
-	CorrectedMaterialShort string `json:"corrected_material_short"`
+	ID                   int64  `json:"id"`
+	EmailID              int64  `json:"email_id"`
+	PDFHash              string `json:"pdf_hash"`
+	Filename             string `json:"filename"`
+	OriginalFilename     string `json:"original_filename"`
+	CertType             string `json:"cert_type"`
+	Charge               string `json:"charge"`
+	Material             string `json:"material"`
+	EnStandardPresent    bool   `json:"en_standard_present"`
+	ProductForm          string `json:"product_form"`
+	Dimensions           string `json:"dimensions"`
+	CountryOfOrigin      string `json:"country_of_origin"`
+	BNumbers             string `json:"b_numbers"`
+	Confidence           string `json:"confidence"`
+	Issues               string `json:"issues"`
+	ModelUsed            string `json:"model_used"`
+	TokensInput          int64  `json:"tokens_input"`
+	TokensOutput         int64  `json:"tokens_output"`
+	ProcessingMs         int64  `json:"processing_ms"`
+	Status               string `json:"status"`
+	ExtractedAt          string `json:"extracted_at"`
+	HumanCorrected       bool   `json:"human_corrected"`
+	CorrectedCharge      string `json:"corrected_charge"`
+	CorrectedMaterial    string `json:"corrected_material"`
 	CorrectedProductForm string `json:"corrected_product_form"`
-	CorrectedDimensions string `json:"corrected_dimensions"`
-	CorrectedBNumbers string `json:"corrected_b_numbers"`
-	CorrectionNotes string  `json:"correction_notes"`
-	CorrectionLog   string  `json:"correction_log"`
-	CreatedAt       string  `json:"created_at"`
+	CorrectedDimensions  string `json:"corrected_dimensions"`
+	CorrectedBNumbers    string `json:"corrected_b_numbers"`
+	CorrectionNotes      string `json:"correction_notes"`
+	CorrectionLog        string `json:"correction_log"`
+	CreatedAt            string `json:"created_at"`
 }
+
+// certificateColumns är den explicita kolumnlistan för alla cert-SELECT:er.
+// Krävs eftersom ALTER TABLE ADD COLUMN (se db.go migrate()) lägger nya
+// kolumner sist i tabellen oavsett var de står i CREATE TABLE-strängen —
+// "SELECT *" skulle då ge olika kolumnordning på nya vs migrerade databaser.
+const certificateColumns = `
+	id, email_id, pdf_hash, filename, original_filename,
+	cert_type, charge, material, en_standard_present, product_form, dimensions,
+	country_of_origin, b_numbers, confidence, issues, model_used, tokens_input, tokens_output,
+	processing_ms, status, extracted_at, human_corrected,
+	corrected_charge, corrected_material,
+	corrected_product_form, corrected_dimensions, corrected_b_numbers,
+	correction_notes, correction_log, created_at
+`
 
 // AIDecision representerar ett AI-beslut.
 type AIDecision struct {
-	ID                 int64  `json:"id"`
-	EmailID            *int64 `json:"email_id"`
-	CertificateID      *int64 `json:"certificate_id"`
-	Step               string `json:"step"`
-	Model              string `json:"model"`
-	TokensInput        int64  `json:"tokens_input"`
-	TokensOutput       int64  `json:"tokens_output"`
-	TokensCacheCreation int64 `json:"tokens_cache_creation"`
-	TokensCacheRead    int64  `json:"tokens_cache_read"`
-	DurationMs         int64  `json:"duration_ms"`
-	Success            bool   `json:"success"`
-	ErrorMessage       string `json:"error_message"`
-	CreatedAt          string `json:"created_at"`
+	ID                  int64  `json:"id"`
+	EmailID             *int64 `json:"email_id"`
+	CertificateID       *int64 `json:"certificate_id"`
+	Step                string `json:"step"`
+	Model               string `json:"model"`
+	TokensInput         int64  `json:"tokens_input"`
+	TokensOutput        int64  `json:"tokens_output"`
+	TokensCacheCreation int64  `json:"tokens_cache_creation"`
+	TokensCacheRead     int64  `json:"tokens_cache_read"`
+	DurationMs          int64  `json:"duration_ms"`
+	Success             bool   `json:"success"`
+	ErrorMessage        string `json:"error_message"`
+	CreatedAt           string `json:"created_at"`
 }
 
 // CostEntry representerar en kostnadspost.
 type CostEntry struct {
-	ID                 int64   `json:"id"`
-	CertificateID      *int64  `json:"certificate_id"`
-	Model              string  `json:"model"`
-	TokensInput        int64   `json:"tokens_input"`
-	TokensOutput       int64   `json:"tokens_output"`
-	TokensCacheCreation int64  `json:"tokens_cache_creation"`
-	TokensCacheRead    int64   `json:"tokens_cache_read"`
-	USD                float64 `json:"usd"`
-	Context            string  `json:"context"`
-	CreatedAt          string  `json:"created_at"`
+	ID                  int64   `json:"id"`
+	CertificateID       *int64  `json:"certificate_id"`
+	Model               string  `json:"model"`
+	TokensInput         int64   `json:"tokens_input"`
+	TokensOutput        int64   `json:"tokens_output"`
+	TokensCacheCreation int64   `json:"tokens_cache_creation"`
+	TokensCacheRead     int64   `json:"tokens_cache_read"`
+	USD                 float64 `json:"usd"`
+	Context             string  `json:"context"`
+	CreatedAt           string  `json:"created_at"`
 }
 
 // --- Email operations ---
@@ -168,24 +182,25 @@ func (r *Repository) ListEmailsByCategory(category string) ([]Email, error) {
 
 // --- Certificate operations ---
 
-// scanCertificate avkodar en certifikatrad från ett SELECT * (positionell ordning
-// enligt certificates-schemat). En delad scanner så att alla cert-läsare (hash/
-// filnamn/lista/ordermatch) har EN scan-plats — lägger man en kolumn på
-// certificates uppdaterar man bara här. product_form/dimensions/b_numbers/issues
-// skrivs alltid (om än "") av appen och scannas direkt; corrected_* är nullbara.
+// scanCertificate avkodar en certifikatrad från en SELECT certificateColumns
+// (explicit kolumnordning, se certificateColumns). En delad scanner så att
+// alla cert-läsare (hash/filnamn/lista/ordermatch) har EN scan-plats — lägger
+// man en kolumn på certificates uppdaterar man certificateColumns + här.
+// product_form/dimensions/b_numbers/issues skrivs alltid (om än "") av appen
+// och scannas direkt; corrected_* är nullbara.
 func scanCertificate(s interface {
 	Scan(dest ...any) error
 }) (Certificate, error) {
 	var c Certificate
-	var correctedCharge, correctedMaterial, correctedMaterialShort sql.NullString
+	var correctedCharge, correctedMaterial sql.NullString
 	var correctedProductForm, correctedDimensions, correctedBNumbers sql.NullString
 	var correctionNotes, correctionLog sql.NullString
 	err := s.Scan(
 		&c.ID, &c.EmailID, &c.PDFHash, &c.Filename, &c.OriginalFilename,
-		&c.CertType, &c.Charge, &c.Material, &c.MaterialShort, &c.ProductForm, &c.Dimensions,
-		&c.BNumbers, &c.Confidence, &c.Issues, &c.ModelUsed, &c.TokensInput, &c.TokensOutput,
+		&c.CertType, &c.Charge, &c.Material, &c.EnStandardPresent, &c.ProductForm, &c.Dimensions,
+		&c.CountryOfOrigin, &c.BNumbers, &c.Confidence, &c.Issues, &c.ModelUsed, &c.TokensInput, &c.TokensOutput,
 		&c.ProcessingMs, &c.Status, &c.ExtractedAt, &c.HumanCorrected,
-		&correctedCharge, &correctedMaterial, &correctedMaterialShort,
+		&correctedCharge, &correctedMaterial,
 		&correctedProductForm, &correctedDimensions, &correctedBNumbers,
 		&correctionNotes, &correctionLog, &c.CreatedAt)
 	if err != nil {
@@ -193,7 +208,6 @@ func scanCertificate(s interface {
 	}
 	c.CorrectedCharge = correctedCharge.String
 	c.CorrectedMaterial = correctedMaterial.String
-	c.CorrectedMaterialShort = correctedMaterialShort.String
 	c.CorrectedProductForm = correctedProductForm.String
 	c.CorrectedDimensions = correctedDimensions.String
 	c.CorrectedBNumbers = correctedBNumbers.String
@@ -207,13 +221,13 @@ func (r *Repository) InsertCertificate(c *Certificate) (int64, error) {
 	result, err := r.db.Exec(`
 		INSERT INTO certificates (
 			email_id, pdf_hash, filename, original_filename,
-			cert_type, charge, material, material_short, product_form, dimensions,
-			b_numbers, confidence, issues, model_used, tokens_input, tokens_output,
+			cert_type, charge, material, en_standard_present, product_form, dimensions,
+			country_of_origin, b_numbers, confidence, issues, model_used, tokens_input, tokens_output,
 			processing_ms, status, extracted_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		c.EmailID, c.PDFHash, c.Filename, c.OriginalFilename,
-		c.CertType, c.Charge, c.Material, c.MaterialShort, c.ProductForm, c.Dimensions,
-		c.BNumbers, c.Confidence, c.Issues, c.ModelUsed, c.TokensInput, c.TokensOutput,
+		c.CertType, c.Charge, c.Material, c.EnStandardPresent, c.ProductForm, c.Dimensions,
+		c.CountryOfOrigin, c.BNumbers, c.Confidence, c.Issues, c.ModelUsed, c.TokensInput, c.TokensOutput,
 		c.ProcessingMs, c.Status, c.ExtractedAt)
 	if err != nil {
 		return 0, err
@@ -264,7 +278,7 @@ func (r *Repository) UpdateCertificateCorrection(id int64, field, oldValue, newV
 
 // GetCertificateByHash hämtar ett certifikat via dess PDF-hash.
 func (r *Repository) GetCertificateByHash(hash string) (*Certificate, error) {
-	c, err := scanCertificate(r.db.QueryRow(`SELECT * FROM certificates WHERE pdf_hash = ?`, hash))
+	c, err := scanCertificate(r.db.QueryRow(`SELECT `+certificateColumns+` FROM certificates WHERE pdf_hash = ?`, hash))
 	if err != nil {
 		return nil, err
 	}
@@ -273,7 +287,7 @@ func (r *Repository) GetCertificateByHash(hash string) (*Certificate, error) {
 
 // GetCertificateByFilename hämtar ett certifikat via dess filnamn.
 func (r *Repository) GetCertificateByFilename(filename string) (*Certificate, error) {
-	c, err := scanCertificate(r.db.QueryRow(`SELECT * FROM certificates WHERE filename = ?`, filename))
+	c, err := scanCertificate(r.db.QueryRow(`SELECT `+certificateColumns+` FROM certificates WHERE filename = ?`, filename))
 	if err != nil {
 		return nil, err
 	}
@@ -282,7 +296,7 @@ func (r *Repository) GetCertificateByFilename(filename string) (*Certificate, er
 
 // ListCertificates listar certifikat med valfritt filter.
 func (r *Repository) ListCertificates(status string) ([]Certificate, error) {
-	query := `SELECT * FROM certificates`
+	query := `SELECT ` + certificateColumns + ` FROM certificates`
 	var args []interface{}
 	if status != "" {
 		query += ` WHERE status = ?`
@@ -318,7 +332,7 @@ func (r *Repository) ListCertificatesMatchingOrder(orderNumber string) ([]Certif
 	}
 	like := "%" + orderNumber + "%"
 	rows, err := r.db.Query(
-		`SELECT * FROM certificates WHERE b_numbers LIKE ? OR corrected_b_numbers LIKE ? ORDER BY created_at DESC`,
+		`SELECT `+certificateColumns+` FROM certificates WHERE b_numbers LIKE ? OR corrected_b_numbers LIKE ? ORDER BY created_at DESC`,
 		like, like)
 	if err != nil {
 		return nil, err
@@ -610,18 +624,18 @@ func (r *Repository) ReconcileQueue(queueDir string) (added, removed int, err er
 		if _, exists := dbMap[filename]; !exists {
 			pdfPath := filepath.Join(queueDir, filename)
 			cert := &Certificate{
-				Filename:      filename,
-				CertType:      "3.1",
-				Status:        "queue",
-				ExtractedAt:   time.Now().Format(time.RFC3339),
-				ModelUsed:     "reconcile",
+				Filename:    filename,
+				CertType:    "3.1",
+				Status:      "queue",
+				ExtractedAt: time.Now().Format(time.RFC3339),
+				ModelUsed:   "reconcile",
 			}
 			if m, ok := ReadMetadata(pdfPath); ok {
 				cert.PDFHash = m.Hash
 				cert.OriginalFilename = m.OriginalFilename
 				cert.Charge = m.Charge
 				cert.Material = m.Material
-				cert.MaterialShort = m.MaterialShort
+				cert.EnStandardPresent = m.EnStandardPresent
 				cert.ProductForm = m.ProductForm
 				cert.Dimensions = m.Dimensions
 				cert.BNumbers = marshalStringSlice(m.BNumbers)
@@ -634,7 +648,6 @@ func (r *Repository) ReconcileQueue(queueDir string) (added, removed int, err er
 				cert.OriginalFilename = filename
 				cert.Charge = "unknown"
 				cert.Material = "unknown"
-				cert.MaterialShort = "unknown"
 				cert.Confidence = "low"
 			}
 			if _, insertErr := r.InsertCertificate(cert); insertErr == nil {

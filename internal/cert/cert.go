@@ -9,16 +9,20 @@ import (
 )
 
 type Extraction struct {
-	IsEN10204_3_1 bool     `json:"is_en10204_3_1"`
-	CertType      string   `json:"cert_type"`
-	Charge        string   `json:"charge"`
-	Material      string   `json:"material"`
-	MaterialShort string   `json:"material_short"`
-	ProductForm   string   `json:"product_form"`
-	Dimensions    string   `json:"dimensions"`
-	Confidence    string   `json:"confidence"`
-	Issues        []string `json:"issues"`
+	IsEN10204_3_1     bool     `json:"is_en10204_3_1"`
+	CertType          string   `json:"cert_type"`
+	Charge            string   `json:"charge"`
+	Material          string   `json:"material"`
+	EnStandardPresent bool     `json:"en_standard_present"`
+	ProductForm       string   `json:"product_form"`
+	Dimensions        string   `json:"dimensions"`
+	CountryOfOrigin   string   `json:"country_of_origin"`
+	Confidence        string   `json:"confidence"`
+	Issues            []string `json:"issues"`
 }
+
+// restrictedOrigins är ursprungsländer materialet aldrig får komma från.
+var restrictedOrigins = []string{"ryssland", "russia", "belarus", "vitryssland"}
 
 // asciiFold mappar svenska/europeiska accenter till ASCII för filnamn —
 // Windows/Outlook/Jeeves-kompatibilitet. Används bara i BuildFilename;
@@ -31,10 +35,13 @@ var asciiFold = strings.NewReplacer(
 	"è", "e", "È", "E",
 )
 
-// pathSafe ersätter path-separatorer och Windows-reserverade tecken med
-// underscore. Skyddar mot att t.ex. charge="01/0002423/9" tolkas som path.
+// slashToDash ersätter snedstreck med bindestreck, enligt regeln att t.ex.
+// charge/batch/lot-värden som innehåller "/" ska skrivas med "-" i filnamnet.
+var slashToDash = strings.NewReplacer("/", "-")
+
+// pathSafe ersätter Windows-reserverade tecken med underscore. Snedstreck
+// hanteras separat via slashToDash innan detta körs.
 var pathSafe = strings.NewReplacer(
-	"/", "_",
 	"\\", "_",
 	":", "_",
 	"*", "_",
@@ -65,8 +72,11 @@ func Validate(ext *Extraction, bNums []string) []string {
 	if strings.TrimSpace(ext.Charge) == "" {
 		fails = append(fails, "saknar charge")
 	}
-	if strings.TrimSpace(ext.MaterialShort) == "" {
-		fails = append(fails, "saknar material_short")
+	if strings.TrimSpace(ext.Material) == "" {
+		fails = append(fails, "saknar material")
+	}
+	if !ext.EnStandardPresent {
+		fails = append(fails, "saknar fullständig EN-norm (t.ex. EN 10025-2)")
 	}
 	if strings.TrimSpace(ext.Dimensions) == "" {
 		fails = append(fails, "saknar dimensioner")
@@ -77,11 +87,19 @@ func Validate(ext *Extraction, bNums []string) []string {
 	if strings.EqualFold(ext.Confidence, "low") {
 		fails = append(fails, "låg confidence från Claude")
 	}
+	origin := strings.ToLower(strings.TrimSpace(ext.CountryOfOrigin))
+	for _, restricted := range restrictedOrigins {
+		if origin == restricted || strings.Contains(origin, restricted) {
+			fails = append(fails, "ursprungsland ej tillåtet (Ryssland/Belarus)")
+			break
+		}
+	}
 	return fails
 }
 
 // BuildFilename bygger PDF-filnamn enligt mönstret
-// <charge>-[form]-<dimensions>-<material_short>-<bNums>.pdf.
+// <charge>-[form]-<dimensions>-<material>-<bNums>.pdf, vilket motsvarar
+// CH-TYP-Storlek-Kvalitet-Beställningsnummer enligt "Att spara certifikat".
 // Form-segmentet utelämnas om ProductForm är tomt eller "okänt", och
 // ASCII-foldas annars för Windows/Outlook/Jeeves-kompatibilitet.
 // Dimensions kan vara "16" (platta) eller "20x2"/"30x30x3" (rör/profil) —
@@ -93,7 +111,8 @@ func BuildFilename(ext *Extraction, bNums []string) string {
 	if form != "" && !strings.EqualFold(form, "okänt") {
 		parts = append(parts, asciiFold.Replace(form))
 	}
-	parts = append(parts, dims, ext.MaterialShort)
+	parts = append(parts, dims, ext.Material)
 	parts = append(parts, bNums...)
-	return pathSafe.Replace(strings.Join(parts, "-")) + ".pdf"
+	name := slashToDash.Replace(strings.Join(parts, "-"))
+	return pathSafe.Replace(name) + ".pdf"
 }

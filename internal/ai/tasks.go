@@ -25,6 +25,7 @@ func Extract(ctx context.Context, log Logger, client *anthropic.Client, pdf []by
 			resp, err := client.Messages.New(ctx, anthropic.MessageNewParams{
 				Model:     ModelExtract,
 				MaxTokens: 1024,
+				Thinking:  anthropic.ThinkingConfigParamUnion{OfDisabled: &anthropic.ThinkingConfigDisabledParam{}},
 				System:    []anthropic.TextBlockParam{{Text: extractSystemPrompt}},
 				Tools:     []anthropic.ToolUnionParam{{OfTool: &extractionTool}},
 				ToolChoice: anthropic.ToolChoiceUnionParam{
@@ -58,7 +59,7 @@ func Extract(ctx context.Context, log Logger, client *anthropic.Client, pdf []by
 			return nil, resp.Usage, fmt.Errorf("inget tool_use-svar från Claude")
 		},
 		func(ext *cert.Extraction) string {
-			return fmt.Sprintf("type=%s charge=%s mat=%s", ext.CertType, ext.Charge, ext.MaterialShort)
+			return fmt.Sprintf("type=%s charge=%s mat=%s", ext.CertType, ext.Charge, ext.Material)
 		},
 	)
 }
@@ -217,6 +218,7 @@ func ExtractFromImage(ctx context.Context, log Logger, client *anthropic.Client,
 			resp, err := client.Messages.New(ctx, anthropic.MessageNewParams{
 				Model:     ModelExtract,
 				MaxTokens: 1024,
+				Thinking:  anthropic.ThinkingConfigParamUnion{OfDisabled: &anthropic.ThinkingConfigDisabledParam{}},
 				System:    []anthropic.TextBlockParam{{Text: deliveryNoteSystemPrompt}},
 				Tools:     []anthropic.ToolUnionParam{{OfTool: &deliveryNoteTool}},
 				ToolChoice: anthropic.ToolChoiceUnionParam{
@@ -277,7 +279,7 @@ type UpcomingClassification struct {
 
 // ClassifyUpcoming låter ren AI döma om certets material matchar det beställda
 // (Robs beslut: AI dömer, men evidensen lagras separat så domen är granskbar).
-// Sonnet, temperatur 0 för stabilitet. Anropas bara när ett cert har matchats —
+// Sonnet, thinking avstängt för stabila/snabba svar. Anropas bara när ett cert har matchats —
 // underlaget bygger på den lagrade cert.Material, inte en ny PDF-extraktion.
 func ClassifyUpcoming(ctx context.Context, log Logger, client *anthropic.Client, in UpcomingClassifyInput) (*UpcomingClassification, error) {
 	userText := fmt.Sprintf(`Bedöm om materialet vi har cert för matchar det som är beställt för artikeln.
@@ -298,11 +300,11 @@ CERT VI HAR (redan extraherat vid intag — extrahera inte om)
 	return logAICall(log, "sonnet ClassifyUpcoming("+in.PartNumber+")",
 		func() (*UpcomingClassification, anthropic.Usage, error) {
 			resp, err := client.Messages.New(ctx, anthropic.MessageNewParams{
-				Model:       ModelExtract, // sonnet
-				MaxTokens:   512,
-				Temperature: anthropic.Float(0),
-				System:      []anthropic.TextBlockParam{{Text: upcomingSystemPrompt}},
-				Tools:       []anthropic.ToolUnionParam{{OfTool: &upcomingTool}},
+				Model:     ModelExtract, // sonnet
+				MaxTokens: 512,
+				Thinking:  anthropic.ThinkingConfigParamUnion{OfDisabled: &anthropic.ThinkingConfigDisabledParam{}},
+				System:    []anthropic.TextBlockParam{{Text: upcomingSystemPrompt}},
+				Tools:     []anthropic.ToolUnionParam{{OfTool: &upcomingTool}},
 				ToolChoice: anthropic.ToolChoiceUnionParam{
 					OfTool: &anthropic.ToolChoiceToolParam{Name: "judge_material"},
 				},

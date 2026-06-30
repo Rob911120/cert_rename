@@ -340,14 +340,14 @@ func (s *Server) handlePromoteReview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ext := &cert.Extraction{
-		IsEN10204_3_1: true,
-		CertType:      "3.1",
-		Charge:        body.Charge,
-		Material:      body.Material,
-		MaterialShort: body.Material,
-		ProductForm:   body.ProductForm,
-		Dimensions:    body.Dimensions,
-		Confidence:    "high",
+		IsEN10204_3_1:     true,
+		CertType:          "3.1",
+		Charge:            body.Charge,
+		Material:          body.Material,
+		EnStandardPresent: true, // människan har granskat och bekräftat certet manuellt
+		ProductForm:       body.ProductForm,
+		Dimensions:        body.Dimensions,
+		Confidence:        "high",
 	}
 	newName, err := store.PromoteReviewToQueue(c, body.Base, body.PdfFilename, ext, body.BNumbers)
 	if err != nil {
@@ -360,21 +360,22 @@ func (s *Server) handlePromoteReview(w http.ResponseWriter, r *http.Request) {
 		metaPath := filepath.Join(store.QueueDir(c), newName)
 		if m, ok := store.ReadMetadata(metaPath); ok {
 			cert := &store.Certificate{
-				PDFHash:          m.Hash,
-				Filename:         newName,
-				OriginalFilename: m.OriginalFilename,
-				CertType:         "3.1",
-				Charge:           m.Charge,
-				Material:         m.Material,
-				MaterialShort:    m.MaterialShort,
-				ProductForm:      m.ProductForm,
-				Dimensions:       m.Dimensions,
-				BNumbers:         marshalJSON(m.BNumbers),
-				Confidence:       m.Confidence,
-				Issues:           marshalJSON(m.Issues),
-				ModelUsed:        m.ModelUsed,
-				Status:           "queue",
-				ExtractedAt:      m.ExtractedAt,
+				PDFHash:           m.Hash,
+				Filename:          newName,
+				OriginalFilename:  m.OriginalFilename,
+				CertType:          "3.1",
+				Charge:            m.Charge,
+				Material:          m.Material,
+				EnStandardPresent: m.EnStandardPresent,
+				ProductForm:       m.ProductForm,
+				Dimensions:        m.Dimensions,
+				CountryOfOrigin:   m.CountryOfOrigin,
+				BNumbers:          marshalJSON(m.BNumbers),
+				Confidence:        m.Confidence,
+				Issues:            marshalJSON(m.Issues),
+				ModelUsed:         m.ModelUsed,
+				Status:            "queue",
+				ExtractedAt:       m.ExtractedAt,
 			}
 			if _, insertErr := s.repo.InsertCertificate(cert); insertErr != nil {
 				s.Logf("⚠️  DB-insert vid promote misslyckades: %v", insertErr)

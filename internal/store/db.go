@@ -32,9 +32,10 @@ CREATE TABLE IF NOT EXISTS certificates (
     cert_type TEXT NOT NULL,
     charge TEXT NOT NULL,
     material TEXT NOT NULL,
-    material_short TEXT NOT NULL,
+    en_standard_present BOOLEAN NOT NULL DEFAULT FALSE,
     product_form TEXT,
     dimensions TEXT,
+    country_of_origin TEXT NOT NULL DEFAULT '',
     b_numbers TEXT,
     confidence TEXT NOT NULL,
     issues TEXT,
@@ -47,7 +48,6 @@ CREATE TABLE IF NOT EXISTS certificates (
     human_corrected BOOLEAN DEFAULT FALSE,
     corrected_charge TEXT,
     corrected_material TEXT,
-    corrected_material_short TEXT,
     corrected_product_form TEXT,
     corrected_dimensions TEXT,
     corrected_b_numbers TEXT,
@@ -205,12 +205,29 @@ func migrate(db *sql.DB) error {
 	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_emails_mail_category ON emails(mail_category)`); err != nil {
 		return err
 	}
+	// material_short ersattes av fullständigt material (i filnamn) + en_standard_present
+	// (validering av EN-norm). Gamla material_short/corrected_material_short-kolumner
+	// lämnas kvar i befintliga databaser (oanvända) — SQLite DROP COLUMN undviks här.
+	if err := ensureColumn(db, "certificates", "en_standard_present", "BOOLEAN NOT NULL DEFAULT FALSE"); err != nil {
+		return err
+	}
+	if err := ensureColumn(db, "certificates", "country_of_origin", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
 	return nil
 }
 
 // ensureColumn lägger till column på table om den saknas (idempotent).
-// ddl är typ + ev. constraints, t.ex. "TEXT NOT NULL DEFAULT ''".
+// ddl är typ + ev. constraints, t.ex. "TEXT NOT NULL DEFAULT ”". No-op om
+// tabellen själv inte finns (t.ex. en databas som bara delvis initierats).
 func ensureColumn(db *sql.DB, table, column, ddl string) error {
+	var exists int
+	if err := db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?`, table).Scan(&exists); err != nil {
+		return err
+	}
+	if exists == 0 {
+		return nil
+	}
 	rows, err := db.Query(fmt.Sprintf("PRAGMA table_info(%s)", table))
 	if err != nil {
 		return err

@@ -200,10 +200,9 @@ func (tb *Toolbox) monitorFillMissingCertData(input json.RawMessage) (string, er
 		"filename": args.Filename,
 		"charge":   charge,
 		"current": map[string]any{
-			"material":       c.Material,
-			"material_short": c.MaterialShort,
-			"dimensions":     c.Dimensions,
-			"b_numbers":      currentBNumbers,
+			"material":   c.Material,
+			"dimensions": c.Dimensions,
+			"b_numbers":  currentBNumbers,
 		},
 		"monitor_matches": matches,
 		"note":            "Förslag — skriv INGET utan användarens uttryckliga ja. Tillämpa via update_queue_item.",

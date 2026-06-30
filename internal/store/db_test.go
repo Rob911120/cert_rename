@@ -215,7 +215,7 @@ func TestListCertificatesMatchingOrder(t *testing.T) {
 	mkCert := func(hash, fname, bnums string) int64 {
 		id, err := repo.InsertCertificate(&Certificate{
 			PDFHash: hash, Filename: fname, OriginalFilename: fname,
-			CertType: "3.1", Charge: "610042", Material: "S355J2", MaterialShort: "S355",
+			CertType: "3.1", Charge: "610042", Material: "S355J2", EnStandardPresent: true,
 			BNumbers: bnums, Confidence: "high", ModelUsed: "test",
 			Status: "queue", ExtractedAt: "2026-01-01",
 		})

@@ -127,10 +127,10 @@ func processEml(ctx context.Context, client *anthropic.Client, cfg store.Config,
 	// Spara classify-beslut i DB
 	if emailID > 0 && cls != nil {
 		decision := &store.AIDecision{
-			EmailID:   &emailID,
-			Step:      "classify",
-			Model:     "claude-haiku-4-5-20251001",
-			Success:   cerr == nil,
+			EmailID: &emailID,
+			Step:    "classify",
+			Model:   "claude-haiku-4-5-20251001",
+			Success: cerr == nil,
 		}
 		if cerr != nil {
 			decision.ErrorMessage = cerr.Error()
@@ -173,10 +173,10 @@ func processEml(ctx context.Context, client *anthropic.Client, cfg store.Config,
 	// Spara verify-beslut i DB
 	if emailID > 0 && ver != nil {
 		decision := &store.AIDecision{
-			EmailID:   &emailID,
-			Step:      "verify",
-			Model:     "claude-haiku-4-5-20251001",
-			Success:   verr == nil,
+			EmailID: &emailID,
+			Step:    "verify",
+			Model:   "claude-haiku-4-5-20251001",
+			Success: verr == nil,
 		}
 		if verr != nil {
 			decision.ErrorMessage = verr.Error()
@@ -208,7 +208,7 @@ func processEml(ctx context.Context, client *anthropic.Client, cfg store.Config,
 				decision := &store.AIDecision{
 					EmailID:      &emailID,
 					Step:         "extract",
-					Model:        "claude-sonnet-4-5",
+					Model:        ai.ModelExtract,
 					DurationMs:   processingMs,
 					Success:      false,
 					ErrorMessage: err.Error(),
@@ -224,11 +224,11 @@ func processEml(ctx context.Context, client *anthropic.Client, cfg store.Config,
 			n.Logf("   ❌ %s — %s", att.Filename, strings.Join(fails, "; "))
 			if emailID > 0 {
 				decision := &store.AIDecision{
-					EmailID:    &emailID,
-					Step:       "validate",
-					Model:      "claude-sonnet-4-5",
-					DurationMs: processingMs,
-					Success:    false,
+					EmailID:      &emailID,
+					Step:         "validate",
+					Model:        ai.ModelExtract,
+					DurationMs:   processingMs,
+					Success:      false,
 					ErrorMessage: strings.Join(fails, "; "),
 				}
 				repo.InsertAIDecision(decision)
@@ -249,27 +249,28 @@ func processEml(ctx context.Context, client *anthropic.Client, cfg store.Config,
 
 		// Skapa PdfMeta med nya fälten
 		meta := store.PdfMeta{
-			Charge:           ext.Charge,
-			Material:         ext.Material,
-			MaterialShort:    ext.MaterialShort,
-			ProductForm:      ext.ProductForm,
-			Dimensions:       ext.Dimensions,
-			BNumbers:         bNums,
-			Confidence:       ext.Confidence,
-			Issues:           ext.Issues,
-			EmailSubject:     content.Subject,
-			EmailFrom:        content.From,
-			EmailDate:        content.Date,
-			EmailBody:        content.Body,
-			ModelUsed:        "claude-sonnet-4-5",
-			TokensInput:      0, // Fylls i av logAICall
-			TokensOutput:     0,
-			ProcessingMs:     processingMs,
-			OriginalFilename: att.Filename,
-			ExtractedAt:      time.Now().Format(time.RFC3339),
-			Hash:             hash,
-			Schema:           5,
-			Status:           "queue",
+			Charge:            ext.Charge,
+			Material:          ext.Material,
+			EnStandardPresent: ext.EnStandardPresent,
+			ProductForm:       ext.ProductForm,
+			Dimensions:        ext.Dimensions,
+			CountryOfOrigin:   ext.CountryOfOrigin,
+			BNumbers:          bNums,
+			Confidence:        ext.Confidence,
+			Issues:            ext.Issues,
+			EmailSubject:      content.Subject,
+			EmailFrom:         content.From,
+			EmailDate:         content.Date,
+			EmailBody:         content.Body,
+			ModelUsed:         ai.ModelExtract,
+			TokensInput:       0, // Fylls i av logAICall
+			TokensOutput:      0,
+			ProcessingMs:      processingMs,
+			OriginalFilename:  att.Filename,
+			ExtractedAt:       time.Now().Format(time.RFC3339),
+			Hash:              hash,
+			Schema:            5,
+			Status:            "queue",
 		}
 		if err := store.EmbedMetadata(dst, meta); err != nil {
 			n.Logf("   ⚠️  kunde inte bädda in metadata i %s: %v", filepath.Base(dst), err)
@@ -278,25 +279,26 @@ func processEml(ctx context.Context, client *anthropic.Client, cfg store.Config,
 		// Spara certifikat i DB
 		if emailID > 0 {
 			cert := &store.Certificate{
-				EmailID:          emailID,
-				PDFHash:          hash,
-				Filename:         filepath.Base(dst),
-				OriginalFilename: att.Filename,
-				CertType:         ext.CertType,
-				Charge:           ext.Charge,
-				Material:         ext.Material,
-				MaterialShort:    ext.MaterialShort,
-				ProductForm:      ext.ProductForm,
-				Dimensions:       ext.Dimensions,
-				BNumbers:         mustMarshal(bNums),
-				Confidence:       ext.Confidence,
-				Issues:           mustMarshal(ext.Issues),
-				ModelUsed:        "claude-sonnet-4-5",
-				TokensInput:      0,
-				TokensOutput:     0,
-				ProcessingMs:     processingMs,
-				Status:           "queue",
-				ExtractedAt:      time.Now().Format(time.RFC3339),
+				EmailID:           emailID,
+				PDFHash:           hash,
+				Filename:          filepath.Base(dst),
+				OriginalFilename:  att.Filename,
+				CertType:          ext.CertType,
+				Charge:            ext.Charge,
+				Material:          ext.Material,
+				EnStandardPresent: ext.EnStandardPresent,
+				ProductForm:       ext.ProductForm,
+				Dimensions:        ext.Dimensions,
+				CountryOfOrigin:   ext.CountryOfOrigin,
+				BNumbers:          mustMarshal(bNums),
+				Confidence:        ext.Confidence,
+				Issues:            mustMarshal(ext.Issues),
+				ModelUsed:         ai.ModelExtract,
+				TokensInput:       0,
+				TokensOutput:      0,
+				ProcessingMs:      processingMs,
+				Status:            "queue",
+				ExtractedAt:       time.Now().Format(time.RFC3339),
 			}
 			certID, err := repo.InsertCertificate(cert)
 			if err != nil {
@@ -307,7 +309,7 @@ func processEml(ctx context.Context, client *anthropic.Client, cfg store.Config,
 					EmailID:       &emailID,
 					CertificateID: &certID,
 					Step:          "extract",
-					Model:         "claude-sonnet-4-5",
+					Model:         ai.ModelExtract,
 					DurationMs:    processingMs,
 					Success:       true,
 				}

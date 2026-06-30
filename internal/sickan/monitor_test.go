@@ -118,7 +118,6 @@ func Test_Dispatch_MonitorFillMissingCertData(t *testing.T) {
 		CertType:         "3.1",
 		Charge:           "610042",
 		Material:         "S355J2",
-		MaterialShort:    "S355",
 		Confidence:       "high",
 		ModelUsed:        "test",
 		Status:           "queue",

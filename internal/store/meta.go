@@ -10,26 +10,27 @@ import (
 // PdfMeta är de fält vi bäddar in i PDF-metadatan ("CertRenamer"-property).
 type PdfMeta struct {
 	// Certifikatfält
-	Charge         string   `json:"charge"`
-	Material       string   `json:"material"`
-	MaterialShort  string   `json:"material_short"`
-	ProductForm    string   `json:"product_form,omitempty"`
-	Dimensions     string   `json:"dimensions"`
-	BNumbers       []string `json:"b_numbers"`
-	Confidence     string   `json:"confidence"`
-	Issues         []string `json:"issues"`
+	Charge            string   `json:"charge"`
+	Material          string   `json:"material"`
+	EnStandardPresent bool     `json:"en_standard_present"`
+	ProductForm       string   `json:"product_form,omitempty"`
+	Dimensions        string   `json:"dimensions"`
+	CountryOfOrigin   string   `json:"country_of_origin,omitempty"`
+	BNumbers          []string `json:"b_numbers"`
+	Confidence        string   `json:"confidence"`
+	Issues            []string `json:"issues"`
 
 	// Email-kontext (separata fält)
-	EmailSubject   string   `json:"email_subject"`
-	EmailFrom      string   `json:"email_from"`
-	EmailDate      string   `json:"email_date"`
-	EmailBody      string   `json:"email_body"`
+	EmailSubject string `json:"email_subject"`
+	EmailFrom    string `json:"email_from"`
+	EmailDate    string `json:"email_date"`
+	EmailBody    string `json:"email_body"`
 
 	// Per-attachment token-räkning
-	ModelUsed      string   `json:"model_used"`
-	TokensInput    int64    `json:"tokens_input"`
-	TokensOutput   int64    `json:"tokens_output"`
-	ProcessingMs   int64    `json:"processing_ms"`
+	ModelUsed    string `json:"model_used"`
+	TokensInput  int64  `json:"tokens_input"`
+	TokensOutput int64  `json:"tokens_output"`
+	ProcessingMs int64  `json:"processing_ms"`
 
 	// Befintliga fält
 	OriginalFilename string `json:"original_filename"`
@@ -89,4 +90,3 @@ func ReadMetadata(pdfPath string) (*PdfMeta, bool) {
 	}
 	return &m, true
 }
-

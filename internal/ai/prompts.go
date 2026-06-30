@@ -7,17 +7,42 @@ Returnera ALLTID via verktyget submit_extraction.
 - is_en10204_3_1: true om dokumentet är ett 3.1-certifikat (text "EN 10204:2004/3.1" eller motsv.)
 - cert_type: "3.1", "2.2", "3.2" eller "unknown"
 - charge: heat-/slab-nummer från tabellen. Om certifikatet listar flera, välj den som matchar bilagans filnamn (t.ex. filnamn "S355-20-68667E3" → charge "68667E3").
-- material: full ståldesignation, t.ex. "S355J2+N"
-- material_short: kort form för filnamn, t.ex. "S355"
+- material: fullständig ståldesignation INKLUSIVE EN-standarden när den framgår av certifikatet, t.ex. "S355J2+N EN 10025-2" (inte bara "S355J2+N"). Skriv alltid hela beteckningen, inte en förkortad form.
+- en_standard_present: true om certifikatet anger en fullständig EN-standardbeteckning för materialet (t.ex. "EN 10025-2", "EN 10025-3", "EN 10149-2", "EN 10088-2"). false om endast stålsorten anges utan EN-standard.
 - product_form: produktens form (lowercase svenska), t.ex. "rundstång", "fyrkantsstång", "plattjärn", "plåt", "fyrkantsrör", "rundrör", "vinkel", "balk". Använd "okänt" om det inte framgår.
 - dimensions: produktens dimensioner från certifikatets aktuella rad, som sträng.
   Format: "<grovlek>" för platta produkter (t.ex. "16" för 16 mm plattjärn),
   "<ytterdiameter>x<vägg>" för rör (t.ex. "20x2"),
   "<sida>x<sida>x<vägg>" för fyrkantsrör/profiler (t.ex. "30x30x3").
   Använd gement "x" som separator, inga mellanslag, decimaler med punkt.
+- country_of_origin: ursprungsland för materialet/stålverket om det framgår av certifikatet, annars tom sträng.
 - confidence: "high"/"medium"/"low"
-- issues: lista över varningar/oklarheter
-Svara på svenska i issues-fältet.`
+- issues: lista över varningar/oklarheter, på svenska. Kontrollera ALLTID certifikatet mot checklistan nedan och lägg till en post i issues för varje avvikelse du hittar (en kort, konkret formulering, t.ex. "OBS: SIEMENS-leverans med MCD-norm - ej tillåtet enligt regel"):
+
+Generell kontroll:
+- Att "EN 10204 3.1" (eller motsvarande) faktiskt står med på certifikatet.
+- Att chargenumret finns med.
+- Att all information är på engelska (flagga om delar är på ett annat språk).
+- Att all information är läsbar (inga avskurna/oläsliga partier).
+- Att ingen information verkar vara borttagen/maskerad/redigerad.
+- Skilj på ASME (beteckningar med "SA"-prefix, t.ex. SA-516-70) och ASTM (beteckningar med "A"-prefix, t.ex. A516-70) — flagga om det är oklart eller blandat.
+
+Materialspecifika regler:
+- S355J2+N: ska vara slagseghetstestad vid -20°C, 27J, utskrivet för gods över 5,9 mm tjocklek.
+- S355MCD / Alform (MC-normer): ska vara testad -20°C, 40J, för gods över 5,9 mm tjocklek.
+- Lågtemperaturstål: EN 10025-3 S355NL ska ha 27J/-50°C, EN 10025-4 S355ML ska ha 27J/-50°C, EN 10149-2 S355MCE ska ha 27J/-40°C — flagga avvikelser.
+
+Kundspecifika regler (avgör relevans utifrån kund-/mottagarnamn i mejlets ämne/avsändare/brödtext eller på certifikatet självt):
+- SIEMENS: MC/MCD/Alform-normer är EJ tillåtna om dimensionen är 3 mm eller större (för dimension under 3 mm finns inget alternativ och det är ok). Var extra noga med materialstandarder av typen "MATxxxx56" — dessa har ofta särskilda slagseghetskrav.
+- Alfa Laval: kontrollera att rätt norm används - ASME ska vara SA-typ med rätt edition (2019, äldre 2015 kan godkännas om P och S är max 0,02%), EN ska vara enligt AD2000-W1. SA-516-70 ska ha draghållfasthet Rp0,2 angiven.
+- Getinge: materialet ska följa rätt norm. ASME-certifikat ska vara enligt SEC.II PART A med revision från 2015 eller senare. Svart material ska vara bocktestat (SA20). Interkristallintest ska vara enligt ISO 3651-2. Foto på originalstämpel ska finnas med.
+- NOV: CEV bör vara max 0,45 om angivet. Charpy-V ska vara testad enligt Form V, 27J vid -20°C (för axlar 42J vid -20°C).
+- Rosemount: certifikat utskrivna efter 2016-07-20 ska ange "PED 2014/68/EU". På material A182 ska kol-halten (C) vara max 0,23%.
+- SAAB Dynamics: på aluminium måste rätt leveranstillstånd-notation anges, t.ex. "6082-T6" — inte felaktig ordning som "T6082-T651".
+- SAAB Kockums: EN-normen ska stå på materialet. Flänsar till SAAB levereras ofta med 1.4432/1.4436 (inte 1.4435) - det är normalt och ska inte flaggas som fel.
+- Tomal: material ska vara CE-märkt med DoP (Declaration of Performance) enligt EN 1090-1.
+
+Ursprungsland: certifikat med ursprungsland Ryssland eller Belarus är INTE tillåtna - flagga alltid tydligt om country_of_origin pekar på något av dessa länder.`
 
 const classifySystemPrompt = `Avgör om mejlet sannolikt levererar ett EN 10204 3.1-stålinspektionscertifikat.
 Returnera ALLTID via verktyget classify_email.
@@ -92,17 +117,18 @@ var extractionTool = anthropic.ToolParam{
 	Description: anthropic.String("Lämna extraherade fält från certifikatet."),
 	InputSchema: anthropic.ToolInputSchemaParam{
 		Properties: map[string]any{
-			"is_en10204_3_1": map[string]any{"type": "boolean"},
-			"cert_type":      map[string]any{"type": "string"},
-			"charge":         map[string]any{"type": "string"},
-			"material":       map[string]any{"type": "string"},
-			"material_short": map[string]any{"type": "string"},
-			"product_form":   map[string]any{"type": "string"},
-			"dimensions":    map[string]any{"type": "string"},
-			"confidence":     map[string]any{"type": "string"},
-			"issues":         map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+			"is_en10204_3_1":      map[string]any{"type": "boolean"},
+			"cert_type":           map[string]any{"type": "string"},
+			"charge":              map[string]any{"type": "string"},
+			"material":            map[string]any{"type": "string"},
+			"en_standard_present": map[string]any{"type": "boolean"},
+			"product_form":        map[string]any{"type": "string"},
+			"dimensions":          map[string]any{"type": "string"},
+			"country_of_origin":   map[string]any{"type": "string"},
+			"confidence":          map[string]any{"type": "string"},
+			"issues":              map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
 		},
-		Required: []string{"is_en10204_3_1", "cert_type", "charge", "material", "material_short", "product_form", "dimensions", "confidence", "issues"},
+		Required: []string{"is_en10204_3_1", "cert_type", "charge", "material", "en_standard_present", "product_form", "dimensions", "country_of_origin", "confidence", "issues"},
 	},
 }
 

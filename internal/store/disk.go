@@ -98,8 +98,9 @@ func MoveToReview(cfg Config, emlPath string, content *eml.Content, att *eml.Att
 			if ext != nil {
 				meta.Charge = ext.Charge
 				meta.Material = ext.Material
-				meta.MaterialShort = ext.MaterialShort
+				meta.EnStandardPresent = ext.EnStandardPresent
 				meta.Dimensions = ext.Dimensions
+				meta.CountryOfOrigin = ext.CountryOfOrigin
 				meta.Confidence = ext.Confidence
 				meta.Issues = ext.Issues
 			}
@@ -199,18 +200,19 @@ func PromoteReviewToQueue(cfg Config, base, pdfFilename string, ext *cert.Extrac
 		return "", err
 	}
 	meta := PdfMeta{
-		Charge:           ext.Charge,
-		Material:         ext.Material,
-		MaterialShort:    ext.MaterialShort,
-		ProductForm:      ext.ProductForm,
-		Dimensions:       ext.Dimensions,
-		BNumbers:         bNums,
-		Confidence:       ext.Confidence,
-		Issues:           ext.Issues,
-		OriginalFilename: pdfFilename,
-		ExtractedAt:      time.Now().Format(time.RFC3339),
-		Schema:           5,
-		Status:           "queue",
+		Charge:            ext.Charge,
+		Material:          ext.Material,
+		EnStandardPresent: ext.EnStandardPresent,
+		ProductForm:       ext.ProductForm,
+		Dimensions:        ext.Dimensions,
+		CountryOfOrigin:   ext.CountryOfOrigin,
+		BNumbers:          bNums,
+		Confidence:        ext.Confidence,
+		Issues:            ext.Issues,
+		OriginalFilename:  pdfFilename,
+		ExtractedAt:       time.Now().Format(time.RFC3339),
+		Schema:            5,
+		Status:            "queue",
 	}
 	// Försök läsa email-innehåll från .eml-fil om den finns
 	if entries, err := os.ReadDir(reviewItemDir); err == nil {
