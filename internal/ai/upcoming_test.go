@@ -13,7 +13,8 @@ import (
 )
 
 // Ren AI-dom kan inte verifieras deterministiskt (avsiktligt Robs val); testet
-// säkrar plumbingen: tvingat verktyg judge_material, temperatur 0, och att alla
+// säkrar plumbingen: tvingat verktyg judge_material, thinking avstängt
+// (Sonnet 5 avvisar icke-default temperature med 400), och att alla
 // dom-/evidens-fält plockas ur svaret.
 func TestClassifyUpcoming(t *testing.T) {
 	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -23,8 +24,8 @@ func TestClassifyUpcoming(t *testing.T) {
 		if tc, ok := req["tool_choice"].(map[string]any); !ok || tc["name"] != "judge_material" {
 			t.Errorf("tool_choice = %v, vill ha judge_material", req["tool_choice"])
 		}
-		if temp, ok := req["temperature"]; !ok || temp.(float64) != 0 {
-			t.Errorf("temperature = %v (present=%v), vill ha 0", req["temperature"], ok)
+		if th, ok := req["thinking"].(map[string]any); !ok || th["type"] != "disabled" {
+			t.Errorf("thinking = %v, vill ha {type: disabled}", req["thinking"])
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{

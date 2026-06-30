@@ -1,7 +1,7 @@
 package ai
 
 const ModelClassify = "claude-haiku-4-5-20251001"
-const ModelExtract = "claude-sonnet-4-5"
+const ModelExtract = "claude-sonnet-5"
 
 // Sickan-modeller. ChatDefault är start-valet; användaren kan byta i UI:t.
 const (
