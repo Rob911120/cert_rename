@@ -125,6 +125,7 @@ CREATE TABLE IF NOT EXISTS upcoming_deliveries (
     supplier_name TEXT NOT NULL DEFAULT '',
     part_id INTEGER NOT NULL DEFAULT 0,
     part_number TEXT NOT NULL DEFAULT '',
+    description TEXT NOT NULL DEFAULT '',
     dimensions TEXT NOT NULL DEFAULT '',
     planned_qty REAL NOT NULL DEFAULT 0,
     delivery_date TEXT NOT NULL DEFAULT '',
@@ -227,6 +228,9 @@ func migrate(db *sql.DB) error {
 		return err
 	}
 	if err := ensureColumn(db, "certificates", "is_english", "BOOLEAN NOT NULL DEFAULT TRUE"); err != nil {
+		return err
+	}
+	if err := ensureColumn(db, "upcoming_deliveries", "description", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
 	if err := ensureColumn(db, "upcoming_deliveries", "cert_charge", "TEXT NOT NULL DEFAULT ''"); err != nil {

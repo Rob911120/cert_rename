@@ -177,6 +177,7 @@ func buildUpcomingRow(ctx context.Context, mc *monitor.Client, repo *store.Repos
 	}
 	if part != nil {
 		ud.PartNumber = part.PartNumber
+		ud.Description = part.Description
 		ud.PartRaw = string(part.Raw)
 		ud.CertRequired = part.RequiresCert()
 	}

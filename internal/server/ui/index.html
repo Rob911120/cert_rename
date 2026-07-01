@@ -1047,6 +1047,14 @@ function renderOrderGroup(orderKey, items, enabled) {
   return wrap;
 }
 
+// rowDescription: artikelns benämning. Primärt toppnivåfältet row.description;
+// fallback till evidence_json (part_description) så rader skapade före kolumnen
+// visar benämning direkt, innan nästa refresh hunnit fylla den.
+function rowDescription(row) {
+  if (row.description) return row.description;
+  try { return JSON.parse(row.evidence_json || '{}').part_description || ''; } catch (e) { return ''; }
+}
+
 // Nivå 2 + 3: en hopfällbar artikelrad; utfälld visar krav/vårt material m.m.
 function renderArticle(row, enabled) {
   const art = document.createElement('div');
@@ -1057,9 +1065,11 @@ function renderArticle(row, enabled) {
 
   const left = document.createElement('div');
   left.className = 'flex items-center gap-2 flex-1 min-w-0';
+  const desc = rowDescription(row);
   left.innerHTML =
     '<span class="caret text-slate-400 w-3 shrink-0">' + (open ? '▾' : '▸') + '</span>' +
-    '<span class="font-medium truncate">' + escapeHtml(row.part_number || ('art ' + row.part_id)) + '</span>' +
+    '<span class="font-medium shrink-0">' + escapeHtml(row.part_number || ('art ' + row.part_id)) + '</span>' +
+    (desc ? '<span class="text-xs text-slate-500 dark:text-slate-400 truncate">— ' + escapeHtml(desc) + '</span>' : '') +
     (row.dimensions ? '<span class="text-xs text-slate-400 shrink-0">· ' + escapeHtml(row.dimensions) + '</span>' : '') +
     (row.planned_qty ? '<span class="text-xs text-slate-400 shrink-0">· ' + escapeHtml(String(row.planned_qty)) + ' st</span>' : '') +
     '<span class="ml-1 shrink-0">' + (isOverdue(row) ? '<span class="badge-red">⏰ försenad</span> ' : '') + upcomingBadge(row) + (row.local_status === 'delivered' ? ' <span class="badge-gray">levererad</span>' : '') + '</span>';
@@ -1146,6 +1156,7 @@ function renderArticleDetail(row) {
     '<span>Fält</span><span>Krav</span><span>Cert</span><span></span></div>';
   const mattInfo = row.cert_dimensions ? '<div class="flex gap-2 mt-1"><span class="text-slate-400 w-20 shrink-0">Mått</span><span>' + escapeHtml(row.cert_dimensions) + '</span></div>' : '';
   const meta = [
+    ['Benämning', rowDescription(row)],
     ['Antal', row.planned_qty],
     ['Leveransdatum', row.delivery_date + (isOverdue(row) ? ' ⏰' : '')],
     ['Not', row.notes],
