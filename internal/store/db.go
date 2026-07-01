@@ -218,8 +218,17 @@ func migrate(db *sql.DB) error {
 		return err
 	}
 	// material_short ersattes av fullständigt material (i filnamn) + en_standard_present
-	// (validering av EN-norm). Gamla material_short/corrected_material_short-kolumner
-	// lämnas kvar i befintliga databaser (oanvända) — SQLite DROP COLUMN undviks här.
+	// (validering av EN-norm). De gamla material_short/corrected_material_short-kolumnerna
+	// droppas här: material_short är NOT NULL utan default, och InsertCertificate skickar
+	// inte längre något värde → varje nytt cert-insert kraschade på gamla DB:er med
+	// "NOT NULL constraint failed: certificates.material_short". SQLite (>=3.35, vår
+	// modernc-build) stödjer DROP COLUMN; ingen av kolumnerna är indexerad.
+	if err := dropColumnIfExists(db, "certificates", "material_short"); err != nil {
+		return err
+	}
+	if err := dropColumnIfExists(db, "certificates", "corrected_material_short"); err != nil {
+		return err
+	}
 	if err := ensureColumn(db, "certificates", "en_standard_present", "BOOLEAN NOT NULL DEFAULT FALSE"); err != nil {
 		return err
 	}
@@ -265,20 +274,26 @@ func migrate(db *sql.DB) error {
 	return nil
 }
 
-// ensureColumn lägger till column på table om den saknas (idempotent).
-// ddl är typ + ev. constraints, t.ex. "TEXT NOT NULL DEFAULT ”". No-op om
-// tabellen själv inte finns (t.ex. en databas som bara delvis initierats).
-func ensureColumn(db *sql.DB, table, column, ddl string) error {
+// tableExists svarar om table finns (t.ex. en databas som bara delvis
+// initierats saknar den).
+func tableExists(db *sql.DB, table string) (bool, error) {
 	var exists int
 	if err := db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?`, table).Scan(&exists); err != nil {
-		return err
+		return false, err
 	}
-	if exists == 0 {
-		return nil
+	return exists > 0, nil
+}
+
+// columnExists svarar om table finns och har kolumnen column. Saknad tabell
+// räknas som "finns inte".
+func columnExists(db *sql.DB, table, column string) (bool, error) {
+	te, err := tableExists(db, table)
+	if err != nil || !te {
+		return false, err
 	}
 	rows, err := db.Query(fmt.Sprintf("PRAGMA table_info(%s)", table))
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer rows.Close()
 	for rows.Next() {
@@ -286,16 +301,41 @@ func ensureColumn(db *sql.DB, table, column, ddl string) error {
 		var name, ctype string
 		var dflt sql.NullString
 		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
-			return err
+			return false, err
 		}
 		if name == column {
-			return nil // kolumnen finns redan
+			return true, nil
 		}
 	}
-	if err := rows.Err(); err != nil {
+	return false, rows.Err()
+}
+
+// ensureColumn lägger till column på table om den saknas (idempotent).
+// ddl är typ + ev. constraints, t.ex. "TEXT NOT NULL DEFAULT ”". No-op om
+// tabellen själv inte finns (t.ex. en databas som bara delvis initierats).
+func ensureColumn(db *sql.DB, table, column, ddl string) error {
+	te, err := tableExists(db, table)
+	if err != nil || !te {
+		return err
+	}
+	has, err := columnExists(db, table, column)
+	if err != nil || has {
 		return err
 	}
 	_, err = db.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, column, ddl))
+	return err
+}
+
+// dropColumnIfExists tar bort column från table om den finns (idempotent, no-op
+// om tabell/kolumn saknas). Används för döda legacy-kolumner vars kvarvarande
+// constraints annars bryter inserts. Kräver SQLite >=3.35 och att kolumnen inte
+// är indexerad / del av PK/constraint.
+func dropColumnIfExists(db *sql.DB, table, column string) error {
+	has, err := columnExists(db, table, column)
+	if err != nil || !has {
+		return err
+	}
+	_, err = db.Exec(fmt.Sprintf("ALTER TABLE %s DROP COLUMN %s", table, column))
 	return err
 }
 
