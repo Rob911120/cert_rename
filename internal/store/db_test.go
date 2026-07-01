@@ -75,6 +75,116 @@ func Test_Migrate_AddsMailCategoryToExistingDB(t *testing.T) {
 	}
 }
 
+// Test_Migrate_DropsLegacyMaterialShortColumn speglar Robs riktiga cert-renamer.db:
+// en databas skapad medan certificates hade material_short TEXT NOT NULL (utan
+// default). Sedan kolumnen togs bort ur InsertCertificate kraschade varje nytt
+// cert-insert på "NOT NULL constraint failed: certificates.material_short".
+// migrate() ska droppa legacy-kolumnerna så inserts fungerar igen — idempotent
+// och utan att tappa befintliga cert-rader.
+func Test_Migrate_DropsLegacyMaterialShortColumn(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "old.db")
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer db.Close()
+
+	// emails behövs eftersom migrate() skapar ett index på den tabellen.
+	if _, err := db.Exec(`CREATE TABLE emails (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		filename TEXT NOT NULL,
+		status TEXT NOT NULL DEFAULT 'processing',
+		processed_at TEXT NOT NULL,
+		created_at TEXT NOT NULL DEFAULT (datetime('now'))
+	)`); err != nil {
+		t.Fatalf("create emails: %v", err)
+	}
+
+	// Gammalt certificates-schema: nuvarande kolumner + de döda legacy-kolumnerna
+	// material_short (NOT NULL utan default) och corrected_material_short.
+	if _, err := db.Exec(`CREATE TABLE certificates (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		email_id INTEGER,
+		pdf_hash TEXT NOT NULL UNIQUE,
+		filename TEXT NOT NULL,
+		original_filename TEXT NOT NULL,
+		cert_type TEXT NOT NULL,
+		charge TEXT NOT NULL,
+		material TEXT NOT NULL,
+		material_short TEXT NOT NULL,
+		en_standard_present BOOLEAN NOT NULL DEFAULT FALSE,
+		is_english BOOLEAN NOT NULL DEFAULT TRUE,
+		product_form TEXT,
+		dimensions TEXT,
+		country_of_origin TEXT NOT NULL DEFAULT '',
+		b_numbers TEXT,
+		confidence TEXT NOT NULL,
+		issues TEXT,
+		model_used TEXT NOT NULL,
+		tokens_input INTEGER,
+		tokens_output INTEGER,
+		processing_ms INTEGER,
+		status TEXT NOT NULL DEFAULT 'queue',
+		extracted_at TEXT NOT NULL,
+		human_corrected BOOLEAN DEFAULT FALSE,
+		corrected_charge TEXT,
+		corrected_material TEXT,
+		corrected_material_short TEXT,
+		corrected_product_form TEXT,
+		corrected_dimensions TEXT,
+		corrected_b_numbers TEXT,
+		correction_notes TEXT,
+		correction_log TEXT,
+		created_at TEXT NOT NULL DEFAULT (datetime('now'))
+	)`); err != nil {
+		t.Fatalf("create old schema: %v", err)
+	}
+	// En befintlig rad från förr, då material_short fortfarande skrevs.
+	if _, err := db.Exec(`INSERT INTO certificates
+		(email_id, pdf_hash, filename, original_filename, cert_type, charge, material, material_short,
+		 product_form, dimensions, b_numbers, issues, confidence, model_used,
+		 tokens_input, tokens_output, processing_ms, status, extracted_at)
+		VALUES (0,'h0','gammal.pdf','gammal.pdf','3.1','610042','S355J2','S355',
+		 '','','','','high','test',
+		 0,0,0,'queue','2026-01-01')`); err != nil {
+		t.Fatalf("insert old row: %v", err)
+	}
+
+	// Kör migrationen — och en gång till för att bevisa idempotens.
+	if err := migrate(db); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	if err := migrate(db); err != nil {
+		t.Fatalf("migrate (andra körningen ska vara no-op): %v", err)
+	}
+
+	// Legacy-kolumnerna ska vara borta.
+	for _, col := range []string{"material_short", "corrected_material_short"} {
+		has, err := columnExists(db, "certificates", col)
+		if err != nil {
+			t.Fatalf("columnExists(%s): %v", col, err)
+		}
+		if has {
+			t.Errorf("kolumn %q borde ha droppats", col)
+		}
+	}
+
+	// Den gamla raden är kvar.
+	repo := NewRepository(db)
+	if got, err := repo.GetCertificateByHash("h0"); err != nil || got == nil || got.Filename != "gammal.pdf" {
+		t.Fatalf("gammal cert-rad tappades: %+v err=%v", got, err)
+	}
+
+	// Kärn-regression: InsertCertificate (som inte sätter material_short) lyckas nu.
+	if _, err := repo.InsertCertificate(&Certificate{
+		PDFHash: "h1", Filename: "ny.pdf", OriginalFilename: "ny.pdf",
+		CertType: "3.1", Charge: "69783D3", Material: "S355J2+N", EnStandardPresent: true,
+		Confidence: "high", ModelUsed: "test", Status: "queue", ExtractedAt: "2026-07-01",
+	}); err != nil {
+		t.Fatalf("InsertCertificate efter migration: %v", err)
+	}
+}
+
 func newTestRepo(t *testing.T) *Repository {
 	t.Helper()
 	db, err := InitDB(filepath.Join(t.TempDir(), "x.db"))
