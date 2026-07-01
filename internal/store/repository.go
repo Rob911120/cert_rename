@@ -720,6 +720,7 @@ type UpcomingDelivery struct {
 	SupplierName       string  `json:"supplier_name"`
 	PartID             int64   `json:"part_id,string"`
 	PartNumber         string  `json:"part_number"`
+	Description        string  `json:"description"`
 	Dimensions         string  `json:"dimensions"`
 	PlannedQty         float64 `json:"planned_qty"`
 	DeliveryDate       string  `json:"delivery_date"`
@@ -749,7 +750,7 @@ type UpcomingDelivery struct {
 	CertIsEnglish      bool    `json:"cert_is_english"`
 }
 
-const upcomingColumns = `delivery_row_id, purchase_order_id, purchase_order_row_id, order_number, supplier_name, part_id, part_number, dimensions, planned_qty, delivery_date, cert_required, cert_status, cert_filename, match_by, required_material, required_cert, our_material, material_ok, required_product_form, product_form_ok, notes, evidence_json, delivery_raw, part_raw, local_status, first_seen, last_seen, cert_charge, cert_product_form, cert_material, cert_b_numbers, cert_dimensions, cert_type, cert_is_english`
+const upcomingColumns = `delivery_row_id, purchase_order_id, purchase_order_row_id, order_number, supplier_name, part_id, part_number, description, dimensions, planned_qty, delivery_date, cert_required, cert_status, cert_filename, match_by, required_material, required_cert, our_material, material_ok, required_product_form, product_form_ok, notes, evidence_json, delivery_raw, part_raw, local_status, first_seen, last_seen, cert_charge, cert_product_form, cert_material, cert_b_numbers, cert_dimensions, cert_type, cert_is_english`
 
 func scanUpcoming(s interface {
 	Scan(dest ...any) error
@@ -757,7 +758,7 @@ func scanUpcoming(s interface {
 	var u UpcomingDelivery
 	err := s.Scan(
 		&u.DeliveryRowID, &u.PurchaseOrderID, &u.PurchaseOrderRowID, &u.OrderNumber,
-		&u.SupplierName, &u.PartID, &u.PartNumber, &u.Dimensions, &u.PlannedQty,
+		&u.SupplierName, &u.PartID, &u.PartNumber, &u.Description, &u.Dimensions, &u.PlannedQty,
 		&u.DeliveryDate, &u.CertRequired, &u.CertStatus, &u.CertFilename, &u.MatchBy,
 		&u.RequiredMaterial, &u.RequiredCert, &u.OurMaterial, &u.MaterialOK,
 		&u.RequiredProductForm, &u.ProductFormOK, &u.Notes,
@@ -788,7 +789,7 @@ func (r *Repository) MergeUpcomingDeliveries(rows []UpcomingDelivery) error {
 		}
 		_, err := tx.Exec(`
 			INSERT INTO upcoming_deliveries (`+upcomingColumns+`)
-			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 			ON CONFLICT(delivery_row_id) DO UPDATE SET
 				purchase_order_id=excluded.purchase_order_id,
 				purchase_order_row_id=excluded.purchase_order_row_id,
@@ -796,6 +797,7 @@ func (r *Repository) MergeUpcomingDeliveries(rows []UpcomingDelivery) error {
 				supplier_name=excluded.supplier_name,
 				part_id=excluded.part_id,
 				part_number=excluded.part_number,
+				description=excluded.description,
 				dimensions=excluded.dimensions,
 				planned_qty=excluded.planned_qty,
 				delivery_date=excluded.delivery_date,
@@ -823,7 +825,7 @@ func (r *Repository) MergeUpcomingDeliveries(rows []UpcomingDelivery) error {
 				cert_is_english=excluded.cert_is_english`,
 			// local_status och first_seen UPPDATERAS MEDVETET INTE ovan.
 			u.DeliveryRowID, u.PurchaseOrderID, u.PurchaseOrderRowID, u.OrderNumber,
-			u.SupplierName, u.PartID, u.PartNumber, u.Dimensions, u.PlannedQty,
+			u.SupplierName, u.PartID, u.PartNumber, u.Description, u.Dimensions, u.PlannedQty,
 			u.DeliveryDate, u.CertRequired, u.CertStatus, u.CertFilename, u.MatchBy,
 			u.RequiredMaterial, u.RequiredCert, u.OurMaterial, u.MaterialOK,
 			u.RequiredProductForm, u.ProductFormOK, u.Notes,
