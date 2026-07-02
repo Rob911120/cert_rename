@@ -216,6 +216,43 @@ func TestMarkDelivered_Endpoint(t *testing.T) {
 	}
 }
 
+// mark-delivered med delivery_row_ids markerar flera rader i ett anrop
+// ("Markera alla som levererade").
+func TestMarkDelivered_ManyEndpoint(t *testing.T) {
+	s, _ := newGateTestServer(t)
+	if err := s.repo.MergeUpcomingDeliveries([]store.UpcomingDelivery{
+		{DeliveryRowID: 8, PurchaseOrderID: 100, OrderNumber: "B1"},
+		{DeliveryRowID: 9, PurchaseOrderID: 100, OrderNumber: "B1"},
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	body, _ := json.Marshal(map[string]any{"delivery_row_ids": []string{"8", "9"}})
+	req := httptest.NewRequest(http.MethodPost, "/api/upcoming/mark-delivered", strings.NewReader(string(body)))
+	rec := httptest.NewRecorder()
+	s.handleUpcomingMarkDelivered(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, vill ha 204 (%s)", rec.Code, rec.Body.String())
+	}
+	for _, id := range []int64{8, 9} {
+		if got, _ := s.repo.GetUpcomingByRowID(id); got == nil || got.LocalStatus != store.UpcomingDelivered {
+			t.Errorf("rad %d local_status = %+v, vill ha delivered", id, got)
+		}
+	}
+}
+
+// mark-delivered utan id alls → 400; ogiltigt id i listan → 400.
+func TestMarkDelivered_BadInput(t *testing.T) {
+	s, _ := newGateTestServer(t)
+	for _, payload := range []string{`{}`, `{"delivery_row_ids":["abc"]}`} {
+		req := httptest.NewRequest(http.MethodPost, "/api/upcoming/mark-delivered", strings.NewReader(payload))
+		rec := httptest.NewRecorder()
+		s.handleUpcomingMarkDelivered(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("payload %s: status = %d, vill ha 400", payload, rec.Code)
+		}
+	}
+}
+
 // /run svarar 202 (asynkron kick).
 func TestUpcomingRun_Accepts(t *testing.T) {
 	s, _ := newGateTestServer(t)

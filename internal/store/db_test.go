@@ -245,8 +245,8 @@ func TestMergeUpcomingDeliveries_Lifecycle(t *testing.T) {
 	}
 	list, _ := repo.ListUpcoming()
 	ids := upcomingIDs(list)
-	if ids[1] {
-		t.Errorf("levererad rad 1 ska döljas från listan")
+	if !ids[1] {
+		t.Errorf("levererad rad 1 ska synas kvar (nedtonad) så länge ordern har olevererade rader")
 	}
 	if !ids[2] || !ids[3] {
 		t.Errorf("rad 2/3 saknas efter merge3: %v", ids)
@@ -265,8 +265,8 @@ func TestMergeUpcomingDeliveries_Lifecycle(t *testing.T) {
 	if ids[3] {
 		t.Errorf("pending rad 3 (ej sedd) borde ha raderats")
 	}
-	if ids[1] {
-		t.Errorf("delivered rad 1 ska döljas från listan")
+	if !ids[1] {
+		t.Errorf("delivered rad 1 ska synas kvar medan rad 2 är olevererad")
 	}
 	if got, _ := repo.GetUpcomingByRowID(1); got == nil {
 		t.Errorf("delivered rad 1 borde fortfarande finnas i tabellen")
@@ -293,6 +293,45 @@ func mustList(t *testing.T, repo *Repository) []UpcomingDelivery {
 		t.Fatalf("ListUpcoming: %v", err)
 	}
 	return list
+}
+
+// Delvis levererad order: levererade rader syns kvar. Helt levererad order döljs.
+// MarkUpcomingDeliveredMany markerar flera rader i ett svep.
+func TestListUpcoming_PartialOrderVisible_FullyDeliveredHidden(t *testing.T) {
+	repo := newTestRepo(t)
+	rows := []UpcomingDelivery{
+		{DeliveryRowID: 1, PurchaseOrderID: 100, OrderNumber: "B1", LocalStatus: UpcomingPending},
+		{DeliveryRowID: 2, PurchaseOrderID: 100, OrderNumber: "B1", LocalStatus: UpcomingPending},
+		{DeliveryRowID: 3, PurchaseOrderID: 200, OrderNumber: "B2", LocalStatus: UpcomingPending},
+	}
+	if err := repo.MergeUpcomingDeliveries(rows); err != nil {
+		t.Fatalf("merge: %v", err)
+	}
+
+	// Delleverans: rad 1 levererad → BÅDA orderns rader ska synas.
+	if err := repo.MarkUpcomingDelivered(1); err != nil {
+		t.Fatalf("mark: %v", err)
+	}
+	ids := upcomingIDs(mustList(t, repo))
+	if !ids[1] || !ids[2] || !ids[3] {
+		t.Fatalf("delvis levererad order ska visa alla rader: %v", ids)
+	}
+
+	// Hela ordern levererad (via Many) → ordern döljs, andra ordern kvar.
+	if err := repo.MarkUpcomingDeliveredMany([]int64{1, 2}); err != nil {
+		t.Fatalf("mark many: %v", err)
+	}
+	ids = upcomingIDs(mustList(t, repo))
+	if ids[1] || ids[2] {
+		t.Errorf("helt levererad order ska döljas: %v", ids)
+	}
+	if !ids[3] {
+		t.Errorf("orelaterad order försvann: %v", ids)
+	}
+	// Raderna finns kvar i tabellen (återuppstår inte vid refresh).
+	if got, _ := repo.GetUpcomingByRowID(1); got == nil || got.LocalStatus != UpcomingDelivered {
+		t.Errorf("rad 1 borde finnas kvar som delivered i tabellen: %+v", got)
+	}
 }
 
 // Tom refresh (Monitor returnerar inget) ska rensa pending men bevara delivered.

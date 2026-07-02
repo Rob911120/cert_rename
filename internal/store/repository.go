@@ -818,10 +818,16 @@ func deleteUnseenUpcoming(tx *sql.Tx, seen []int64) error {
 }
 
 // ListUpcoming returnerar kommande inleveranser för UI:t, sorterade på
-// leveransdatum. Levererade rader (manuellt markerade) döljs medvetet — de
-// behålls i tabellen för att inte återuppstå vid refresh men ska inte visas.
+// leveransdatum. Levererade rader visas kvar (nedtonade i UI:t) så länge ordern
+// har minst en ej levererad rad — först när HELA ordern är levererad döljs den.
+// Raderna behålls alltid i tabellen så de inte återuppstår vid refresh.
 func (r *Repository) ListUpcoming() ([]UpcomingDelivery, error) {
-	rows, err := r.db.Query(`SELECT `+upcomingColumns+` FROM upcoming_deliveries WHERE local_status != ? ORDER BY delivery_date ASC, order_number ASC`, UpcomingDelivered)
+	rows, err := r.db.Query(`
+		SELECT `+upcomingColumns+` FROM upcoming_deliveries u
+		WHERE EXISTS (
+			SELECT 1 FROM upcoming_deliveries v
+			WHERE v.purchase_order_id = u.purchase_order_id AND v.local_status != ?)
+		ORDER BY delivery_date ASC, order_number ASC`, UpcomingDelivered)
 	if err != nil {
 		return nil, err
 	}
@@ -854,6 +860,25 @@ func (r *Repository) GetUpcomingByRowID(id int64) (*UpcomingDelivery, error) {
 func (r *Repository) MarkUpcomingDelivered(deliveryRowID int64) error {
 	_, err := r.db.Exec(`UPDATE upcoming_deliveries SET local_status = ? WHERE delivery_row_id = ?`, UpcomingDelivered, deliveryRowID)
 	return err
+}
+
+// MarkUpcomingDeliveredMany sätter local_status=delivered på flera rader i en
+// transaktion ("Markera alla som levererade" på en order).
+func (r *Repository) MarkUpcomingDeliveredMany(deliveryRowIDs []int64) error {
+	if len(deliveryRowIDs) == 0 {
+		return nil
+	}
+	tx, err := r.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() //nolint:errcheck // no-op efter Commit
+	for _, id := range deliveryRowIDs {
+		if _, err := tx.Exec(`UPDATE upcoming_deliveries SET local_status = ? WHERE delivery_row_id = ?`, UpcomingDelivered, id); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // --- App state (nyckel/värde) ---

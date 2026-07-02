@@ -40,6 +40,7 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 			"upcoming_time":        c.UpcomingTime,
 			"upcoming_window_days": c.UpcomingWindowDays,
 			"upcoming_back_days":   c.UpcomingBackDays,
+			"report_email":         c.ReportEmail,
 		})
 		return
 	}
@@ -57,6 +58,14 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		}
 		if c.SickanModel == "" {
 			c.SickanModel = s.cfg.SickanModel
+		}
+		if c.ReportEmail == "" {
+			c.ReportEmail = s.cfg.ReportEmail
+		}
+		if c.HiddenSuppliers == nil {
+			// UI:t skickar inte med dolda leverantörer i config-POST:en — de
+			// hanteras av hide-supplier-endpointen och ska inte nollställas här.
+			c.HiddenSuppliers = s.cfg.HiddenSuppliers
 		}
 		if c.MonitorURL == "" {
 			c.MonitorURL = s.cfg.MonitorURL

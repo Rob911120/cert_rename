@@ -53,6 +53,10 @@ type Config struct {
 	// HiddenSuppliers är leverantörsnamn dolda av operatören i "Kommande
 	// inleveranser"-vyn (rent UI-filter, raderna finns kvar i databasen).
 	HiddenSuppliers []string `json:"hidden_suppliers,omitempty"`
+
+	// ReportEmail är mottagaren för avvikelsemail ("Maila Daniel"): mailto-utkast
+	// om positioner som inte levererades in vid en delleverans.
+	ReportEmail string `json:"report_email,omitempty"`
 }
 
 // NormalizeUpcoming sätter defaults och avvisar ogiltig UpcomingTime. Anropas

@@ -289,6 +289,15 @@
       </div>
 
       <div class="panel-section">
+        <div class="panel-label">✉️ Avvikelsemail (Daniel)</div>
+        <div class="text-xs text-slate-500 dark:text-slate-400 mb-2">
+          Mottagare för "Maila rest"-utkasten när en order bara delvis levererats in.
+        </div>
+        <input type="email" id="reportEmailInput" placeholder="daniel@example.com"
+               autocomplete="off" class="input-field" onchange="saveReportEmail()">
+      </div>
+
+      <div class="panel-section">
         <div class="panel-label">🎨 Tema</div>
         <div class="segmented" id="themeMode">
           <button data-mode="light" data-active="true" onclick="setTheme('light')">Ljus</button>
@@ -360,7 +369,7 @@
 </aside>
 
 <script>
-let cfg = { inbox_dir: '', theme: 'light', autostart: false, api_key_set: false, b_number_mode: 'session', monitor_ui_auto_save: false, upcoming_enabled: false, upcoming_time: '16:30', upcoming_window_days: 14, upcoming_back_days: 365 };
+let cfg = { inbox_dir: '', theme: 'light', autostart: false, api_key_set: false, b_number_mode: 'session', monitor_ui_auto_save: false, upcoming_enabled: false, upcoming_time: '16:30', upcoming_window_days: 14, upcoming_back_days: 365, report_email: '' };
 let running = false;
 let approvedCount = 0;
 
@@ -396,6 +405,7 @@ function postConfig(overrides = {}) {
     upcoming_time: cfg.upcoming_time || '16:30',
     upcoming_window_days: cfg.upcoming_window_days || 14,
     upcoming_back_days: cfg.upcoming_back_days ?? 365,
+    report_email: cfg.report_email || '',
     ...overrides,
   };
   return fetch('/api/config', {
@@ -451,6 +461,8 @@ async function loadConfig() {
   document.getElementById('upcomingTimeInput').value = cfg.upcoming_time;
   document.getElementById('upcomingWindowInput').value = cfg.upcoming_window_days;
   document.getElementById('upcomingBackInput').value = cfg.upcoming_back_days;
+  cfg.report_email = data.report_email || '';
+  document.getElementById('reportEmailInput').value = cfg.report_email;
   document.documentElement.dataset.theme = cfg.theme;
   setActiveSegment('themeMode', cfg.theme);
   setActiveSegment('bnumModeSeg', cfg.b_number_mode);
@@ -509,6 +521,13 @@ async function saveUpcomingSettings() {
   });
   if (!r.ok) { toast('⚠️ ' + await apiError(r)); return; }
   loadUpcoming();
+}
+
+async function saveReportEmail() {
+  cfg.report_email = document.getElementById('reportEmailInput').value.trim();
+  const r = await postConfig({ report_email: cfg.report_email });
+  if (!r.ok) { toast('⚠️ ' + await apiError(r)); return; }
+  if (cfg.report_email) toast('✉️ Avvikelsemail går till ' + cfg.report_email);
 }
 
 function setTheme(t) {
@@ -1033,7 +1052,37 @@ function renderOrderGroup(orderKey, items, enabled) {
   };
 
   const actions = document.createElement('div');
-  actions.className = 'shrink-0';
+  actions.className = 'shrink-0 flex items-center gap-1.5';
+
+  const undelivered = items.filter(r => r.local_status !== 'delivered');
+  const partiallyDelivered = undelivered.length > 0 && undelivered.length < items.length;
+
+  // "Maila rest" — bara vid delleverans: utkast till Daniel om positioner som är kvar.
+  if (partiallyDelivered) {
+    const mailBtn = document.createElement('button');
+    mailBtn.className = 'btn-ghost btn-sm';
+    mailBtn.textContent = '✉️ Maila rest';
+    mailBtn.title = 'Skapa mailutkast om de positioner som inte levererats in';
+    mailBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openRestMail(orderKey, supplier, undeliveredRows(orderKey));
+    });
+    actions.appendChild(mailBtn);
+  }
+
+  if (undelivered.length > 0) {
+    const markAllBtn = document.createElement('button');
+    markAllBtn.className = 'btn-ghost btn-sm';
+    markAllBtn.textContent = '✓ Alla levererade';
+    markAllBtn.title = 'Markera alla orderns rader som levererade';
+    markAllBtn.disabled = !enabled;
+    markAllBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      markDelivered(undelivered.map(r => r.delivery_row_id), orderKey, supplier);
+    });
+    actions.appendChild(markAllBtn);
+  }
+
   const deliverBtn = document.createElement('button');
   deliverBtn.className = 'btn-primary btn-sm';
   deliverBtn.disabled = !enabled || allDelivered;
@@ -1092,7 +1141,11 @@ function renderArticle(row, enabled) {
     markBtn.className = 'btn-ghost btn-sm shrink-0';
     markBtn.textContent = 'Markera levererad';
     markBtn.disabled = !enabled;
-    markBtn.addEventListener('click', (e) => { e.stopPropagation(); markDelivered(row.delivery_row_id); });
+    markBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      markDelivered(row.delivery_row_id,
+        row.order_number || ('PO ' + row.purchase_order_id), row.supplier_name);
+    });
     header.appendChild(markBtn);
   }
 
@@ -1304,13 +1357,52 @@ function renderHiddenSuppliersList(names) {
   }
 }
 
-async function markDelivered(rowId) {
+// markDelivered markerar en eller flera rader levererade. Om ordern därefter är
+// DELVIS levererad föreslås ett avvikelsemail med de positioner som är kvar.
+async function markDelivered(rowIds, orderKey, supplier) {
+  const ids = (Array.isArray(rowIds) ? rowIds : [rowIds]).map(String);
   try {
-    await fetch('/api/upcoming/mark-delivered', {
+    const r = await fetch('/api/upcoming/mark-delivered', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ delivery_row_id: rowId }),
+      body: JSON.stringify({ delivery_row_ids: ids }),
     });
-  } catch (e) { console.warn(e); }
+    if (!r.ok) { toast('⚠️ ' + await apiError(r)); return; }
+  } catch (e) { toast('⚠️ ' + e); return; }
+  if (!orderKey) return;
+  const rest = undeliveredRows(orderKey, new Set(ids));
+  if (rest.length > 0) {
+    toastAction('📦 Order ' + orderKey + ' delvis inlevererad — ' + rest.length + ' pos kvar',
+      '✉️ Maila Daniel', () => openRestMail(orderKey, supplier, rest));
+  }
+}
+
+// undeliveredRows: orderns ej levererade rader ur upcomingState, minus
+// excludeIds (rader som just markerats men där SSE-uppdateringen inte hunnit fram).
+function undeliveredRows(orderKey, excludeIds = new Set()) {
+  return (upcomingState.rows || []).filter(r =>
+    (r.order_number || ('PO ' + r.purchase_order_id)) === orderKey &&
+    r.local_status !== 'delivered' && !excludeIds.has(String(r.delivery_row_id)));
+}
+
+// openRestMail öppnar ett mailto-utkast till avvikelseadressen (⚙️ Inställningar)
+// med de positioner på ordern som INTE levererats in.
+function openRestMail(orderKey, supplier, rows) {
+  if (!cfg.report_email) {
+    toast('✉️ Fyll i adressen för avvikelsemail i ⚙️ Inställningar först', 8000);
+    openSettings(); switchPanelTab('settings');
+    setTimeout(() => document.getElementById('reportEmailInput').focus(), 250);
+    return;
+  }
+  const lines = rows.map(r => '- ' + (r.part_number || ('art ' + r.part_id)) +
+    (rowDescription(r) ? ' — ' + rowDescription(r) : '') +
+    (r.planned_qty ? ', ' + r.planned_qty + ' st' : '') +
+    (r.delivery_date ? ', lev.datum ' + r.delivery_date : ''));
+  const subject = 'Order ' + orderKey + ' — ej inlevererade positioner';
+  const body = 'Hej Daniel,\n\n' +
+    'Följande positioner på order ' + orderKey + (supplier ? ' (' + supplier + ')' : '') +
+    ' levererades inte in:\n\n' + lines.join('\n') + '\n\n';
+  window.location.href = 'mailto:' + encodeURIComponent(cfg.report_email) +
+    '?subject=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(body);
 }
 
 function fmtWhen(iso) {
@@ -1658,6 +1750,27 @@ function toast(msg, delay = 6000) {
   const id = 'ui_' + (++dropToastSeq);
   dropToastShow(id, msg);
   dropToastDone(id, msg, delay);
+}
+
+// toastAction: toast med en åtgärdsknapp (t.ex. "✉️ Maila Daniel"). Visas längre
+// än vanliga toasts så användaren hinner reagera.
+function toastAction(msg, label, fn, delay = 15000) {
+  const id = 'ui_' + (++dropToastSeq);
+  dropToastShow(id, msg);
+  const row = dropToastItems.get(id);
+  const dismiss = () => {
+    const r = dropToastItems.get(id);
+    if (r) { r.remove(); dropToastItems.delete(id); }
+    if (dropToastItems.size === 0) dropToastEl()?.classList.add('hidden');
+  };
+  if (row) {
+    const btn = document.createElement('button');
+    btn.className = 'btn-primary btn-sm ml-2 shrink-0';
+    btn.textContent = label;
+    btn.addEventListener('click', () => { fn(); dismiss(); });
+    row.appendChild(btn);
+  }
+  setTimeout(dismiss, delay);
 }
 
 window.addEventListener('dragenter', (e) => {

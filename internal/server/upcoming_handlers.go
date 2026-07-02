@@ -8,6 +8,7 @@ package server
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 
 	"cert-renamer/internal/store"
 )
@@ -31,25 +32,37 @@ func (s *Server) handleUpcomingRun(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusAccepted) // 202
 }
 
-// handleUpcomingMarkDelivered markerar en rad levererad (operatörens markering,
-// överlever refresh).
+// handleUpcomingMarkDelivered markerar en eller flera rader levererade
+// (operatörens markering, överlever refresh). Tar antingen delivery_row_id
+// (en rad) eller delivery_row_ids (flera — "Markera alla som levererade").
 func (s *Server) handleUpcomingMarkDelivered(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		httpError(w, "method not allowed", http.StatusMethodNotAllowed)
+	if !requirePOST(w, r) {
 		return
 	}
 	var body struct {
-		DeliveryRowID int64 `json:"delivery_row_id,string"` // sträng: 64-bitars-id, JS-precision
+		DeliveryRowID  int64    `json:"delivery_row_id,string"` // sträng: 64-bitars-id, JS-precision
+		DeliveryRowIDs []string `json:"delivery_row_ids"`       // strängar av samma skäl
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		httpError(w, err.Error(), http.StatusBadRequest)
+	if !decodeJSON(w, r, &body) {
 		return
 	}
-	if body.DeliveryRowID == 0 {
+	ids := make([]int64, 0, len(body.DeliveryRowIDs)+1)
+	if body.DeliveryRowID != 0 {
+		ids = append(ids, body.DeliveryRowID)
+	}
+	for _, raw := range body.DeliveryRowIDs {
+		id, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || id == 0 {
+			httpError(w, "ogiltigt delivery_row_id: "+raw, http.StatusBadRequest)
+			return
+		}
+		ids = append(ids, id)
+	}
+	if len(ids) == 0 {
 		httpError(w, "delivery_row_id krävs", http.StatusBadRequest)
 		return
 	}
-	if err := s.repo.MarkUpcomingDelivered(body.DeliveryRowID); err != nil {
+	if err := s.repo.MarkUpcomingDeliveredMany(ids); err != nil {
 		httpError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
