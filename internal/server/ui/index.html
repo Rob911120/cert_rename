@@ -32,7 +32,8 @@
 <main class="flex-1 flex flex-col px-6 py-4 gap-3 min-h-0">
   <div class="flex items-end justify-between border-b border-slate-200 dark:border-slate-800">
     <div class="flex">
-      <button class="tab-link" data-tab="queue" data-active="true" onclick="switchTab('queue')">Kö</button>
+      <button class="tab-link" data-tab="today" data-active="true" onclick="switchTab('today')">🌅 Idag</button>
+      <button class="tab-link" data-tab="queue" onclick="switchTab('queue')">Kö</button>
       <button class="tab-link" data-tab="review" onclick="switchTab('review')">Behöver granskas</button>
       <button class="tab-link" data-tab="upcoming" onclick="switchTab('upcoming')">Kommande inleveranser</button>
     </div>
@@ -44,7 +45,12 @@
   </div>
 
   <div class="flex-1 min-h-0 card overflow-hidden flex flex-col fade-in">
-    <div class="tab-panel flex-1 min-h-0 overflow-auto" data-panel="queue">
+    <div class="tab-panel flex-1 min-h-0 overflow-auto" data-panel="today">
+      <div id="todayBody" class="p-4 space-y-4 text-sm max-w-4xl">
+        <div class="text-center italic text-slate-400 py-6">…laddar dagens läge…</div>
+      </div>
+    </div>
+    <div class="tab-panel hidden flex-1 min-h-0 overflow-auto" data-panel="queue">
       <table class="w-full text-sm">
         <thead class="table-head">
           <tr>
@@ -289,6 +295,24 @@
       </div>
 
       <div class="panel-section">
+        <div class="panel-label">🌅 Morgonbrief</div>
+        <div class="text-xs text-slate-500 dark:text-slate-400 mb-2">
+          Bygger "Idag"-fliken automatiskt på morgonen (kickar en Monitor-uppdatering
+          först om schemat ovan är på). Fliken funkar även med detta av — stommen
+          byggs ur databasen varje gång du öppnar den.
+        </div>
+        <div class="flex flex-col gap-2">
+          <label class="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-200">
+            <input type="checkbox" id="briefEnabledInput" onchange="saveBriefSettings()"> Schemalagd morgonbrief
+          </label>
+          <label class="flex items-center justify-between gap-2 text-sm text-slate-700 dark:text-slate-200">
+            <span>Morgontid (HH:MM)</span>
+            <input type="time" id="briefTimeInput" onchange="saveBriefSettings()" class="input-field !py-1 w-28">
+          </label>
+        </div>
+      </div>
+
+      <div class="panel-section">
         <div class="panel-label">✉️ Avvikelsemail (Daniel)</div>
         <div class="text-xs text-slate-500 dark:text-slate-400 mb-2">
           Mottagare för "Maila rest"-utkasten när en order bara delvis levererats in.
@@ -419,6 +443,8 @@ function postConfig(overrides = {}) {
     upcoming_window_days: cfg.upcoming_window_days || 14,
     upcoming_back_days: cfg.upcoming_back_days ?? 365,
     report_email: cfg.report_email || '',
+    brief_enabled: !!cfg.brief_enabled,
+    brief_time: cfg.brief_time || '06:45',
     ...overrides,
   };
   return fetch('/api/config', {
@@ -476,6 +502,11 @@ async function loadConfig() {
   document.getElementById('upcomingBackInput').value = cfg.upcoming_back_days;
   cfg.report_email = data.report_email || '';
   document.getElementById('reportEmailInput').value = cfg.report_email;
+  // Morgonbrief
+  cfg.brief_enabled = !!data.brief_enabled;
+  cfg.brief_time = data.brief_time || '06:45';
+  document.getElementById('briefEnabledInput').checked = cfg.brief_enabled;
+  document.getElementById('briefTimeInput').value = cfg.brief_time;
   document.documentElement.dataset.theme = cfg.theme;
   setActiveSegment('themeMode', cfg.theme);
   setActiveSegment('bnumModeSeg', cfg.b_number_mode);
@@ -534,6 +565,13 @@ async function saveUpcomingSettings() {
   });
   if (!r.ok) { toast('⚠️ ' + await apiError(r)); return; }
   loadUpcoming();
+}
+
+async function saveBriefSettings() {
+  cfg.brief_enabled = document.getElementById('briefEnabledInput').checked;
+  cfg.brief_time = document.getElementById('briefTimeInput').value || '06:45';
+  const r = await postConfig({ brief_enabled: cfg.brief_enabled, brief_time: cfg.brief_time });
+  if (!r.ok) { toast('⚠️ ' + await apiError(r)); return; }
 }
 
 async function saveReportEmail() {
@@ -903,7 +941,14 @@ es.addEventListener('stats', ev => {
 es.addEventListener('queue', () => loadQueue());
 es.addEventListener('review', () => loadReview());
 es.addEventListener('costs', ev => renderCosts(JSON.parse(ev.data)));
-es.addEventListener('upcoming', ev => { try { renderUpcoming(JSON.parse(ev.data)); } catch (e) { console.warn(e); } });
+es.addEventListener('upcoming', ev => {
+  try { renderUpcoming(JSON.parse(ev.data)); } catch (e) { console.warn(e); }
+  // Noter/tasks/leveransmarkeringar (även Sickans) påverkar briefen — håll
+  // Idag-fliken färsk när den visas. /api/brief bygger alltid om stommen.
+  const panel = document.querySelector('.tab-panel[data-panel="today"]');
+  if (panel && !panel.classList.contains('hidden')) loadBrief();
+});
+es.addEventListener('brief', ev => { try { renderBrief(JSON.parse(ev.data)); } catch (e) { console.warn(e); } });
 
 async function loadCosts() {
   try { const r = await fetch('/api/costs'); if (r.ok) renderCosts(await r.json()); }
@@ -934,8 +979,345 @@ function switchTab(name) {
     p.classList.toggle('hidden', p.dataset.panel !== name));
   // Sök-fältet är bara relevant för kö-vyn.
   document.getElementById('queueFilter').classList.toggle('hidden', name !== 'queue');
+  if (name === 'today') loadBrief();
   if (name === 'review') loadReview();
   if (name === 'upcoming') loadUpcoming();
+}
+
+// ---------------------------------------------------------------------------
+// Idag-fliken (morgonbrief): stommen byggs deterministiskt av servern ur
+// databasen (/api/brief bygger alltid om). Sickans kommentar (fältet comment,
+// fas 2b) visas ovanpå när den finns. Avfärdanden sparas per dag och kan bära
+// en anledning som blir en not på raden — så blir de lärdomar.
+// ---------------------------------------------------------------------------
+let briefData = null;
+
+async function loadBrief() {
+  try {
+    const r = await fetch('/api/brief');
+    if (!r.ok) return;
+    renderBrief(await r.json());
+  } catch (e) { console.warn(e); }
+}
+
+// briefRefresh: 🔄 i fliken. Med schemat på kickas en Monitor-refresh (briefen
+// byggs om efteråt och pushas via SSE); annars byggs stommen om direkt ur DB:n.
+function briefRefresh() {
+  if (cfg.upcoming_enabled) {
+    runUpcoming();
+    toast('🔄 Hämtar från Monitor — briefen byggs om när körningen är klar');
+  } else {
+    loadBrief();
+  }
+}
+
+async function briefDismiss(key, reason) {
+  try {
+    const r = await fetch('/api/brief/dismiss', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ key, reason: reason || '' }),
+    });
+    if (!r.ok) { toast('⚠️ ' + await apiError(r)); return; }
+    renderBrief(await r.json());
+  } catch (e) { toast('⚠️ ' + e); }
+}
+
+// briefShowOrder: hoppa till Kommande inleveranser med ordernumret i sökfältet.
+function briefShowOrder(orderNr) {
+  upcomingFilter = orderNr || '';
+  document.getElementById('upcomingFilter').value = upcomingFilter;
+  switchTab('upcoming');
+}
+
+// briefMailRow: BriefRow → radform som positionLine()/mailutkasten förstår.
+function briefMailRow(r) {
+  return { part_number: r.part_number, description: r.description,
+           planned_qty: r.qty, delivery_date: r.delivery_date, required_cert: r.required_cert };
+}
+
+async function briefMarkDelivered(r) {
+  await markDelivered([r.delivery_row_id], r.order_number, r.supplier);
+  loadBrief();
+}
+
+async function briefAddTask() {
+  const ti = document.getElementById('briefTaskText');
+  const text = ti.value.trim();
+  if (!text) return;
+  const due = document.getElementById('briefTaskDate').value || '';
+  const r = await fetch('/api/tasks', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ text, due_date: due }),
+  });
+  if (!r.ok) { toast('⚠️ ' + await apiError(r)); return; }
+  ti.value = '';
+  document.getElementById('briefTaskDate').value = '';
+  loadBrief();
+}
+
+async function briefTaskMutation(url, id) {
+  const r = await fetch(url, {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ id }),
+  });
+  if (!r.ok) { toast('⚠️ ' + await apiError(r)); return; }
+  loadBrief();
+}
+
+// --- DOM-hjälpare för briefen ---
+function briefEl(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text != null) e.textContent = text;
+  return e;
+}
+
+function briefBtn(label, title, fn, cls = 'btn-secondary btn-sm') {
+  const b = briefEl('button', cls, label);
+  b.type = 'button';
+  if (title) b.title = title;
+  b.addEventListener('click', fn);
+  return b;
+}
+
+// briefDismissBtn: ✕ som vecklar ut ett inline-fält för valfri anledning —
+// anledningen sparas som not på raden (avfärdandet blir en lärdom).
+function briefDismissBtn(key) {
+  const btn = briefBtn('✕', 'Avfärda för idag — anledningen (valfri) sparas som not på raden', () => {
+    const wrap = briefEl('span', 'flex items-center gap-1');
+    const input = briefEl('input', 'input-field !py-1 w-48');
+    input.placeholder = 'Anledning (valfri)…';
+    const ok = briefBtn('Avfärda', '', () => briefDismiss(key, input.value.trim()));
+    const cancel = briefBtn('Avbryt', '', () => renderBrief(), 'btn-ghost btn-sm');
+    input.addEventListener('keydown', e => {
+      if (e.key === 'Enter') ok.click();
+      if (e.key === 'Escape') renderBrief();
+    });
+    wrap.appendChild(input); wrap.appendChild(ok); wrap.appendChild(cancel);
+    btn.replaceWith(wrap);
+    input.focus();
+  }, 'btn-ghost btn-sm');
+  return btn;
+}
+
+// briefRowLine: en artikelrad i ett orderkort (radknappar till höger).
+function briefRowLine(r, buttons) {
+  const line = briefEl('div', 'flex items-center justify-between gap-2 px-3 py-2');
+  const left = briefEl('div', 'min-w-0 flex-1');
+  const main = briefEl('div', 'truncate');
+  main.textContent = (r.part_number || '?') +
+    (r.description ? ' — ' + r.description : '') +
+    (r.qty ? ', ' + r.qty + ' st' : '');
+  main.title = main.textContent;
+  left.appendChild(main);
+  const meta = [];
+  if (r.delivery_date) meta.push('lev.datum ' + r.delivery_date);
+  if (r.required_cert) meta.push('krav: ' + r.required_cert);
+  if (r.last_note) meta.push('📝 ' + r.last_note);
+  if (meta.length) {
+    const m = briefEl('div', 'text-xs text-slate-400 truncate', meta.join(' · '));
+    m.title = meta.join(' · ');
+    left.appendChild(m);
+  }
+  line.appendChild(left);
+  const right = briefEl('div', 'flex items-center gap-1 shrink-0');
+  for (const b of buttons) right.appendChild(b);
+  line.appendChild(right);
+  return line;
+}
+
+// briefOrderCard: ett kort per order — rubrik med order + leverantör och
+// orderknappar (mailutkast m.m.), därunder artikelraderna.
+function briefOrderCard(orderNr, supplier, orderButtons, rows, rowButtonsFn) {
+  const card = briefEl('div', 'rounded-md border border-slate-200 dark:border-slate-800');
+  const head = briefEl('div', 'flex items-center justify-between gap-2 px-3 py-2 bg-slate-50 dark:bg-main rounded-t-md');
+  const title = briefEl('div', 'font-medium truncate', orderNr + (supplier ? ' · ' + supplier : ''));
+  title.title = title.textContent;
+  head.appendChild(title);
+  const btns = briefEl('div', 'flex items-center gap-1 shrink-0');
+  for (const b of orderButtons) btns.appendChild(b);
+  head.appendChild(btns);
+  card.appendChild(head);
+  const list = briefEl('div', 'divide-y divide-slate-100 dark:divide-slate-800');
+  for (const r of rows) list.appendChild(briefRowLine(r, rowButtonsFn ? rowButtonsFn(r) : []));
+  card.appendChild(list);
+  return card;
+}
+
+// briefGroupByOrder: BriefRow[] → Map(ordernr → {supplier, rows}).
+function briefGroupByOrder(rows) {
+  const groups = new Map();
+  for (const r of rows) {
+    const key = r.order_number || '?';
+    if (!groups.has(key)) groups.set(key, { supplier: r.supplier || '', rows: [] });
+    groups.get(key).rows.push(r);
+  }
+  return groups;
+}
+
+function briefSection(title) {
+  const sec = briefEl('div', 'space-y-1.5');
+  sec.appendChild(briefEl('div', 'font-semibold text-slate-900 dark:text-white', title));
+  return sec;
+}
+
+function renderBrief(data) {
+  if (data) briefData = data;
+  const b = briefData;
+  if (!b) return;
+  const body = document.getElementById('todayBody');
+  // Bevara pågående inmatning i task-fälten över SSE-omritningar.
+  const savedText = (document.getElementById('briefTaskText') || {}).value || '';
+  const savedDate = (document.getElementById('briefTaskDate') || {}).value || '';
+  body.innerHTML = '';
+  const dismissed = new Set(b.dismissed || []);
+  let dismissedCount = 0;
+
+  // Rubrik: datum + när stommen byggdes + 🔄.
+  const head = briefEl('div', 'flex items-center justify-between gap-2');
+  let dateStr = b.date;
+  try { dateStr = new Date(b.date + 'T12:00:00').toLocaleDateString('sv-SE', { weekday: 'long', day: 'numeric', month: 'long' }); } catch (e) {}
+  const hl = briefEl('div');
+  hl.appendChild(briefEl('div', 'text-base font-semibold text-slate-900 dark:text-white', '🌅 ' + dateStr));
+  if (b.generated_at) hl.appendChild(briefEl('div', 'text-xs text-slate-400', 'byggd ' + fmtWhen(b.generated_at)));
+  head.appendChild(hl);
+  head.appendChild(briefBtn('🔄 Uppdatera', 'Hämta färskt läge', briefRefresh));
+  body.appendChild(head);
+
+  // Sickans kommentar (fas 2b).
+  if (b.comment) {
+    const c = briefEl('div', 'rounded-md border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-main px-3 py-2 whitespace-pre-wrap', '🤖 ' + b.comment);
+    finalizeBotBubble(c);
+    body.appendChild(c);
+  }
+
+  let anyDeliverySection = false;
+
+  // 📦 Väntas idag.
+  const expected = b.expected_today || [];
+  if (expected.length) {
+    const sec = briefSection('📦 Väntas idag (' + expected.length + ')');
+    for (const [orderNr, g] of briefGroupByOrder(expected)) {
+      sec.appendChild(briefOrderCard(orderNr, g.supplier, [
+        briefBtn('Visa ordern', '', () => briefShowOrder(orderNr), 'btn-ghost btn-sm'),
+      ], g.rows));
+    }
+    body.appendChild(sec);
+    anyDeliverySection = true;
+  }
+
+  // ⏰ Kom inte (försenade).
+  const overdue = (b.overdue || []).filter(r => {
+    const hit = dismissed.has('overdue:' + r.delivery_row_id);
+    if (hit) dismissedCount++;
+    return !hit;
+  });
+  if (overdue.length) {
+    const sec = briefSection('⏰ Kom inte (' + overdue.length + ')');
+    for (const [orderNr, g] of briefGroupByOrder(overdue)) {
+      sec.appendChild(briefOrderCard(orderNr, g.supplier, [
+        briefBtn('✉️ Utkast', 'Mailutkast om att positionerna inte levererats in',
+          () => openRestMail(orderNr, g.supplier, g.rows.map(briefMailRow))),
+        briefBtn('Visa ordern', '', () => briefShowOrder(orderNr), 'btn-ghost btn-sm'),
+      ], g.rows, r => [
+        briefBtn('✓ Levererad', 'Markera raden som levererad', () => briefMarkDelivered(r), 'btn-ghost btn-sm'),
+        briefDismissBtn('overdue:' + r.delivery_row_id),
+      ]));
+    }
+    body.appendChild(sec);
+    anyDeliverySection = true;
+  }
+
+  // 📄 Cert saknas.
+  const certMissing = (b.cert_missing || []).filter(r => {
+    const hit = dismissed.has('cert:' + r.delivery_row_id);
+    if (hit) dismissedCount++;
+    return !hit;
+  });
+  if (certMissing.length) {
+    const sec = briefSection('📄 Cert saknas (' + certMissing.length + ')');
+    for (const [orderNr, g] of briefGroupByOrder(certMissing)) {
+      sec.appendChild(briefOrderCard(orderNr, g.supplier, [
+        briefBtn('✉️ Utkast', 'Mailutkast om att materialcert saknas',
+          () => openCertMissingMail(orderNr, g.supplier, g.rows.map(briefMailRow))),
+        briefBtn('Visa ordern', '', () => briefShowOrder(orderNr), 'btn-ghost btn-sm'),
+      ], g.rows, r => [briefDismissBtn('cert:' + r.delivery_row_id)]));
+    }
+    body.appendChild(sec);
+    anyDeliverySection = true;
+  }
+
+  // 🚚 Delleveranser (order med både levererade och väntande rader).
+  const partial = b.partial_orders || [];
+  if (partial.length) {
+    const sec = briefSection('🚚 Delleveranser (' + partial.length + ')');
+    for (const orderNr of partial) {
+      const line = briefEl('div', 'flex items-center justify-between gap-2 rounded-md border border-slate-200 dark:border-slate-800 px-3 py-2');
+      const rest = undeliveredRows(orderNr);
+      const supplier = rest.length ? (rest[0].supplier_name || '') : '';
+      line.appendChild(briefEl('div', 'truncate', orderNr + (supplier ? ' · ' + supplier : '') +
+        (rest.length ? ' — ' + rest.length + ' pos kvar' : '')));
+      const btns = briefEl('div', 'flex items-center gap-1 shrink-0');
+      btns.appendChild(briefBtn('✉️ Maila rest', 'Mailutkast om positionerna som inte levererats in', () => {
+        const rows = undeliveredRows(orderNr);
+        if (!rows.length) { toast('Inga kvarvarande positioner hittades — öppna ordern och kolla'); return; }
+        openRestMail(orderNr, rows[0].supplier_name || '', rows);
+      }));
+      btns.appendChild(briefBtn('Visa ordern', '', () => briefShowOrder(orderNr), 'btn-ghost btn-sm'));
+      line.appendChild(btns);
+      sec.appendChild(line);
+    }
+    body.appendChild(sec);
+    anyDeliverySection = true;
+  }
+
+  if (!anyDeliverySection) {
+    body.appendChild(briefEl('div', 'text-center italic text-slate-400 py-4',
+      '🎉 Inget som väntar — inga leveranser idag, inga försenade och inga saknade cert.'));
+  }
+  if (dismissedCount) {
+    body.appendChild(briefEl('div', 'text-xs text-slate-400', dismissedCount + ' avfärdade idag — kommer tillbaka imorgon om läget kvarstår.'));
+  }
+
+  // ✅ Att göra — alltid med, inklusive formulär för nya punkter.
+  const tsec = briefSection('✅ Att göra' + ((b.tasks || []).length ? ' (' + b.tasks.length + ')' : ''));
+  const tlist = briefEl('div', 'space-y-1');
+  const today = upcomingToday();
+  for (const t of (b.tasks || [])) {
+    const line = briefEl('div', 'flex items-center gap-2 rounded-md border border-slate-200 dark:border-slate-800 px-3 py-1.5');
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.title = 'Bocka av';
+    cb.addEventListener('change', () => briefTaskMutation('/api/tasks/done', t.id));
+    line.appendChild(cb);
+    const label = t.text + (t.order_number ? ' (order ' + t.order_number + ')' : '');
+    const txt = briefEl('span', 'flex-1 min-w-0 truncate', (t.source === 'sickan' ? '🤖 ' : '') + label);
+    txt.title = label;
+    line.appendChild(txt);
+    if (t.due_date) {
+      const cls = t.due_date < today ? 'badge-red' : (t.due_date === today ? 'badge-yellow' : 'badge-gray');
+      line.appendChild(briefEl('span', cls, t.due_date));
+    }
+    line.appendChild(briefBtn('x', 'Ta bort utan att bocka av', () => briefTaskMutation('/api/tasks/delete', t.id), 'btn-ghost btn-sm'));
+    tlist.appendChild(line);
+  }
+  if (!(b.tasks || []).length) tlist.appendChild(briefEl('div', 'text-xs italic text-slate-400', 'Inget på listan'));
+  tsec.appendChild(tlist);
+  const form = briefEl('div', 'flex items-center gap-2 pt-1');
+  const ti = briefEl('input', 'input-field !py-1.5 flex-1');
+  ti.id = 'briefTaskText';
+  ti.placeholder = 'Ny punkt… (t.ex. "ring om order B123")';
+  ti.value = savedText;
+  ti.addEventListener('keydown', e => { if (e.key === 'Enter') briefAddTask(); });
+  const td = document.createElement('input');
+  td.type = 'date';
+  td.id = 'briefTaskDate';
+  td.className = 'input-field !py-1.5 w-40';
+  td.value = savedDate;
+  form.appendChild(ti); form.appendChild(td);
+  form.appendChild(briefBtn('Lägg till', '', briefAddTask));
+  tsec.appendChild(form);
+  body.appendChild(tsec);
 }
 
 // --- Kommande inleveranser ---
@@ -2280,7 +2662,7 @@ document.getElementById('sickanInput').addEventListener('keydown', e => {
   }
 });
 
-loadConfig().then(() => { loadQueue(); loadReview(); loadCosts(); });
+loadConfig().then(() => { loadQueue(); loadReview(); loadCosts(); loadUpcoming(); loadBrief(); });
 </script>
 </body>
 </html>

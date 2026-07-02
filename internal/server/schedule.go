@@ -55,6 +55,7 @@ func (s *Server) upcomingScheduleLoop(ctx context.Context) {
 			return
 		case <-t.C:
 			s.maybeScheduledRefresh()
+			s.maybeMorningBrief()
 		}
 	}
 }
@@ -108,6 +109,11 @@ func (s *Server) runUpcomingRefresh(ctx context.Context) {
 		s.Logf("⚠️ kunde inte spara last_run: %v", err)
 	}
 	s.BroadcastUpcoming()
+	// Briefen speglar databasen — bygg om den efter varje refresh (även en
+	// misslyckad: stommen ur senast kända data är bättre än en gammal brief).
+	if cfg.BriefEnabled {
+		s.generateBrief()
+	}
 }
 
 func (s *Server) lastUpcomingRun() time.Time {

@@ -19,6 +19,9 @@ const (
 	DefaultUpcomingBackDays   = 365
 )
 
+// DefaultBriefTime är morgonbriefens schemalagda tid.
+const DefaultBriefTime = "06:45"
+
 type Config struct {
 	InboxDir    string `json:"inbox_dir"`
 	ApiKey      string `json:"api_key,omitempty"`
@@ -57,6 +60,13 @@ type Config struct {
 	// ReportEmail är mottagaren för avvikelsemail ("Maila Daniel"): mailto-utkast
 	// om positioner som inte levererades in vid en delleverans.
 	ReportEmail string `json:"report_email,omitempty"`
+
+	// Morgonbrief ("Idag"-fliken): BriefEnabled slår på generering (kräver i
+	// praktiken UpcomingEnabled för färsk Monitor-data); BriefTime är den
+	// schemalagda morgontiden — briefen byggs dessutom alltid vid appöppning
+	// på en ny dag.
+	BriefEnabled bool   `json:"brief_enabled"`
+	BriefTime    string `json:"brief_time,omitempty"`
 }
 
 // NormalizeUpcoming sätter defaults och avvisar ogiltig UpcomingTime. Anropas
@@ -74,6 +84,12 @@ func (c *Config) NormalizeUpcoming() {
 	}
 	if c.UpcomingBackDays <= 0 {
 		c.UpcomingBackDays = DefaultUpcomingBackDays
+	}
+	if strings.TrimSpace(c.BriefTime) == "" {
+		c.BriefTime = DefaultBriefTime
+	} else if _, err := time.Parse("15:04", c.BriefTime); err != nil {
+		log.Printf("⚠️  ogiltig brief_time %q — använder default %s", c.BriefTime, DefaultBriefTime)
+		c.BriefTime = DefaultBriefTime
 	}
 }
 

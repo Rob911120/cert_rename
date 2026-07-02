@@ -246,5 +246,7 @@ func NewMux(s *Server) *http.ServeMux {
 	mux.HandleFunc("/api/tasks", s.handleTasks)
 	mux.HandleFunc("/api/tasks/done", s.handleTaskDone)
 	mux.HandleFunc("/api/tasks/delete", s.handleTaskDelete)
+	mux.HandleFunc("/api/brief", s.handleBrief)
+	mux.HandleFunc("/api/brief/dismiss", s.handleBriefDismiss)
 	return mux
 }

@@ -41,6 +41,8 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 			"upcoming_window_days": c.UpcomingWindowDays,
 			"upcoming_back_days":   c.UpcomingBackDays,
 			"report_email":         c.ReportEmail,
+			"brief_enabled":        c.BriefEnabled,
+			"brief_time":           c.BriefTime,
 		})
 		return
 	}
