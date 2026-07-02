@@ -993,7 +993,7 @@ function renderOrderGroup(orderKey, items, enabled) {
   const flags = [];
   if (overdue) flags.push('<span class="badge-red">⏰ ' + overdue + ' försenad' + (overdue > 1 ? 'e' : '') + '</span>');
   if (mismatches) flags.push('<span class="badge-red">⚠ ' + mismatches + ' avvikelse' + (mismatches > 1 ? 'r' : '') + '</span>');
-  else if (missing) flags.push('<span class="badge-yellow">⚠ ' + missing + ' saknar cert</span>');
+  else if (missing) flags.push('<span class="badge-yellow cert-missing-badge cursor-pointer hover:underline" title="Skapa mailutkast om saknade cert">⚠ ' + missing + ' saknar cert</span>');
   const badge = flags.length ? flags.join(' ') : '<span class="text-slate-300 dark:text-slate-600">✓</span>';
   const allDelivered = items.every(r => r.local_status === 'delivered');
   const open = upcomingOpen.orders.has(orderKey);
@@ -1036,6 +1036,17 @@ function renderOrderGroup(orderKey, items, enabled) {
     '<span class="justify-self-start whitespace-nowrap overflow-hidden">' + badge + '</span>';
   while (restHtml.firstChild) toggleArea.appendChild(restHtml.firstChild);
 
+  // Klick på "⚠ N saknar cert"-badgen öppnar cert-mailutkastet direkt
+  // (utan att fälla ut ordern).
+  const certMissingRows = () => items.filter(r => r.cert_status === 'missing');
+  const missingBadgeEl = toggleArea.querySelector('.cert-missing-badge');
+  if (missingBadgeEl) {
+    missingBadgeEl.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openCertMissingMail(orderKey, supplier, certMissingRows());
+    });
+  }
+
   // Representativ rad för anropet: en ev. materialavvikelse ska alltid styra
   // hård-spärren, oavsett vilken artikelrad som råkar stå först.
   const blockerRow = items.find(r => r.material_ok === 'mismatch') || items[0];
@@ -1056,6 +1067,19 @@ function renderOrderGroup(orderKey, items, enabled) {
 
   const undelivered = items.filter(r => r.local_status !== 'delivered');
   const partiallyDelivered = undelivered.length > 0 && undelivered.length < items.length;
+
+  // "Maila cert" — när ordern har positioner som saknar materialcert.
+  if (missing > 0) {
+    const certMailBtn = document.createElement('button');
+    certMailBtn.className = 'btn-ghost btn-sm';
+    certMailBtn.textContent = '✉️ Maila cert';
+    certMailBtn.title = 'Skapa mailutkast om saknade cert (' + missing + ' pos)';
+    certMailBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openCertMissingMail(orderKey, supplier, certMissingRows());
+    });
+    actions.appendChild(certMailBtn);
+  }
 
   // "Maila rest" — bara vid delleverans: utkast till Daniel om positioner som är kvar.
   if (partiallyDelivered) {
@@ -1384,25 +1408,50 @@ function undeliveredRows(orderKey, excludeIds = new Set()) {
     r.local_status !== 'delivered' && !excludeIds.has(String(r.delivery_row_id)));
 }
 
-// openRestMail öppnar ett mailto-utkast till avvikelseadressen (⚙️ Inställningar)
-// med de positioner på ordern som INTE levererats in.
-function openRestMail(orderKey, supplier, rows) {
+// openMailDraft öppnar ett mailto-utkast till avvikelseadressen (⚙️ Inställningar).
+// Saknas adressen öppnas panelen med fokus på fältet istället.
+function openMailDraft(subject, body) {
   if (!cfg.report_email) {
     toast('✉️ Fyll i adressen för avvikelsemail i ⚙️ Inställningar först', 8000);
     openSettings(); switchPanelTab('settings');
     setTimeout(() => document.getElementById('reportEmailInput').focus(), 250);
     return;
   }
-  const lines = rows.map(r => '- ' + (r.part_number || ('art ' + r.part_id)) +
-    (rowDescription(r) ? ' — ' + rowDescription(r) : '') +
-    (r.planned_qty ? ', ' + r.planned_qty + ' st' : '') +
-    (r.delivery_date ? ', lev.datum ' + r.delivery_date : ''));
-  const subject = 'Order ' + orderKey + ' — ej inlevererade positioner';
-  const body = 'Hej Daniel,\n\n' +
-    'Följande positioner på order ' + orderKey + (supplier ? ' (' + supplier + ')' : '') +
-    ' levererades inte in:\n\n' + lines.join('\n') + '\n\n';
   window.location.href = 'mailto:' + encodeURIComponent(cfg.report_email) +
     '?subject=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(body);
+}
+
+// orderSubject: "Order B123 (Leverantör AB) — <suffix>". Leverantören i ämnet
+// gör att utkasten kan sorteras per leverantör i mottagarens inkorg.
+function orderSubject(orderKey, supplier, suffix) {
+  return 'Order ' + orderKey + (supplier ? ' (' + supplier + ')' : '') + ' — ' + suffix;
+}
+
+// positionLine: "- ART-123 — Benämning, 5 st, lev.datum 2026-07-01" (+ ev. extra).
+function positionLine(r, extra = '') {
+  return '- ' + (r.part_number || ('art ' + r.part_id)) +
+    (rowDescription(r) ? ' — ' + rowDescription(r) : '') +
+    (r.planned_qty ? ', ' + r.planned_qty + ' st' : '') +
+    (r.delivery_date ? ', lev.datum ' + r.delivery_date : '') + extra;
+}
+
+// openRestMail: utkast om de positioner på ordern som INTE levererats in.
+function openRestMail(orderKey, supplier, rows) {
+  const body = 'Hej Daniel,\n\n' +
+    'Följande positioner på order ' + orderKey + (supplier ? ' (' + supplier + ')' : '') +
+    ' levererades inte in:\n\n' + rows.map(r => positionLine(r)).join('\n') + '\n\n';
+  openMailDraft(orderSubject(orderKey, supplier, 'ej inlevererade positioner'), body);
+}
+
+// openCertMissingMail: utkast om de positioner på ordern som saknar materialcert.
+// Cert-kravet (t.ex. "3.1") tas med per rad — det är det som ska jagas in.
+function openCertMissingMail(orderKey, supplier, rows) {
+  const body = 'Hej Daniel,\n\n' +
+    'Följande positioner på order ' + orderKey + (supplier ? ' (' + supplier + ')' : '') +
+    ' saknar materialcert:\n\n' +
+    rows.map(r => positionLine(r, r.required_cert ? ', krav: ' + r.required_cert : '')).join('\n') +
+    '\n\n';
+  openMailDraft(orderSubject(orderKey, supplier, 'cert saknas'), body);
 }
 
 function fmtWhen(iso) {
