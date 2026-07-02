@@ -245,16 +245,12 @@ func TestGetRaw_ReturnsUnparsedBytes(t *testing.T) {
 func TestQuery_BuildsODataParams(t *testing.T) {
 	vals := NewQuery().
 		Filter("ChargeNumber eq '1'").
-		Select("Id", "ChargeNumber").
 		Expand("Rows").
 		OrderBy("Id desc").
 		Top(5).
 		Values()
 	if vals.Get("$filter") != "ChargeNumber eq '1'" {
 		t.Errorf("$filter = %q", vals.Get("$filter"))
-	}
-	if vals.Get("$select") != "Id,ChargeNumber" {
-		t.Errorf("$select = %q", vals.Get("$select"))
 	}
 	if vals.Get("$expand") != "Rows" {
 		t.Errorf("$expand = %q", vals.Get("$expand"))
@@ -587,7 +583,10 @@ func TestOrderRow_DecodesInlinePartAndCapturesRaw(t *testing.T) {
 }
 
 func TestQuery_Skip(t *testing.T) {
-	vals := NewQuery().Skip(20).Top(10).Values()
+	// Paginering sätter skip-fältet direkt (som client.go gör).
+	q := NewQuery().Top(10)
+	q.skip = 20
+	vals := q.Values()
 	if vals.Get("$skip") != "20" {
 		t.Errorf("$skip = %q, vill ha 20", vals.Get("$skip"))
 	}
@@ -595,20 +594,7 @@ func TestQuery_Skip(t *testing.T) {
 		t.Errorf("$top = %q, vill ha 10", vals.Get("$top"))
 	}
 	// Skip 0 ska utelämnas (annars trasslar paginering med skip=0).
-	if got := NewQuery().Skip(0).Values().Get("$skip"); got != "" {
-		t.Errorf("$skip för Skip(0) = %q, vill ha tomt", got)
-	}
-}
-
-func TestODataDate(t *testing.T) {
-	tm := time.Date(2026, 6, 25, 16, 30, 0, 0, time.UTC)
-	if got := odataDate(tm); got != "2026-06-25T16:30:00Z" {
-		t.Errorf("odataDate = %q, vill ha 2026-06-25T16:30:00Z", got)
-	}
-	// Ska normaliseras till UTC oavsett inkommande zon.
-	loc := time.FixedZone("CEST", 2*60*60)
-	tm2 := time.Date(2026, 6, 25, 18, 30, 0, 0, loc) // = 16:30 UTC
-	if got := odataDate(tm2); got != "2026-06-25T16:30:00Z" {
-		t.Errorf("odataDate(zon) = %q, vill ha 2026-06-25T16:30:00Z", got)
+	if got := NewQuery().Values().Get("$skip"); got != "" {
+		t.Errorf("$skip för skip=0 = %q, vill ha tomt", got)
 	}
 }

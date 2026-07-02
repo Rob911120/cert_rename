@@ -65,17 +65,32 @@ func (ss *sickanSessions) clear(id string) {
 	}
 }
 
+// persistSickanModel sätter sessionens modell och sparar valet i config
+// (om det ändrats) så det överlever omstart.
+func (s *Server) persistSickanModel(session, model string) {
+	s.sickanSess.setModel(session, model)
+	s.mu.Lock()
+	if s.cfg.SickanModel == model {
+		s.mu.Unlock()
+		return
+	}
+	s.cfg.SickanModel = model
+	cfg := s.cfg
+	s.mu.Unlock()
+	if err := store.SaveConfig(cfg); err != nil {
+		s.Logf("⚠️  Kunde inte spara config (sickan-modell): %v", err)
+	}
+}
+
 func (s *Server) handleSickanModel(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", 405)
+	if !requirePOST(w, r) {
 		return
 	}
 	var body struct {
 		Session string `json:"session"`
 		Model   string `json:"model"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, err.Error(), 400)
+	if !decodeJSON(w, r, &body) {
 		return
 	}
 	if body.Session == "" {
@@ -85,22 +100,12 @@ func (s *Server) handleSickanModel(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "okänd modell", 400)
 		return
 	}
-	s.sickanSess.setModel(body.Session, body.Model)
-	s.mu.Lock()
-	if s.cfg.SickanModel != body.Model {
-		s.cfg.SickanModel = body.Model
-		cfg := s.cfg
-		s.mu.Unlock()
-		_ = store.SaveConfig(cfg)
-	} else {
-		s.mu.Unlock()
-	}
+	s.persistSickanModel(body.Session, body.Model)
 	w.WriteHeader(204)
 }
 
 func (s *Server) handleSickanReset(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", 405)
+	if !requirePOST(w, r) {
 		return
 	}
 	var body struct {
@@ -115,8 +120,7 @@ func (s *Server) handleSickanReset(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleSickanStream(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", 405)
+	if !requirePOST(w, r) {
 		return
 	}
 	var body struct {
@@ -124,8 +128,7 @@ func (s *Server) handleSickanStream(w http.ResponseWriter, r *http.Request) {
 		Text    string `json:"text"`
 		Model   string `json:"model"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, err.Error(), 400)
+	if !decodeJSON(w, r, &body) {
 		return
 	}
 	if body.Session == "" {
@@ -163,16 +166,7 @@ func (s *Server) handleSickanStream(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if body.Model != "" && ai.ChatCostKey(body.Model) != "" {
-		s.sickanSess.setModel(body.Session, body.Model)
-		s.mu.Lock()
-		if s.cfg.SickanModel != body.Model {
-			s.cfg.SickanModel = body.Model
-			cfg := s.cfg
-			s.mu.Unlock()
-			_ = store.SaveConfig(cfg)
-		} else {
-			s.mu.Unlock()
-		}
+		s.persistSickanModel(body.Session, body.Model)
 	} else if c.SickanModel != "" {
 		// Första request i sessionen utan explicit modell — använd
 		// senast sparade från config.

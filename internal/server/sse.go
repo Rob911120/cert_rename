@@ -25,21 +25,29 @@ func (s *Server) broadcast(ev ssEvent) {
 	}
 }
 
-func (s *Server) BroadcastStats() {
+// statsPayload bygger stats-eventets JSON. "approved" räknas från disk så
+// "klara"-räknaren i UI:t överlever sidladdningar.
+func (s *Server) statsPayload() string {
 	s.mu.Lock()
 	c := s.cfg
 	s.mu.Unlock()
-	var rev, arc int64
+	var rev, arc, app int64
 	if c.InboxDir != "" {
 		rev = store.CountSubdirs(store.ReviewDir(c))
 		arc = store.CountSubdirs(store.ArkiveratDir(c))
+		app = store.CountFiles(store.ApprovedDir(c))
 	}
 	payload, _ := json.Marshal(map[string]int64{
 		"ok":       s.stats.OK.Load(),
 		"review":   rev,
 		"archived": arc,
+		"approved": app,
 	})
-	s.broadcast(ssEvent{Event: "stats", Data: string(payload)})
+	return string(payload)
+}
+
+func (s *Server) BroadcastStats() {
+	s.broadcast(ssEvent{Event: "stats", Data: s.statsPayload()})
 }
 
 func (s *Server) BroadcastQueue()  { s.broadcast(ssEvent{Event: "queue", Data: "{}"}) }
@@ -80,9 +88,15 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	}
 	flusher.Flush()
 
-	// initial state + stats
-	s.BroadcastStats()
-	s.broadcastStateInternal()
+	// Initial state + stats skickas bara till den nyanslutna klienten —
+	// en broadcast här skulle trigga en onödig disk-scan hos alla andra.
+	s.mu.Lock()
+	running := s.running
+	s.mu.Unlock()
+	statePayload, _ := json.Marshal(map[string]bool{"running": running})
+	fmt.Fprintf(w, "event: stats\ndata: %s\n\n", s.statsPayload())
+	fmt.Fprintf(w, "event: state\ndata: %s\n\n", statePayload)
+	flusher.Flush()
 
 	ka := time.NewTicker(15 * time.Second)
 	defer ka.Stop()

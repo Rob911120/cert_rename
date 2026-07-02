@@ -86,13 +86,6 @@ CREATE TABLE IF NOT EXISTS cost_entries (
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE TABLE IF NOT EXISTS chat_sessions (
-    id TEXT PRIMARY KEY,
-    model TEXT NOT NULL,
-    history_json TEXT NOT NULL,
-    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
 CREATE TABLE IF NOT EXISTS delivery_notes (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     image_filename TEXT NOT NULL,

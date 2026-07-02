@@ -11,7 +11,6 @@ import (
 	"runtime"
 	"strings"
 
-	"cert-renamer/internal/cert"
 	"cert-renamer/internal/store"
 	"cert-renamer/internal/worker"
 )
@@ -74,7 +73,9 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		c.NormalizeUpcoming() // defaulta/validera UpcomingTime + WindowDays
 		s.cfg = c
 		s.mu.Unlock()
-		_ = store.SaveConfig(c)
+		if err := store.SaveConfig(c); err != nil {
+			s.Logf("⚠️  Kunde inte spara config: %v", err)
+		}
 		w.WriteHeader(204)
 		return
 	}
@@ -105,24 +106,20 @@ func (s *Server) handlePickFolder(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]string{"path": path})
 }
 
-func (s *Server) handleFile(w http.ResponseWriter, r *http.Request) {
+// resolveRequestFile validerar kind/name/base-parametrarna och returnerar den
+// verifierade sökvägen innanför rätt mapp. Delas av handleFile och handleOpen.
+func (s *Server) resolveRequestFile(w http.ResponseWriter, r *http.Request) (string, bool) {
 	q := r.URL.Query()
 	kind := q.Get("kind")
 	name := q.Get("name")
 	base := q.Get("base")
-	badName := func(v string) bool {
-		return v == "" || strings.ContainsAny(v, `/\`) || strings.Contains(v, "..")
+	if !store.SafeName(name) {
+		http.Error(w, "ogiltigt namn", http.StatusBadRequest)
+		return "", false
 	}
-	if badName(name) {
-		http.Error(w, "ogiltigt namn", 400)
-		return
-	}
-	s.mu.Lock()
-	c := s.cfg
-	s.mu.Unlock()
-	if c.InboxDir == "" {
-		http.Error(w, "ingen inbox vald", 400)
-		return
+	c, ok := s.requireInbox(w)
+	if !ok {
+		return "", false
 	}
 	var dir string
 	switch kind {
@@ -131,22 +128,29 @@ func (s *Server) handleFile(w http.ResponseWriter, r *http.Request) {
 	case "approved":
 		dir = store.ApprovedDir(c)
 	case "review":
-		if badName(base) {
-			http.Error(w, "ogiltig base", 400)
-			return
+		if !store.SafeName(base) {
+			http.Error(w, "ogiltig base", http.StatusBadRequest)
+			return "", false
 		}
 		dir = filepath.Join(store.ReviewDir(c), base)
 	default:
-		http.Error(w, "ogiltig kind", 400)
+		http.Error(w, "ogiltig kind", http.StatusBadRequest)
+		return "", false
+	}
+	full := filepath.Clean(filepath.Join(dir, name))
+	if !strings.HasPrefix(full, filepath.Clean(dir)+string(os.PathSeparator)) {
+		http.Error(w, "ogiltig sökväg", http.StatusBadRequest)
+		return "", false
+	}
+	return full, true
+}
+
+func (s *Server) handleFile(w http.ResponseWriter, r *http.Request) {
+	full, ok := s.resolveRequestFile(w, r)
+	if !ok {
 		return
 	}
-	full := filepath.Join(dir, name)
-	cleanFull := filepath.Clean(full)
-	cleanDir := filepath.Clean(dir)
-	if !strings.HasPrefix(cleanFull, cleanDir+string(os.PathSeparator)) {
-		http.Error(w, "ogiltig sökväg", 400)
-		return
-	}
+	name := filepath.Base(full)
 	switch strings.ToLower(filepath.Ext(name)) {
 	case ".pdf":
 		w.Header().Set("Content-Type", "application/pdf")
@@ -154,51 +158,15 @@ func (s *Server) handleFile(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "message/rfc822")
 	}
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`inline; filename=%q`, name))
-	http.ServeFile(w, r, cleanFull)
+	http.ServeFile(w, r, full)
 }
 
 func (s *Server) handleOpen(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", 405)
+	if !requirePOST(w, r) {
 		return
 	}
-	q := r.URL.Query()
-	kind := q.Get("kind")
-	name := q.Get("name")
-	base := q.Get("base")
-	badName := func(v string) bool {
-		return v == "" || strings.ContainsAny(v, `/\`) || strings.Contains(v, "..")
-	}
-	if badName(name) {
-		http.Error(w, "ogiltigt namn", 400)
-		return
-	}
-	s.mu.Lock()
-	c := s.cfg
-	s.mu.Unlock()
-	if c.InboxDir == "" {
-		http.Error(w, "ingen inbox vald", 400)
-		return
-	}
-	var dir string
-	switch kind {
-	case "queue":
-		dir = store.QueueDir(c)
-	case "approved":
-		dir = store.ApprovedDir(c)
-	case "review":
-		if badName(base) {
-			http.Error(w, "ogiltig base", 400)
-			return
-		}
-		dir = filepath.Join(store.ReviewDir(c), base)
-	default:
-		http.Error(w, "ogiltig kind", 400)
-		return
-	}
-	full := filepath.Clean(filepath.Join(dir, name))
-	if !strings.HasPrefix(full, filepath.Clean(dir)+string(os.PathSeparator)) {
-		http.Error(w, "ogiltig sökväg", 400)
+	full, ok := s.resolveRequestFile(w, r)
+	if !ok {
 		return
 	}
 	if _, err := os.Stat(full); err != nil {
@@ -229,27 +197,22 @@ func openLocalFile(path string) error {
 }
 
 func (s *Server) handleApprove(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", 405)
+	if !requirePOST(w, r) {
 		return
 	}
 	var body struct {
 		Filename string `json:"filename"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, err.Error(), 400)
+	if !decodeJSON(w, r, &body) {
 		return
 	}
 	name := body.Filename
-	if name == "" || strings.Contains(name, "/") || strings.Contains(name, "\\") || strings.Contains(name, "..") {
+	if !store.SafeName(name) {
 		http.Error(w, "ogiltigt filnamn", 400)
 		return
 	}
-	s.mu.Lock()
-	c := s.cfg
-	s.mu.Unlock()
-	if c.InboxDir == "" {
-		http.Error(w, "ingen inbox vald", 400)
+	c, ok := s.requireInbox(w)
+	if !ok {
 		return
 	}
 	if _, err := store.ApproveQueueItem(c, name); err != nil {
@@ -267,31 +230,27 @@ func (s *Server) handleApprove(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.BroadcastQueue()
+	s.BroadcastStats()
 	w.WriteHeader(204)
 }
 
 func (s *Server) handleArchive(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", 405)
+	if !requirePOST(w, r) {
 		return
 	}
 	var body struct {
 		Base string `json:"base"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, err.Error(), 400)
+	if !decodeJSON(w, r, &body) {
 		return
 	}
 	base := body.Base
-	if base == "" || strings.Contains(base, "/") || strings.Contains(base, "\\") || strings.Contains(base, "..") {
+	if !store.SafeName(base) {
 		http.Error(w, "ogiltig base", 400)
 		return
 	}
-	s.mu.Lock()
-	c := s.cfg
-	s.mu.Unlock()
-	if c.InboxDir == "" {
-		http.Error(w, "ingen inbox vald", 400)
+	c, ok := s.requireInbox(w)
+	if !ok {
 		return
 	}
 	src := filepath.Join(store.ReviewDir(c), base)
@@ -315,8 +274,7 @@ func (s *Server) handleArchive(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handlePromoteReview(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", 405)
+	if !requirePOST(w, r) {
 		return
 	}
 	var body struct {
@@ -328,59 +286,28 @@ func (s *Server) handlePromoteReview(w http.ResponseWriter, r *http.Request) {
 		Dimensions  string   `json:"dimensions"`
 		BNumbers    []string `json:"b_numbers"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, err.Error(), 400)
+	if !decodeJSON(w, r, &body) {
 		return
 	}
-	s.mu.Lock()
-	c := s.cfg
-	s.mu.Unlock()
-	if c.InboxDir == "" {
-		http.Error(w, "ingen inbox vald", 400)
+	c, ok := s.requireInbox(w)
+	if !ok {
 		return
 	}
-	ext := &cert.Extraction{
-		IsEN10204_3_1:     true,
-		CertType:          "3.1",
-		Charge:            body.Charge,
-		Material:          body.Material,
-		EnStandardPresent: true, // människan har granskat och bekräftat certet manuellt
-		ProductForm:       body.ProductForm,
-		Dimensions:        body.Dimensions,
-		Confidence:        "high",
-	}
-	newName, err := store.PromoteReviewToQueue(c, body.Base, body.PdfFilename, ext, body.BNumbers)
+	newName, insertErr, err := store.PromoteReview(c, s.repo, store.PromoteReviewInput{
+		Base:        body.Base,
+		PdfFilename: body.PdfFilename,
+		Charge:      body.Charge,
+		Material:    body.Material,
+		ProductForm: body.ProductForm,
+		Dimensions:  body.Dimensions,
+		BNumbers:    body.BNumbers,
+	})
 	if err != nil {
 		http.Error(w, err.Error(), 400)
 		return
 	}
-
-	// Infoga i DB
-	if s.repo != nil {
-		metaPath := filepath.Join(store.QueueDir(c), newName)
-		if m, ok := store.ReadMetadata(metaPath); ok {
-			cert := &store.Certificate{
-				PDFHash:           m.Hash,
-				Filename:          newName,
-				OriginalFilename:  m.OriginalFilename,
-				CertType:          "3.1",
-				Charge:            m.Charge,
-				Material:          m.Material,
-				EnStandardPresent: m.EnStandardPresent,
-				ProductForm:       m.ProductForm,
-				Dimensions:        m.Dimensions,
-				CountryOfOrigin:   m.CountryOfOrigin,
-				BNumbers:          marshalJSON(m.BNumbers),
-				Confidence:        m.Confidence,
-				Issues:            marshalJSON(m.Issues),
-				ModelUsed:         m.ModelUsed,
-				Status:            "queue",
-				ExtractedAt:       m.ExtractedAt,
-			}
-			if _, insertErr := s.repo.InsertCertificate(cert); insertErr != nil {
-				s.Logf("⚠️  DB-insert vid promote misslyckades: %v", insertErr)
-			}
-		}
+	if insertErr != nil {
+		s.Logf("⚠️  DB-insert vid promote misslyckades: %v", insertErr)
 	}
 
 	s.BroadcastQueue()
@@ -391,6 +318,9 @@ func (s *Server) handlePromoteReview(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleStart(w http.ResponseWriter, r *http.Request) {
+	if !requirePOST(w, r) {
+		return
+	}
 	if err := s.startWorker(); err != nil {
 		http.Error(w, err.Error(), 400)
 		return
@@ -436,6 +366,9 @@ func (s *Server) startWorker() error {
 }
 
 func (s *Server) handleStop(w http.ResponseWriter, r *http.Request) {
+	if !requirePOST(w, r) {
+		return
+	}
 	s.mu.Lock()
 	if s.cancelFn != nil {
 		s.cancelFn()

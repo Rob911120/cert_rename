@@ -313,69 +313,19 @@ var listImprovementsTool = anthropic.ToolParam{
 // ---------------------------------------------------------------------------
 
 func (tb *Toolbox) listQueue() (string, error) {
-	// Använd DB om tillgänglig, annars fallback till filsystem
-	if tb.Repo != nil {
-		certs, err := tb.Repo.ListCertificates("queue")
-		if err != nil {
-			return "", err
-		}
-		items := make([]store.QueueItem, 0, len(certs))
-		for _, c := range certs {
-			item := store.QueueItem{
-				Filename:    c.Filename,
-				Charge:      c.Charge,
-				Material:    c.Material,
-				ProductForm: c.ProductForm,
-				Dimensions:  c.Dimensions,
-				Confidence:  c.Confidence,
-			}
-			if c.BNumbers != "" {
-				_ = json.Unmarshal([]byte(c.BNumbers), &item.BNumbers)
-			}
-			if c.Issues != "" {
-				_ = json.Unmarshal([]byte(c.Issues), &item.Issues)
-			}
-			items = append(items, item)
-		}
-		out, _ := json.Marshal(map[string]any{"items": items, "count": len(items)})
-		return string(out), nil
+	// Samma lista som HTTP-API:t (DB + disk-komplettering). Utan DB tillämpas
+	// Sickans sparade kö-ordning på filsystemslistan, som tidigare.
+	items := store.ListQueueItems(tb.Cfg, tb.Repo)
+	if tb.Repo == nil {
+		items = Apply(tb.Cfg, items)
 	}
-	// Fallback till filsystem
-	items := readQueue(tb.Cfg)
-	items = Apply(tb.Cfg, items)
 	out, _ := json.Marshal(map[string]any{"items": items, "count": len(items)})
 	return string(out), nil
 }
 
 func (tb *Toolbox) listReview() (string, error) {
-	if tb.Cfg.InboxDir == "" {
-		return `{"items":[],"count":0}`, nil
-	}
-	entries, err := os.ReadDir(store.ReviewDir(tb.Cfg))
-	if err != nil {
-		return `{"items":[],"count":0}`, nil
-	}
-	out := []store.ReviewItem{}
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		dir := filepath.Join(store.ReviewDir(tb.Cfg), e.Name())
-		item := store.ReviewItem{Base: e.Name(), Files: []string{}}
-		if data, err := os.ReadFile(filepath.Join(dir, "_reason.txt")); err == nil {
-			item.Reason = strings.TrimSpace(string(data))
-		}
-		if files, err := os.ReadDir(dir); err == nil {
-			for _, f := range files {
-				if f.IsDir() || f.Name() == "_reason.txt" {
-					continue
-				}
-				item.Files = append(item.Files, f.Name())
-			}
-		}
-		out = append(out, item)
-	}
-	b, _ := json.Marshal(map[string]any{"items": out, "count": len(out)})
+	items := store.ListReviewItems(tb.Cfg)
+	b, _ := json.Marshal(map[string]any{"items": items, "count": len(items)})
 	return string(b), nil
 }
 
@@ -530,7 +480,9 @@ func (tb *Toolbox) updateQueue(input json.RawMessage) (string, error) {
 	// Uppdatera filnamn i DB
 	if tb.Repo != nil && finalName != args.Filename {
 		if cert, err := tb.Repo.GetCertificateByFilename(args.Filename); err == nil {
-			_ = tb.Repo.UpdateCertificateFilename(cert.ID, finalName)
+			if uerr := tb.Repo.UpdateCertificateFilename(cert.ID, finalName); uerr != nil {
+				tb.N.Logf("⚠️  DB-filnamnsuppdatering misslyckades för %s: %v", finalName, uerr)
+			}
 		}
 	}
 
@@ -553,47 +505,20 @@ func (tb *Toolbox) promoteReview(input json.RawMessage) (string, error) {
 	if err := json.Unmarshal(input, &args); err != nil {
 		return "", err
 	}
-	ext := &cert.Extraction{
-		IsEN10204_3_1:     true,
-		CertType:          "3.1",
-		Charge:            args.Charge,
-		Material:          args.Material,
-		EnStandardPresent: true, // människan har granskat och bekräftat certet manuellt
-		ProductForm:       args.ProductForm,
-		Dimensions:        args.Dimensions,
-		Confidence:        "high",
-	}
-	newName, err := store.PromoteReviewToQueue(tb.Cfg, args.Base, args.PdfFilename, ext, args.BNumbers)
+	newName, insertErr, err := store.PromoteReview(tb.Cfg, tb.Repo, store.PromoteReviewInput{
+		Base:        args.Base,
+		PdfFilename: args.PdfFilename,
+		Charge:      args.Charge,
+		Material:    args.Material,
+		ProductForm: args.ProductForm,
+		Dimensions:  args.Dimensions,
+		BNumbers:    args.BNumbers,
+	})
 	if err != nil {
 		return "", err
 	}
-
-	// Infoga i DB
-	if tb.Repo != nil {
-		metaPath := filepath.Join(store.QueueDir(tb.Cfg), newName)
-		if m, ok := store.ReadMetadata(metaPath); ok {
-			cert := &store.Certificate{
-				PDFHash:           m.Hash,
-				Filename:          newName,
-				OriginalFilename:  m.OriginalFilename,
-				CertType:          "3.1",
-				Charge:            m.Charge,
-				Material:          m.Material,
-				EnStandardPresent: m.EnStandardPresent,
-				ProductForm:       m.ProductForm,
-				Dimensions:        m.Dimensions,
-				CountryOfOrigin:   m.CountryOfOrigin,
-				BNumbers:          marshalJSON(m.BNumbers),
-				Confidence:        m.Confidence,
-				Issues:            marshalJSON(m.Issues),
-				ModelUsed:         m.ModelUsed,
-				Status:            "queue",
-				ExtractedAt:       m.ExtractedAt,
-			}
-			if _, insertErr := tb.Repo.InsertCertificate(cert); insertErr != nil {
-				tb.N.Logf("⚠️  DB-insert vid promote misslyckades: %v", insertErr)
-			}
-		}
+	if insertErr != nil {
+		tb.N.Logf("⚠️  DB-insert vid promote misslyckades: %v", insertErr)
 	}
 
 	tb.N.BroadcastQueue()
@@ -761,12 +686,8 @@ func (tb *Toolbox) readPdf(input json.RawMessage) (DispatchResult, error) {
 // Helpers
 // ---------------------------------------------------------------------------
 
-func safeName(s string) bool {
-	if s == "" {
-		return false
-	}
-	return !strings.ContainsAny(s, `/\`) && !strings.Contains(s, "..")
-}
+// safeName delar traverseringsregeln med resten av appen — se store.SafeName.
+func safeName(s string) bool { return store.SafeName(s) }
 
 func marshalJSON(v any) string {
 	data, _ := json.Marshal(v)
@@ -781,33 +702,3 @@ func attNames(atts []eml.Attachment) []string {
 	return out
 }
 
-// readQueue duplicerar server.listQueue:s minimala IO så Sickan-paketet inte
-// behöver importera server. Läser bara fält från PDF-metadata; sidecar-JSON
-// täcks av server-versionen och behövs inte här.
-func readQueue(cfg store.Config) []store.QueueItem {
-	if cfg.InboxDir == "" {
-		return []store.QueueItem{}
-	}
-	entries, err := os.ReadDir(store.QueueDir(cfg))
-	if err != nil {
-		return []store.QueueItem{}
-	}
-	out := []store.QueueItem{}
-	for _, e := range entries {
-		if e.IsDir() || !strings.EqualFold(filepath.Ext(e.Name()), ".pdf") {
-			continue
-		}
-		item := store.QueueItem{Filename: e.Name()}
-		if m, ok := store.ReadMetadata(filepath.Join(store.QueueDir(cfg), e.Name())); ok {
-			item.Charge = m.Charge
-			item.Material = m.Material
-			item.ProductForm = m.ProductForm
-			item.Dimensions = m.Dimensions
-			item.BNumbers = m.BNumbers
-			item.Confidence = m.Confidence
-			item.Issues = m.Issues
-		}
-		out = append(out, item)
-	}
-	return out
-}

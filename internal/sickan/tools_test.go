@@ -85,7 +85,7 @@ func Test_Dispatch_ApplyOrder_WritesFile(t *testing.T) {
 		t.Errorf("order på disk: %v", got)
 	}
 	// Apply på listQueue ska sortera om
-	items := readQueue(cfg)
+	items := store.ListQueueItems(cfg, nil)
 	sorted := Apply(cfg, items)
 	if sorted[0].Filename != "b.pdf" {
 		t.Errorf("Apply sorterade inte: %+v", sorted)

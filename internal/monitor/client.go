@@ -387,21 +387,8 @@ func decodePage(data []byte, out any) (string, error) {
 }
 
 // decodeList avkodar antingen ett OData-wrappat svar {"value":[...]} eller en
-// bar JSON-array [...] till out.
+// bar JSON-array [...] till out. Samma logik som decodePage, minus nextLink.
 func decodeList(data []byte, out any) error {
-	t := bytes.TrimSpace(data)
-	if len(t) > 0 && t[0] == '{' {
-		var wrap struct {
-			Value json.RawMessage `json:"value"`
-		}
-		if err := json.Unmarshal(t, &wrap); err != nil {
-			return err
-		}
-		if len(wrap.Value) > 0 {
-			return json.Unmarshal(wrap.Value, out)
-		}
-		// Objekt utan "value" — sista försök: avkoda direkt (kan vara enskild post).
-		return json.Unmarshal(t, out)
-	}
-	return json.Unmarshal(t, out)
+	_, err := decodePage(data, out)
+	return err
 }

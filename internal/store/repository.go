@@ -414,34 +414,6 @@ func (r *Repository) InsertCostEntry(c *CostEntry) (int64, error) {
 	return result.LastInsertId()
 }
 
-// GetTotalCosts returnerar totala kostnader per modell.
-func (r *Repository) GetTotalCosts() (map[string]CostEntry, error) {
-	rows, err := r.db.Query(`
-		SELECT model,
-			COALESCE(SUM(tokens_input), 0),
-			COALESCE(SUM(tokens_output), 0),
-			COALESCE(SUM(tokens_cache_creation), 0),
-			COALESCE(SUM(tokens_cache_read), 0),
-			COALESCE(SUM(usd), 0)
-		FROM cost_entries
-		GROUP BY model`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	costs := make(map[string]CostEntry)
-	for rows.Next() {
-		var c CostEntry
-		if err := rows.Scan(&c.Model, &c.TokensInput, &c.TokensOutput,
-			&c.TokensCacheCreation, &c.TokensCacheRead, &c.USD); err != nil {
-			return nil, err
-		}
-		costs[c.Model] = c
-	}
-	return costs, nil
-}
-
 // --- Delivery note operations (Fas 4: inleverans-trial) ---
 
 // Status-flöde för en följesedel. Livscykeln slutar vid matched_po — själva
@@ -558,33 +530,6 @@ func (r *Repository) UpdateDeliveryNoteMatch(id, poID, rowID int64, status strin
 	_, err := r.db.Exec(
 		`UPDATE delivery_notes SET matched_po_id = ?, matched_row_id = ?, status = ? WHERE id = ?`,
 		poID, rowID, status, id)
-	return err
-}
-
-// --- Chat Session operations ---
-
-// SaveChatSession sparar eller uppdaterar en chat-session.
-func (r *Repository) SaveChatSession(id, model, historyJSON string) error {
-	_, err := r.db.Exec(`
-		INSERT INTO chat_sessions (id, model, history_json, updated_at)
-		VALUES (?, ?, ?, datetime('now'))
-		ON CONFLICT(id) DO UPDATE SET model = ?, history_json = ?, updated_at = datetime('now')`,
-		id, model, historyJSON, model, historyJSON)
-	return err
-}
-
-// LoadChatSession laddar en chat-session.
-func (r *Repository) LoadChatSession(id string) (model, historyJSON string, err error) {
-	err = r.db.QueryRow(`SELECT model, history_json FROM chat_sessions WHERE id = ?`, id).Scan(&model, &historyJSON)
-	if err == sql.ErrNoRows {
-		return "", "", nil
-	}
-	return model, historyJSON, err
-}
-
-// DeleteChatSession tar bort en chat-session.
-func (r *Repository) DeleteChatSession(id string) error {
-	_, err := r.db.Exec(`DELETE FROM chat_sessions WHERE id = ?`, id)
 	return err
 }
 

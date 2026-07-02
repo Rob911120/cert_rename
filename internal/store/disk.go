@@ -59,18 +59,6 @@ func WriteUniqueFile(dir, name string, data []byte) (string, error) {
 	return "", fmt.Errorf("alla suffix upptagna för %s i %s", name, dir)
 }
 
-// EmailRawText returnerar email-body med header-prefix, trunkerad till MaxBodyBytes.
-func EmailRawText(c *eml.Content) string {
-	if c == nil {
-		return ""
-	}
-	body := c.Body
-	if len(body) > eml.MaxBodyBytes {
-		body = body[:eml.MaxBodyBytes] + "\n[trunkerad]"
-	}
-	return fmt.Sprintf("Subject: %s\nFrom: %s\nDate: %s\n\n%s", c.Subject, c.From, c.Date, body)
-}
-
 // MoveToReview kopierar emlPath + (om ej nil) bilagan till review/<base>/ och
 // skriver _reason.txt. Om ext ges bäddas extraktions-fält in i PDF-metadatan.
 func MoveToReview(cfg Config, emlPath string, content *eml.Content, att *eml.Attachment, ext *cert.Extraction, bNums []string, reason string) {
@@ -138,7 +126,6 @@ func ArchiveQueueItem(cfg Config, filename string) (string, error) {
 		return "", err
 	}
 	_ = os.Rename(src+".json", dst+".json")
-	_ = os.Remove(src + ".json")
 	return dst, nil
 }
 
@@ -170,10 +157,10 @@ func RenameQueueItem(cfg Config, oldName, newName string, meta PdfMeta) (string,
 // Status="queue"). Review-mappen raderas efter lyckad promote.
 // Returnerar slutgiltigt filnamn i kön (efter ev. UniquePath-suffix).
 func PromoteReviewToQueue(cfg Config, base, pdfFilename string, ext *cert.Extraction, bNums []string) (string, error) {
-	if !safeName(base) {
+	if !SafeName(base) {
 		return "", fmt.Errorf("ogiltig base")
 	}
-	if !safeName(pdfFilename) {
+	if !SafeName(pdfFilename) {
 		return "", fmt.Errorf("ogiltigt pdf-filnamn")
 	}
 	if !strings.EqualFold(filepath.Ext(pdfFilename), ".pdf") {
@@ -240,9 +227,68 @@ func PromoteReviewToQueue(cfg Config, base, pdfFilename string, ext *cert.Extrac
 	return filepath.Base(dst), nil
 }
 
-// safeName avvisar tomma strängar, path-separatorer och ".." för disk-ops
-// som tar användarinmatade fil-/mappnamn.
-func safeName(s string) bool {
+// PromoteReviewInput är de människo-bekräftade fälten vid promote av en
+// review-post till kön.
+type PromoteReviewInput struct {
+	Base        string
+	PdfFilename string
+	Charge      string
+	Material    string
+	ProductForm string
+	Dimensions  string
+	BNumbers    []string
+}
+
+// PromoteReview kör PromoteReviewToQueue med människo-bekräftade fält och
+// speglar resultatet till databasen. Delas av HTTP-handlern och Sickan-verktyget.
+// insertErr är icke-fatal (disken är redan uppdaterad) och ska loggas av anroparen.
+func PromoteReview(cfg Config, repo *Repository, in PromoteReviewInput) (newName string, insertErr, err error) {
+	ext := &cert.Extraction{
+		IsEN10204_3_1:     true,
+		CertType:          "3.1",
+		Charge:            in.Charge,
+		Material:          in.Material,
+		EnStandardPresent: true, // människan har granskat och bekräftat certet manuellt
+		ProductForm:       in.ProductForm,
+		Dimensions:        in.Dimensions,
+		Confidence:        "high",
+	}
+	newName, err = PromoteReviewToQueue(cfg, in.Base, in.PdfFilename, ext, in.BNumbers)
+	if err != nil {
+		return "", nil, err
+	}
+	if repo != nil {
+		if m, ok := ReadMetadata(filepath.Join(QueueDir(cfg), newName)); ok {
+			c := &Certificate{
+				PDFHash:           m.Hash,
+				Filename:          newName,
+				OriginalFilename:  m.OriginalFilename,
+				CertType:          "3.1",
+				Charge:            m.Charge,
+				Material:          m.Material,
+				EnStandardPresent: m.EnStandardPresent,
+				ProductForm:       m.ProductForm,
+				Dimensions:        m.Dimensions,
+				CountryOfOrigin:   m.CountryOfOrigin,
+				BNumbers:          marshalStringSlice(m.BNumbers),
+				Confidence:        m.Confidence,
+				Issues:            marshalStringSlice(m.Issues),
+				ModelUsed:         m.ModelUsed,
+				Status:            "queue",
+				ExtractedAt:       m.ExtractedAt,
+			}
+			if _, ierr := repo.InsertCertificate(c); ierr != nil {
+				insertErr = ierr
+			}
+		}
+	}
+	return newName, insertErr, nil
+}
+
+// SafeName avvisar tomma strängar, path-separatorer och ".." för operationer
+// som tar användarinmatade fil-/mappnamn. Delas av HTTP-handlers, Sickan-verktyg
+// och disk-ops så traverseringsregeln bara finns på ett ställe.
+func SafeName(s string) bool {
 	if s == "" {
 		return false
 	}

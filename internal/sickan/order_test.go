@@ -55,18 +55,13 @@ func Test_ApplyNoOrderReturnsInput(t *testing.T) {
 	}
 }
 
-func Test_RenameAndRemoveInOrder(t *testing.T) {
+func Test_RenameInOrder(t *testing.T) {
 	cfg := setupCfg(t)
 	_ = SaveOrder(cfg, []string{"old.pdf", "keep.pdf"})
 	RenameInOrder(cfg, "old.pdf", "new.pdf")
 	got := LoadOrder(cfg)
-	if got[0] != "new.pdf" {
+	if len(got) != 2 || got[0] != "new.pdf" || got[1] != "keep.pdf" {
 		t.Errorf("efter rename, fick: %v", got)
-	}
-	RemoveFromOrder(cfg, "keep.pdf")
-	got = LoadOrder(cfg)
-	if len(got) != 1 || got[0] != "new.pdf" {
-		t.Errorf("efter remove, fick: %v", got)
 	}
 }
 

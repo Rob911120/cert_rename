@@ -24,6 +24,21 @@ func CountSubdirs(dir string) int64 {
 	return n
 }
 
+// CountFiles returnerar antalet vanliga filer i dir, eller 0 vid fel.
+func CountFiles(dir string) int64 {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return 0
+	}
+	var n int64
+	for _, e := range entries {
+		if !e.IsDir() {
+			n++
+		}
+	}
+	return n
+}
+
 type QueueItem struct {
 	Filename    string   `json:"filename"`
 	Charge      string   `json:"charge"`

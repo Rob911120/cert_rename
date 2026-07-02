@@ -4,11 +4,6 @@ import "regexp"
 
 var bNumRegex = regexp.MustCompile(`\bB\d{6}\b`)
 
-// IsBNumber returnerar true om s ser ut som ett B-nummer (B + 6 siffror).
-func IsBNumber(s string) bool {
-	return bNumRegex.MatchString(s)
-}
-
 // ExtractBNumbers letar efter B-nummer (B + 6 siffror) i alla angivna källor
 // och returnerar unika nummer i upptäckts-ordning.
 func ExtractBNumbers(sources ...string) []string {

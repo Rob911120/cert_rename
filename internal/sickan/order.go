@@ -93,23 +93,3 @@ func RenameInOrder(cfg store.Config, oldName, newName string) {
 		_ = SaveOrder(cfg, order)
 	}
 }
-
-// RemoveFromOrder tar bort filename ur ordningsfilen om det finns där.
-func RemoveFromOrder(cfg store.Config, filename string) {
-	order := LoadOrder(cfg)
-	if len(order) == 0 {
-		return
-	}
-	out := order[:0]
-	changed := false
-	for _, n := range order {
-		if n == filename {
-			changed = true
-			continue
-		}
-		out = append(out, n)
-	}
-	if changed {
-		_ = SaveOrder(cfg, out)
-	}
-}
