@@ -20,19 +20,13 @@ const (
 	appStateBrief = "last_brief" // JSON-serialiserad BriefData
 )
 
-// BriefRow är en rad i en brief-sektion — det minsta UI:t behöver för att visa
-// och agera (id:n som strängar pga JS-precision).
+// BriefRow är en rad i en brief-sektion. Hela inleveransraden bäddas in så
+// Översikt är självförsörjande (charge, materialjämförelse, B-nr, noter …) och
+// JSON-namnen är identiska med /api/upcoming — UI:ts detaljpanel delas rakt av.
 type BriefRow struct {
-	DeliveryRowID string  `json:"delivery_row_id"`
-	OrderNumber   string  `json:"order_number"`
-	Supplier      string  `json:"supplier"`
-	PartNumber    string  `json:"part_number"`
-	Description   string  `json:"description,omitempty"`
-	Qty           float64 `json:"qty,omitempty"`
-	DeliveryDate  string  `json:"delivery_date"`
-	RequiredCert  string  `json:"required_cert,omitempty"`
-	LastNote      string  `json:"last_note,omitempty"`
-	NoteCount     int     `json:"note_count,omitempty"`
+	store.UpcomingDelivery
+	LastNote  string `json:"last_note,omitempty"`
+	NoteCount int    `json:"note_count,omitempty"`
 }
 
 // BriefData är hela briefen. Dismissed är dagens avfärdade item-nycklar
@@ -109,17 +103,10 @@ func buildBrief(rows []store.UpcomingDelivery, tasks []store.Task, today string)
 }
 
 func briefRow(r store.UpcomingDelivery) BriefRow {
-	br := BriefRow{
-		DeliveryRowID: strconv.FormatInt(r.DeliveryRowID, 10),
-		OrderNumber:   r.OrderNumber,
-		Supplier:      r.SupplierName,
-		PartNumber:    r.PartNumber,
-		Description:   r.Description,
-		Qty:           r.PlannedQty,
-		DeliveryDate:  r.DeliveryDate,
-		RequiredCert:  r.RequiredCert,
-		NoteCount:     len(r.RowNotes),
-	}
+	br := BriefRow{UpcomingDelivery: r, NoteCount: len(r.RowNotes)}
+	// De råa Monitor-blobbarna är multi-KB per rad och oanvända av UI:t —
+	// nollas så app_state-bloben (last_brief) inte sväller.
+	br.DeliveryRaw, br.PartRaw = "", ""
 	if n := len(r.RowNotes); n > 0 {
 		br.LastNote = r.RowNotes[n-1].Text
 	}

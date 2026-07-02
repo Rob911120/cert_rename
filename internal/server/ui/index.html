@@ -32,7 +32,7 @@
 <main class="flex-1 flex flex-col px-6 py-4 gap-3 min-h-0">
   <div class="flex items-end justify-between border-b border-slate-200 dark:border-slate-800">
     <div class="flex">
-      <button class="tab-link" data-tab="today" data-active="true" onclick="switchTab('today')">🌅 Idag</button>
+      <button class="tab-link" data-tab="today" data-active="true" onclick="switchTab('today')">🌅 Översikt</button>
       <button class="tab-link" data-tab="queue" onclick="switchTab('queue')">Kö</button>
       <button class="tab-link" data-tab="review" onclick="switchTab('review')">Behöver granskas</button>
       <button class="tab-link" data-tab="upcoming" onclick="switchTab('upcoming')">Kommande inleveranser</button>
@@ -46,7 +46,7 @@
 
   <div class="flex-1 min-h-0 card overflow-hidden flex flex-col fade-in">
     <div class="tab-panel flex-1 min-h-0 overflow-auto" data-panel="today">
-      <div id="todayBody" class="p-4 space-y-4 text-sm max-w-4xl">
+      <div id="todayBody" class="p-4 space-y-4 text-sm">
         <div class="text-center italic text-slate-400 py-6">…laddar dagens läge…</div>
       </div>
     </div>
@@ -297,7 +297,7 @@
       <div class="panel-section">
         <div class="panel-label">🌅 Morgonbrief</div>
         <div class="text-xs text-slate-500 dark:text-slate-400 mb-2">
-          Bygger "Idag"-fliken automatiskt på morgonen (kickar en Monitor-uppdatering
+          Bygger "Översikt"-fliken automatiskt på morgonen (kickar en Monitor-uppdatering
           först om schemat ovan är på). Fliken funkar även med detta av — stommen
           byggs ur databasen varje gång du öppnar den.
         </div>
@@ -1036,21 +1036,15 @@ async function briefDismiss(key, reason) {
   } catch (e) { toast('⚠️ ' + e); }
 }
 
-// briefShowOrder: hoppa till Kommande inleveranser med ordernumret i sökfältet.
-function briefShowOrder(orderNr) {
-  upcomingFilter = orderNr || '';
-  document.getElementById('upcomingFilter').value = upcomingFilter;
-  switchTab('upcoming');
-}
-
-// briefMailRow: BriefRow → radform som positionLine()/mailutkasten förstår.
-function briefMailRow(r) {
-  return { part_number: r.part_number, description: r.description,
-           planned_qty: r.qty, delivery_date: r.delivery_date, required_cert: r.required_cert };
-}
-
 async function briefMarkDelivered(r) {
-  await markDelivered([r.delivery_row_id], r.order_number, r.supplier);
+  await markDelivered([r.delivery_row_id], r.order_number, r.supplier_name);
+  loadBrief();
+}
+
+// briefMarkDeliveredMany: "✓ Alla levererade" på ett orderkort — gruppens
+// rader (sektionens), inte hela ordern.
+async function briefMarkDeliveredMany(rows, orderNr, supplier) {
+  await markDelivered(rows.map(r => r.delivery_row_id), orderNr, supplier);
   loadBrief();
 }
 
@@ -1094,6 +1088,40 @@ function briefBtn(label, title, fn, cls = 'btn-secondary btn-sm') {
   return b;
 }
 
+// briefCaret: en enda ▸-glyf som roterar 90° i öppet läge — samma komponent
+// på grupp-, order- och radnivå.
+function briefCaret(open, cls) {
+  const c = briefEl('span', 'brief-caret ' + cls, '▸');
+  c.dataset.open = String(open);
+  return c;
+}
+
+// briefReveal: höjdanimerad utfällning via grid-rows-tricket (0fr↔1fr).
+// Innehållet läggs i en .reveal-inner (overflow hidden, min-height 0) så
+// padding klipps i stängt läge. Synlighet styrs med data-open på wrappern —
+// nyinsatta element får sitt slutläge direkt utan transition, så SSE-
+// omritningar animerar aldrig.
+function briefReveal(open, content) {
+  const wrap = briefEl('div', 'reveal');
+  wrap.dataset.open = String(open);
+  const inner = briefEl('div', 'reveal-inner');
+  inner.appendChild(content);
+  wrap.appendChild(inner);
+  return wrap;
+}
+
+// briefRowExit: tona ut + kollapsa ett element medan POST:en går — direkt
+// feedback, sen ersätter svaret DOM:en. No-op vid prefers-reduced-motion.
+function briefRowExit(el) {
+  if (!el || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  el.style.overflow = 'hidden';
+  el.style.maxHeight = el.scrollHeight + 'px';
+  el.style.transition = 'opacity 200ms ease-in, max-height 200ms ease-in';
+  void el.offsetHeight; // reflow — utan den appliceras start- och slutvärde i samma frame
+  el.style.maxHeight = '0px';
+  el.style.opacity = '0';
+}
+
 // briefDismissBtn: ✕ som vecklar ut ett inline-fält för valfri anledning —
 // anledningen sparas som not på raden (avfärdandet blir en lärdom).
 function briefDismissBtn(key) {
@@ -1101,7 +1129,10 @@ function briefDismissBtn(key) {
     const wrap = briefEl('span', 'flex items-center gap-1');
     const input = briefEl('input', 'input-field !py-1 w-48');
     input.placeholder = 'Anledning (valfri)…';
-    const ok = briefBtn('Avfärda', '', () => briefDismiss(key, input.value.trim()));
+    const ok = briefBtn('Avfärda', '', () => {
+      briefRowExit(ok.closest('[data-brief-row]'));
+      briefDismiss(key, input.value.trim());
+    });
     const cancel = briefBtn('Avbryt', '', () => renderBrief(), 'btn-ghost btn-sm');
     input.addEventListener('keydown', e => {
       if (e.key === 'Enter') ok.click();
@@ -1114,47 +1145,189 @@ function briefDismissBtn(key) {
   return btn;
 }
 
-// briefRowLine: en artikelrad i ett orderkort (radknappar till höger).
-function briefRowLine(r, buttons) {
-  const line = briefEl('div', 'flex items-center justify-between gap-2 px-3 py-2');
-  const left = briefEl('div', 'min-w-0 flex-1');
-  const main = briefEl('div', 'truncate');
-  main.textContent = (r.part_number || '?') +
-    (r.description ? ' — ' + r.description : '') +
-    (r.qty ? ', ' + r.qty + ' st' : '');
-  main.title = main.textContent;
-  left.appendChild(main);
-  const meta = [];
-  if (r.delivery_date) meta.push('lev.datum ' + r.delivery_date);
-  if (r.required_cert) meta.push('krav: ' + r.required_cert);
-  if (r.last_note) meta.push('📝 ' + r.last_note);
-  if (meta.length) {
-    const m = briefEl('div', 'text-xs text-slate-400 truncate', meta.join(' · '));
-    m.title = meta.join(' · ');
-    left.appendChild(m);
-  }
-  line.appendChild(left);
-  const right = briefEl('div', 'flex items-center gap-1 shrink-0');
-  for (const b of buttons) right.appendChild(b);
-  line.appendChild(right);
+// Öppet/stängt-läge för orderkort och artikelrader i briefen — session-minne
+// (som upcomingOpen) så SSE-omritningar inte fäller ihop det man jobbar i.
+// Allt startar stängt vid sidladdning. Nycklarna är sektionsprefixade
+// ('overdue:B123' / 'overdue:412') eftersom samma order/rad kan förekomma i
+// flera sektioner.
+const briefOpenOrders = new Set();   // orderkort är stängda som default
+const briefOpenRows = new Set();     // artikelrader är stängda som default
+
+// briefRowActions: åtgärderna i en utfälld artikelpanel — levererad, utkast
+// för just den positionen, avfärda.
+function briefRowActions(r, section) {
+  const del = briefBtn('✓ Levererad', 'Markera raden som levererad', () => {
+    briefRowExit(del.closest('[data-brief-row]'));
+    briefMarkDelivered(r);
+  }, 'btn-ghost btn-sm');
+  return [
+    del,
+    briefBtn('✉️ Utkast', 'Mailutkast om just den här positionen', () => openRestMail(r.order_number, r.supplier_name, [r]), 'btn-ghost btn-sm'),
+    briefDismissBtn(section + ':' + r.delivery_row_id),
+  ];
+}
+
+// Kolumnraster för briefens rader/orderhuvuden — inline styles (undviker
+// Tailwind-purge) och samma artikelnr/antal-kolumner i alla sektioner så
+// allt linjerar som en tabell. Statusikonerna ligger i fyra FASTA kolumner
+// (noter | avvikelse | cert | ok), delade mellan huvuden och rader; knapparna
+// ligger längst till höger i en likaledes FAST kolumn — det är de fasta
+// bredderna som gör att samma ikon hamnar lodrätt under varandra globalt,
+// oavsett sektionens knappuppsättning. Raderna har en tom svanscell i
+// knappkolumnens ställe.
+const briefIconCols = '2.5rem 2.5rem 2.5rem 1.25rem';
+const briefBtnCol = '15.5rem';
+const briefRowGrid = '1rem 7.5rem 4rem minmax(0,1fr) ' + briefIconCols + ' ' + briefBtnCol;
+const briefCertGrid = '1rem 7.5rem 4rem minmax(0,1fr) max-content max-content';
+const briefHeadGrid = '1rem minmax(0,1fr) 3.5rem ' + briefIconCols + ' ' + briefBtnCol;
+
+// briefSvg: monokroma stroke-ikoner (lucide-form) istället för emoji —
+// currentColor låter textfärgsklasserna styra, ljust som mörkt tema.
+function briefSvg(name) {
+  const paths = {
+    warn: '<path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>',
+    doc: '<path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5z"/><polyline points="14 2 14 8 20 8"/>',
+    note: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
+    check: '<polyline points="20 6 9 17 4 12"/>',
+  };
+  return '<svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + paths[name] + '</svg>';
+}
+
+// briefStatusCells: de fyra ikoncellerna. Bara det som avviker visas —
+// allt ok är en diskret bock. Antal skrivs ut först vid >1 (ikonens närvaro
+// betyder "minst en", tooltipen har exakta siffror).
+function briefStatusCells(st) {
+  const cell = (show, icon, colorCls, n, title) => show
+    ? '<span class="flex items-center justify-center gap-0.5 text-xs font-medium ' + colorCls + '" title="' + title + '">' +
+      briefSvg(icon) + (n > 1 ? n : '') + '</span>'
+    : '<span></span>';
+  return cell(st.notes > 0, 'note', 'text-slate-400', st.notes, st.notes + ' not' + (st.notes > 1 ? 'er' : ''))
+    + cell(st.mism > 0, 'warn', 'text-red-600 dark:text-red-400', st.mism, st.mism + ' materialavvikelse' + (st.mism > 1 ? 'r' : '') + ' — certet matchar inte kravet')
+    + cell(st.missing > 0, 'doc', 'text-amber-700 dark:text-amber-400', st.missing, st.missing + ' position' + (st.missing > 1 ? 'er' : '') + ' saknar cert')
+    + cell(st.ok, 'check', 'text-slate-300 dark:text-slate-600', 0, 'Allt ser bra ut');
+}
+
+// briefRowIcons: radens status i de delade ikonkolumnerna. ("Cert ej krävt"/
+// "matchat" är inte information som förtjänar plats på raden.)
+function briefRowIcons(r) {
+  const notes = (r.row_notes || []).length;
+  const mism = r.material_ok === 'mismatch' ? 1 : 0;
+  const missing = (r.cert_required && r.cert_status === 'missing') ? 1 : 0;
+  return briefStatusCells({ notes, mism, missing, ok: !notes && !mism && !missing });
+}
+
+// briefArticleRow: ihopfälld rad = artikelnr + antal + statusikoner; klick
+// fäller ut den delade detaljpanelen (samma som Kommande inleveranser).
+function briefArticleRow(r, section) {
+  const art = document.createElement('div');
+  art.setAttribute('data-brief-row', '');
+  const rowKey = section + ':' + r.delivery_row_id;
+  const open = briefOpenRows.has(rowKey);
+
+  const header = briefEl('div', 'items-center gap-2 px-3 py-1.5 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors duration-100');
+  header.style.display = 'grid';
+  header.style.gridTemplateColumns = briefRowGrid;
+  header.innerHTML =
+    '<span class="brief-caret text-slate-400" data-open="' + open + '">▸</span>' +
+    '<span class="font-medium truncate">' + escapeHtml(r.part_number || ('art ' + r.part_id)) + '</span>' +
+    '<span class="text-xs text-slate-400 text-right whitespace-nowrap">' + (r.planned_qty ? escapeHtml(String(r.planned_qty)) + ' st' : '') + '</span>' +
+    '<span></span>' +
+    briefRowIcons(r) +
+    '<span></span>';
+
+  // Panelen skapas alltid "öppen" — synligheten styrs helt av reveal-wrappern.
+  const detail = articleDetailPanel(r, briefRowActions(r, section), true);
+  const wrap = briefReveal(open, detail);
+  header.addEventListener('click', () => {
+    const nowOpen = wrap.dataset.open !== 'true';
+    wrap.dataset.open = String(nowOpen);
+    header.querySelector('.brief-caret').dataset.open = String(nowOpen);
+    if (nowOpen) briefOpenRows.add(rowKey); else briefOpenRows.delete(rowKey);
+  });
+
+  art.appendChild(header);
+  art.appendChild(wrap);
+  return art;
+}
+
+// briefCertRow: enkel beta-av-rad i Cert saknas — ingen utfällning, bara det
+// som behövs för att jaga certet + Avfärda. (B-nummer finns aldrig här:
+// cert_b_numbers sätts först när ett cert matchat — ordernumret ÄR B-referensen.)
+function briefCertRow(r) {
+  const line = briefEl('div', 'items-center gap-2 px-3 py-1.5');
+  line.setAttribute('data-brief-row', '');
+  line.style.display = 'grid';
+  line.style.gridTemplateColumns = briefCertGrid;
+  const desc = rowDescription(r);
+  const meta = [r.delivery_date ? 'lev ' + r.delivery_date : '', r.required_cert ? 'krav ' + r.required_cert : '']
+    .filter(Boolean).join(' · ');
+  line.innerHTML =
+    '<span></span>' +
+    '<span class="font-medium truncate">' + escapeHtml(r.part_number || ('art ' + r.part_id)) + '</span>' +
+    '<span class="text-xs text-slate-400 text-right whitespace-nowrap">' + (r.planned_qty ? escapeHtml(String(r.planned_qty)) + ' st' : '') + '</span>' +
+    '<span class="text-xs text-slate-500 dark:text-slate-400 truncate">' + escapeHtml(desc || '') + '</span>' +
+    '<span class="text-xs text-slate-400 whitespace-nowrap">' + escapeHtml(meta) + '</span>';
+  if (desc) line.children[3].title = desc;
+  const btns = briefEl('div', 'flex items-center justify-end');
+  btns.appendChild(briefDismissBtn('cert:' + r.delivery_row_id));
+  line.appendChild(btns);
   return line;
 }
 
-// briefOrderCard: ett kort per order — rubrik med order + leverantör och
-// orderknappar (mailutkast m.m.), därunder artikelraderna.
-function briefOrderCard(orderNr, supplier, orderButtons, rows, rowButtonsFn) {
+// briefOrderCard: ihopfällbart kort per order — caret + order + leverantör +
+// antal + roll-up-flaggor (alltid synliga så inget döljs ihopfällt),
+// orderknappar till höger. rowFn bygger raderna.
+function briefOrderCard(section, orderNr, g, orderButtons, rowFn) {
   const card = briefEl('div', 'rounded-md border border-slate-200 dark:border-slate-800');
-  const head = briefEl('div', 'flex items-center justify-between gap-2 px-3 py-2 bg-slate-50 dark:bg-main rounded-t-md');
-  const title = briefEl('div', 'font-medium truncate', orderNr + (supplier ? ' · ' + supplier : ''));
+  const cardKey = section + ':' + orderNr;
+  card.setAttribute('data-order-card', cardKey);
+  const open = briefOpenOrders.has(cardKey);
+
+  const head = briefEl('div', 'items-center gap-2 px-3 py-2 bg-slate-50 dark:bg-main cursor-pointer select-none transition-colors duration-100 ' + (open ? 'rounded-t-md' : 'rounded-md'));
+  head.style.display = 'grid';
+  head.style.gridTemplateColumns = briefHeadGrid;
+  const caret = briefCaret(open, 'text-slate-400');
+  head.appendChild(caret);
+  const title = briefEl('span', 'font-medium truncate', orderNr + (g.supplier ? ' · ' + g.supplier : ''));
   title.title = title.textContent;
   head.appendChild(title);
-  const btns = briefEl('div', 'flex items-center gap-1 shrink-0');
-  for (const b of orderButtons) btns.appendChild(b);
+  head.appendChild(briefEl('span', 'text-xs text-slate-400 text-right whitespace-nowrap', g.rows.length + ' art.'));
+
+  // Roll-up i de delade ikonkolumnerna — alltid synlig så inget döljs
+  // ihopfällt. I Cert saknas-sektionen ÄR alla rader cert-lösa: doc-flaggan
+  // (och ok-bocken) vore redundans där.
+  const mism = g.rows.filter(r => r.material_ok === 'mismatch').length;
+  const missing = section === 'cert' ? 0 : g.rows.filter(r => r.cert_status === 'missing').length;
+  const notes = g.rows.reduce((a, r) => a + (r.row_notes || []).length, 0);
+  head.insertAdjacentHTML('beforeend', briefStatusCells({
+    notes, mism, missing,
+    ok: section !== 'cert' && !notes && !mism && !missing,
+  }));
+
+  const btns = briefEl('div', 'flex items-center gap-1 justify-end whitespace-nowrap');
+  for (const b of orderButtons) {
+    b.addEventListener('click', e => e.stopPropagation());
+    btns.appendChild(b);
+  }
   head.appendChild(btns);
   card.appendChild(head);
+
   const list = briefEl('div', 'divide-y divide-slate-100 dark:divide-slate-800');
-  for (const r of rows) list.appendChild(briefRowLine(r, rowButtonsFn ? rowButtonsFn(r) : []));
-  card.appendChild(list);
+  for (const r of g.rows) list.appendChild(rowFn(r));
+  const wrap = briefReveal(open, list);
+  wrap.setAttribute('data-order-wrap', cardKey);
+  card.appendChild(wrap);
+
+  const setOpen = nowOpen => {
+    wrap.dataset.open = caret.dataset.open = String(nowOpen);
+    head.classList.toggle('rounded-md', !nowOpen);
+    head.classList.toggle('rounded-t-md', nowOpen);
+    if (nowOpen) briefOpenOrders.add(cardKey); else briefOpenOrders.delete(cardKey);
+  };
+  head.addEventListener('click', () => setOpen(wrap.dataset.open !== 'true'));
+  // Kaskad-krok för gruppfällning: stänger kortet in place (caret + rundning
+  // + set) utan re-render.
+  wrap.closeOrder = () => setOpen(false);
   return card;
 }
 
@@ -1162,17 +1335,57 @@ function briefOrderCard(orderNr, supplier, orderButtons, rows, rowButtonsFn) {
 function briefGroupByOrder(rows) {
   const groups = new Map();
   for (const r of rows) {
-    const key = r.order_number || '?';
-    if (!groups.has(key)) groups.set(key, { supplier: r.supplier || '', rows: [] });
+    const key = r.order_number || ('PO ' + r.purchase_order_id);
+    if (!groups.has(key)) groups.set(key, { supplier: r.supplier_name || '', rows: [] });
     groups.get(key).rows.push(r);
   }
   return groups;
 }
 
-function briefSection(title) {
-  const sec = briefEl('div', 'space-y-1.5');
-  sec.appendChild(briefEl('div', 'font-semibold text-slate-900 dark:text-white', title));
+// Brief-grupperna startar alltid infällda — helt infälld översikt vid varje
+// sidladdning; session-state:t ovan/nedan styr resten tills sidan laddas om.
+const briefGroupKeys = ['expected', 'overdue', 'cert', 'partial', 'tasks'];
+const briefCollapsed = new Set(briefGroupKeys);
+
+// briefSection: grupp med klickbar rubrik som fäller in/ut innehållet.
+// Korten läggs i sec.content (inte sec direkt). Togglingen sker in place
+// (data-open på wrapper + caret) — en re-render hade ritat slutläget direkt
+// och ätit animationen. Ihopfällning kaskaderar till sektionens orderkort
+// så gruppen öppnas i kompakt läge nästa gång; utfällning kaskaderar
+// medvetet inte.
+function briefSection(title, key) {
+  const sec = briefEl('div', 'pt-4');
+  const openNow = !briefCollapsed.has(key);
+  const head = briefEl('div', 'flex items-center gap-2 cursor-pointer select-none pb-2');
+  const caret = briefCaret(openNow, 'text-xs text-slate-400 w-4');
+  head.appendChild(caret);
+  head.appendChild(briefEl('div', 'text-lg font-semibold text-slate-900 dark:text-white', title));
+  sec.appendChild(head);
+  const content = briefEl('div', 'space-y-2');
+  const wrap = briefReveal(openNow, content);
+  sec.appendChild(wrap);
+  head.addEventListener('click', () => {
+    const nowOpen = wrap.dataset.open !== 'true';
+    wrap.dataset.open = caret.dataset.open = String(nowOpen);
+    if (nowOpen) {
+      briefCollapsed.delete(key);
+    } else {
+      briefCollapsed.add(key);
+      wrap.querySelectorAll('[data-order-wrap]').forEach(w => w.closeOrder());
+    }
+    briefSyncToggleAll();
+  });
+  sec.content = content;
   return sec;
+}
+
+// briefSyncToggleAll: håll "Fäll in/ut alla"-etiketten i synk när enskilda
+// grupper togglas in place (utan re-render).
+function briefSyncToggleAll() {
+  const b = document.getElementById('briefToggleAll');
+  if (!b) return;
+  const allCollapsed = briefGroupKeys.every(k => briefCollapsed.has(k));
+  b.textContent = allCollapsed ? '⏵ Fäll ut alla' : '⏷ Fäll in alla';
 }
 
 function renderBrief(data) {
@@ -1199,6 +1412,19 @@ function renderBrief(data) {
   const askBtn = briefBtn(b.comment ? '🤖 Kommentera igen' : '🤖 Be Sickan kommentera',
     'Sickan läser dagens läge + noterna och prioriterar (läs-läge)', () => briefAskSickan(askBtn), 'btn-ghost btn-sm');
   headBtns.appendChild(askBtn);
+  // Bulk-toggling re-renderar (avsiktligt utan animation); läget läses vid
+  // klick eftersom enskilda grupper kan ha togglats in place sedan render.
+  const toggleAll = briefBtn('', 'Fäll in/ut alla grupper', () => {
+    if (briefGroupKeys.every(k => briefCollapsed.has(k))) {
+      briefCollapsed.clear();
+    } else {
+      briefGroupKeys.forEach(k => briefCollapsed.add(k));
+      briefOpenOrders.clear();
+    }
+    renderBrief();
+  }, 'btn-ghost btn-sm');
+  toggleAll.id = 'briefToggleAll';
+  headBtns.appendChild(toggleAll);
   headBtns.appendChild(briefBtn('🔄 Uppdatera', 'Hämta färskt läge', briefRefresh));
   head.appendChild(headBtns);
   body.appendChild(head);
@@ -1217,13 +1443,21 @@ function renderBrief(data) {
   let anyDeliverySection = false;
 
   // 📦 Väntas idag.
-  const expected = b.expected_today || [];
+  const expected = (b.expected_today || []).filter(r => {
+    const hit = dismissed.has('expected:' + r.delivery_row_id);
+    if (hit) dismissedCount++;
+    return !hit;
+  });
   if (expected.length) {
-    const sec = briefSection('📦 Väntas idag (' + expected.length + ')');
-    for (const [orderNr, g] of briefGroupByOrder(expected)) {
-      sec.appendChild(briefOrderCard(orderNr, g.supplier, [
-        briefBtn('Visa ordern', '', () => briefShowOrder(orderNr), 'btn-ghost btn-sm'),
-      ], g.rows));
+    const expGroups = briefGroupByOrder(expected);
+    const sec = briefSection('📦 Väntas idag (' + expected.length + ')', 'expected');
+    for (const [orderNr, g] of expGroups) {
+      const allBtn = briefBtn('✓ Alla levererade', 'Markera alla rader nedan som levererade', () => {
+        briefRowExit(allBtn.closest('[data-order-card]'));
+        briefMarkDeliveredMany(g.rows, orderNr, g.supplier);
+      }, 'btn-ghost btn-sm');
+      sec.content.appendChild(briefOrderCard('expected', orderNr, g, [allBtn],
+        r => briefArticleRow(r, 'expected')));
     }
     body.appendChild(sec);
     anyDeliverySection = true;
@@ -1236,35 +1470,38 @@ function renderBrief(data) {
     return !hit;
   });
   if (overdue.length) {
-    const sec = briefSection('⏰ Kom inte (' + overdue.length + ')');
-    for (const [orderNr, g] of briefGroupByOrder(overdue)) {
-      sec.appendChild(briefOrderCard(orderNr, g.supplier, [
+    const odGroups = briefGroupByOrder(overdue);
+    const sec = briefSection('⏰ Kom inte (' + overdue.length + ')', 'overdue');
+    for (const [orderNr, g] of odGroups) {
+      const allBtn = briefBtn('✓ Alla levererade', 'Markera alla rader nedan som levererade', () => {
+        briefRowExit(allBtn.closest('[data-order-card]'));
+        briefMarkDeliveredMany(g.rows, orderNr, g.supplier);
+      }, 'btn-ghost btn-sm');
+      sec.content.appendChild(briefOrderCard('overdue', orderNr, g, [
         briefBtn('✉️ Utkast', 'Mailutkast om att positionerna inte levererats in',
-          () => openRestMail(orderNr, g.supplier, g.rows.map(briefMailRow))),
-        briefBtn('Visa ordern', '', () => briefShowOrder(orderNr), 'btn-ghost btn-sm'),
-      ], g.rows, r => [
-        briefBtn('✓ Levererad', 'Markera raden som levererad', () => briefMarkDelivered(r), 'btn-ghost btn-sm'),
-        briefDismissBtn('overdue:' + r.delivery_row_id),
-      ]));
+          () => openRestMail(orderNr, g.supplier, g.rows)),
+        allBtn,
+      ], r => briefArticleRow(r, 'overdue')));
     }
     body.appendChild(sec);
     anyDeliverySection = true;
   }
 
-  // 📄 Cert saknas.
+  // 📄 Cert saknas — beta-av-lista: orderkort med enkla rader (ingen
+  // utfällning), ✉️ Utkast på orderhuvudet tar ordens alla positioner.
   const certMissing = (b.cert_missing || []).filter(r => {
     const hit = dismissed.has('cert:' + r.delivery_row_id);
     if (hit) dismissedCount++;
     return !hit;
   });
   if (certMissing.length) {
-    const sec = briefSection('📄 Cert saknas (' + certMissing.length + ')');
-    for (const [orderNr, g] of briefGroupByOrder(certMissing)) {
-      sec.appendChild(briefOrderCard(orderNr, g.supplier, [
-        briefBtn('✉️ Utkast', 'Mailutkast om att materialcert saknas',
-          () => openCertMissingMail(orderNr, g.supplier, g.rows.map(briefMailRow))),
-        briefBtn('Visa ordern', '', () => briefShowOrder(orderNr), 'btn-ghost btn-sm'),
-      ], g.rows, r => [briefDismissBtn('cert:' + r.delivery_row_id)]));
+    const cmGroups = briefGroupByOrder(certMissing);
+    const sec = briefSection('📄 Cert saknas (' + certMissing.length + ')', 'cert');
+    for (const [orderNr, g] of cmGroups) {
+      sec.content.appendChild(briefOrderCard('cert', orderNr, g, [
+        briefBtn('✉️ Utkast', 'Mailutkast om att materialcert saknas — ordens alla positioner nedan',
+          () => openCertMissingMail(orderNr, g.supplier, g.rows)),
+      ], briefCertRow));
     }
     body.appendChild(sec);
     anyDeliverySection = true;
@@ -1273,7 +1510,7 @@ function renderBrief(data) {
   // 🚚 Delleveranser (order med både levererade och väntande rader).
   const partial = b.partial_orders || [];
   if (partial.length) {
-    const sec = briefSection('🚚 Delleveranser (' + partial.length + ')');
+    const sec = briefSection('🚚 Delleveranser (' + partial.length + ')', 'partial');
     for (const orderNr of partial) {
       const line = briefEl('div', 'flex items-center justify-between gap-2 rounded-md border border-slate-200 dark:border-slate-800 px-3 py-2');
       const rest = undeliveredRows(orderNr);
@@ -1283,12 +1520,11 @@ function renderBrief(data) {
       const btns = briefEl('div', 'flex items-center gap-1 shrink-0');
       btns.appendChild(briefBtn('✉️ Maila rest', 'Mailutkast om positionerna som inte levererats in', () => {
         const rows = undeliveredRows(orderNr);
-        if (!rows.length) { toast('Inga kvarvarande positioner hittades — öppna ordern och kolla'); return; }
+        if (!rows.length) { toast('Inga kvarvarande positioner hittades — öppna Kommande inleveranser och kolla'); return; }
         openRestMail(orderNr, rows[0].supplier_name || '', rows);
       }));
-      btns.appendChild(briefBtn('Visa ordern', '', () => briefShowOrder(orderNr), 'btn-ghost btn-sm'));
       line.appendChild(btns);
-      sec.appendChild(line);
+      sec.content.appendChild(line);
     }
     body.appendChild(sec);
     anyDeliverySection = true;
@@ -1303,7 +1539,7 @@ function renderBrief(data) {
   }
 
   // ✅ Att göra — alltid med, inklusive formulär för nya punkter.
-  const tsec = briefSection('✅ Att göra' + ((b.tasks || []).length ? ' (' + b.tasks.length + ')' : ''));
+  const tsec = briefSection('✅ Att göra' + ((b.tasks || []).length ? ' (' + b.tasks.length + ')' : ''), 'tasks');
   const tlist = briefEl('div', 'space-y-1');
   const today = upcomingToday();
   for (const t of (b.tasks || [])) {
@@ -1325,7 +1561,7 @@ function renderBrief(data) {
     tlist.appendChild(line);
   }
   if (!(b.tasks || []).length) tlist.appendChild(briefEl('div', 'text-xs italic text-slate-400', 'Inget på listan'));
-  tsec.appendChild(tlist);
+  tsec.content.appendChild(tlist);
   const form = briefEl('div', 'flex items-center gap-2 pt-1');
   const ti = briefEl('input', 'input-field !py-1.5 flex-1');
   ti.id = 'briefTaskText';
@@ -1339,8 +1575,9 @@ function renderBrief(data) {
   td.value = savedDate;
   form.appendChild(ti); form.appendChild(td);
   form.appendChild(briefBtn('Lägg till', '', briefAddTask));
-  tsec.appendChild(form);
+  tsec.content.appendChild(form);
   body.appendChild(tsec);
+  briefSyncToggleAll();
 }
 
 // --- Kommande inleveranser ---
@@ -1644,6 +1881,36 @@ function renderArticle(row, enabled) {
     header.appendChild(markBtn);
   }
 
+  const actionNodes = [];
+  if (row.cert_filename) {
+    const fileLabel = document.createElement('span');
+    fileLabel.className = 'text-slate-400 truncate';
+    fileLabel.textContent = row.cert_filename;
+    actionNodes.push(fileLabel);
+    const approveBtn = document.createElement('button');
+    approveBtn.className = 'btn-primary btn-sm';
+    approveBtn.textContent = '✓ Spara';
+    approveBtn.title = 'Spara/godkänn cert';
+    approveBtn.addEventListener('click', (e) => { e.stopPropagation(); approveRow(row.cert_filename, approveBtn); });
+    actionNodes.push(approveBtn);
+  }
+  const detail = articleDetailPanel(row, actionNodes, open);
+
+  header.addEventListener('click', () => {
+    const nowHidden = detail.classList.toggle('hidden');
+    left.querySelector('.caret').textContent = nowHidden ? '▸' : '▾';
+    if (nowHidden) upcomingOpen.rows.delete(row.delivery_row_id); else upcomingOpen.rows.add(row.delivery_row_id);
+  });
+
+  art.appendChild(header);
+  art.appendChild(detail);
+  return art;
+}
+
+// articleDetailPanel: den utfällda detaljpanelen för en artikelrad —
+// krav↔cert-jämförelse + cert-fält + diagnostik + noter + åtgärdsrad.
+// Delas av Kommande inleveranser och Översikt (raderna har samma JSON-form).
+function articleDetailPanel(row, actionNodes, open) {
   const detail = document.createElement('div');
   detail.className = 'px-3 py-2 pl-11 bg-slate-50 dark:bg-main text-xs text-slate-600 dark:text-slate-300' + (open ? '' : ' hidden');
   detail.innerHTML = renderArticleDetail(row);
@@ -1661,29 +1928,9 @@ function renderArticle(row, enabled) {
 
   const detailActions = document.createElement('div');
   detailActions.className = 'flex items-center gap-1.5 justify-end mt-2 pt-2 border-t border-slate-200 dark:border-slate-700';
-  if (row.cert_filename) {
-    const fileLabel = document.createElement('span');
-    fileLabel.className = 'text-slate-400 truncate';
-    fileLabel.textContent = row.cert_filename;
-    detailActions.appendChild(fileLabel);
-    const approveBtn = document.createElement('button');
-    approveBtn.className = 'btn-primary btn-sm';
-    approveBtn.textContent = '✓ Spara';
-    approveBtn.title = 'Spara/godkänn cert';
-    approveBtn.addEventListener('click', (e) => { e.stopPropagation(); approveRow(row.cert_filename, approveBtn); });
-    detailActions.appendChild(approveBtn);
-  }
+  for (const n of actionNodes) detailActions.appendChild(n);
   detail.appendChild(detailActions);
-
-  header.addEventListener('click', () => {
-    const nowHidden = detail.classList.toggle('hidden');
-    left.querySelector('.caret').textContent = nowHidden ? '▸' : '▾';
-    if (nowHidden) upcomingOpen.rows.delete(row.delivery_row_id); else upcomingOpen.rows.add(row.delivery_row_id);
-  });
-
-  art.appendChild(header);
-  art.appendChild(detail);
-  return art;
+  return detail;
 }
 
 // statusIcon: enkel grön bock (ok) / röd varning (mismatch) / grått streck

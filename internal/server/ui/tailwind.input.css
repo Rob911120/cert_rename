@@ -50,6 +50,17 @@
 
   .fade-in { animation: fadeIn 0.2s ease-out; }
 
+  /* Utfällning via grid-rows-tricket: 0fr↔1fr animerar höjden utan JS-mätning.
+     Inre elementet MÅSTE ha .reveal-inner (overflow:hidden + min-height:0). */
+  .reveal        { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 220ms cubic-bezier(0.4, 0, 0.2, 1); }
+  .reveal[data-open="true"] { grid-template-rows: 1fr; }
+  .reveal-inner  { overflow: hidden; min-height: 0; }
+  .brief-caret   { transition: transform 200ms cubic-bezier(0.4, 0, 0.2, 1); }
+  .brief-caret[data-open="true"] { transform: rotate(90deg); }
+  @media (prefers-reduced-motion: reduce) {
+    .reveal, .brief-caret { transition: none; }
+  }
+
   .sickan-fab        { @apply fixed bottom-5 right-5 z-[60] w-14 h-14 rounded-full bg-accent hover:bg-indigo-600 text-white shadow-lg flex items-center justify-center transition focus:outline-none focus:ring-4 focus:ring-accent/30; }
   .sickan-watching tr[data-watch-kind] { @apply cursor-crosshair outline outline-2 outline-transparent hover:outline-accent transition; }
   .sickan-watch-fab  { @apply fixed bottom-7 right-24 z-[60] w-10 h-10 rounded-full bg-white dark:bg-card text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-slate-700 shadow-lg flex items-center justify-center transition hover:bg-slate-100 dark:hover:bg-slate-800 text-lg; }

@@ -18,15 +18,76 @@ import (
 
 	"cert-renamer/internal/ai"
 	"cert-renamer/internal/sickan"
+	"cert-renamer/internal/store"
 )
 
 // briefCommentTimeout är taket för hela läs-körningen (flera tool-rundor).
 const briefCommentTimeout = 3 * time.Minute
 
+// briefPromptRow är den slimmade rad Sickan ser i kommentar-prompten.
+// BriefRow bär numera HELA inleveransraden (detaljpanelen i Översikt) —
+// att marshala den rakt in i prompten vore token-bloat. last_note måste
+// behållas: prompt-texten refererar fältet vid namn.
+type briefPromptRow struct {
+	OrderNumber  string  `json:"order_number"`
+	SupplierName string  `json:"supplier_name,omitempty"`
+	PartNumber   string  `json:"part_number"`
+	PlannedQty   float64 `json:"planned_qty,omitempty"`
+	DeliveryDate string  `json:"delivery_date"`
+	RequiredCert string  `json:"required_cert,omitempty"`
+	CertStatus   string  `json:"cert_status,omitempty"`
+	MaterialOK   string  `json:"material_ok,omitempty"`
+	LastNote     string  `json:"last_note,omitempty"`
+	NoteCount    int     `json:"note_count,omitempty"`
+}
+
+type briefPromptData struct {
+	Date          string           `json:"date"`
+	ExpectedToday []briefPromptRow `json:"expected_today"`
+	Overdue       []briefPromptRow `json:"overdue"`
+	CertMissing   []briefPromptRow `json:"cert_missing"`
+	PartialOrders []string         `json:"partial_orders"`
+	Tasks         []store.Task     `json:"tasks"`
+	Dismissed     []string         `json:"dismissed,omitempty"`
+}
+
+// briefPromptView projicerar briefen till det Sickan behöver för att
+// prioritera — inte mer.
+func briefPromptView(b *BriefData) briefPromptData {
+	slim := func(rows []BriefRow) []briefPromptRow {
+		out := make([]briefPromptRow, 0, len(rows))
+		for _, r := range rows {
+			out = append(out, briefPromptRow{
+				OrderNumber:  r.OrderNumber,
+				SupplierName: r.SupplierName,
+				PartNumber:   r.PartNumber,
+				PlannedQty:   r.PlannedQty,
+				DeliveryDate: r.DeliveryDate,
+				RequiredCert: r.RequiredCert,
+				CertStatus:   r.CertStatus,
+				MaterialOK:   r.MaterialOK,
+				LastNote:     r.LastNote,
+				NoteCount:    r.NoteCount,
+			})
+		}
+		return out
+	}
+	return briefPromptData{
+		Date:          b.Date,
+		ExpectedToday: slim(b.ExpectedToday),
+		Overdue:       slim(b.Overdue),
+		CertMissing:   slim(b.CertMissing),
+		PartialOrders: b.PartialOrders,
+		Tasks:         b.Tasks,
+		Dismissed:     b.Dismissed,
+	}
+}
+
 // briefCommentPrompt är uppdraget som skickas med stommen som första (och
 // enda) user-meddelande i läs-körningen.
 func briefCommentPrompt(b *BriefData) string {
-	raw, _ := json.MarshalIndent(b, "", "  ")
+	view := briefPromptView(b)
+	raw, _ := json.MarshalIndent(view, "", "  ")
 	return `Här är dagens morgonbrief-stomme, byggd ur databasen — det Rob ser i "Idag"-fliken:
 
 ` + string(raw) + `
