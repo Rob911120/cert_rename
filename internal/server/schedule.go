@@ -111,8 +111,11 @@ func (s *Server) runUpcomingRefresh(ctx context.Context) {
 	s.BroadcastUpcoming()
 	// Briefen speglar databasen — bygg om den efter varje refresh (även en
 	// misslyckad: stommen ur senast kända data är bättre än en gammal brief).
+	// Sickans kommentar läggs på i bakgrunden, max en gång per dag (vakt +
+	// skip-om-kommentar-finns i generateBriefComment).
 	if cfg.BriefEnabled {
 		s.generateBrief()
+		go s.generateBriefComment(false)
 	}
 }
 

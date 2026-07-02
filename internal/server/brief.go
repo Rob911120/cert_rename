@@ -206,9 +206,10 @@ func (s *Server) maybeMorningBrief() {
 	}
 	s.Logf("🌅 Morgonbrief: kickar refresh (mål %s)", cfg.BriefTime)
 	if cfg.UpcomingEnabled {
-		s.KickUpcoming() // briefen byggs efter refreshens slut
+		s.KickUpcoming() // briefen + Sickans kommentar byggs efter refreshens slut
 	} else {
 		s.generateBrief() // ingen Monitor-koppling — bygg ur det vi har
+		go s.generateBriefComment(false)
 	}
 }
 

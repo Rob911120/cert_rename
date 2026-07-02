@@ -61,6 +61,9 @@ type Server struct {
 	refreshKick chan struct{}
 	refreshing  atomic.Bool
 
+	// briefCommenting vaktar Sickans brief-kommentar (en läs-körning i taget).
+	briefCommenting atomic.Bool
+
 	// driveRoutine är indirektion till DriveMonitorRoutine så deliver-in-gaten kan
 	// enhetstestas (tester ersätter den med en räknande stub). Default = riktig.
 	driveRoutine func(routine, orderNumber string, save bool) error
@@ -248,5 +251,6 @@ func NewMux(s *Server) *http.ServeMux {
 	mux.HandleFunc("/api/tasks/delete", s.handleTaskDelete)
 	mux.HandleFunc("/api/brief", s.handleBrief)
 	mux.HandleFunc("/api/brief/dismiss", s.handleBriefDismiss)
+	mux.HandleFunc("/api/brief/comment", s.handleBriefComment)
 	return mux
 }

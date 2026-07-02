@@ -92,3 +92,24 @@ func TestBriefEndpoint_GeneratesAndDismisses(t *testing.T) {
 		t.Errorf("dismissed borde överleva ombyggnad: %+v", b2)
 	}
 }
+
+func TestBriefComment_Gating(t *testing.T) {
+	s, _ := newGateTestServer(t)
+
+	// Utan API-nyckel → 400 (kommentaren är ett AI-tillägg, stommen bär).
+	req := httptest.NewRequest(http.MethodPost, "/api/brief/comment", nil)
+	rec := httptest.NewRecorder()
+	s.handleBriefComment(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("utan API-nyckel = %d (%s)", rec.Code, rec.Body.String())
+	}
+
+	// Pågående körning → 409.
+	s.cfg.ApiKey = "sk-test"
+	s.briefCommenting.Store(true)
+	rec = httptest.NewRecorder()
+	s.handleBriefComment(rec, httptest.NewRequest(http.MethodPost, "/api/brief/comment", nil))
+	if rec.Code != http.StatusConflict {
+		t.Errorf("pågående körning = %d (%s)", rec.Code, rec.Body.String())
+	}
+}

@@ -1011,6 +1011,20 @@ function briefRefresh() {
   }
 }
 
+// briefAskSickan: kicka Sickans läs-körning över dagens brief. Svaret pushas
+// via SSE-eventet "brief" när kommentaren är klar.
+async function briefAskSickan(btn) {
+  if (btn) btn.disabled = true;
+  try {
+    const r = await fetch('/api/brief/comment', { method: 'POST' });
+    if (!r.ok) { toast('⚠️ ' + await apiError(r)); if (btn) btn.disabled = false; return; }
+    toast('🤖 Sickan tittar på dagens läge — kommentaren dyker upp här strax');
+  } catch (e) {
+    toast('⚠️ ' + e);
+    if (btn) btn.disabled = false;
+  }
+}
+
 async function briefDismiss(key, reason) {
   try {
     const r = await fetch('/api/brief/dismiss', {
@@ -1181,13 +1195,22 @@ function renderBrief(data) {
   hl.appendChild(briefEl('div', 'text-base font-semibold text-slate-900 dark:text-white', '🌅 ' + dateStr));
   if (b.generated_at) hl.appendChild(briefEl('div', 'text-xs text-slate-400', 'byggd ' + fmtWhen(b.generated_at)));
   head.appendChild(hl);
-  head.appendChild(briefBtn('🔄 Uppdatera', 'Hämta färskt läge', briefRefresh));
+  const headBtns = briefEl('div', 'flex items-center gap-1 shrink-0');
+  const askBtn = briefBtn(b.comment ? '🤖 Kommentera igen' : '🤖 Be Sickan kommentera',
+    'Sickan läser dagens läge + noterna och prioriterar (läs-läge)', () => briefAskSickan(askBtn), 'btn-ghost btn-sm');
+  headBtns.appendChild(askBtn);
+  headBtns.appendChild(briefBtn('🔄 Uppdatera', 'Hämta färskt läge', briefRefresh));
+  head.appendChild(headBtns);
   body.appendChild(head);
 
   // Sickans kommentar (fas 2b).
   if (b.comment) {
     const c = briefEl('div', 'rounded-md border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-main px-3 py-2 whitespace-pre-wrap', '🤖 ' + b.comment);
     finalizeBotBubble(c);
+    if (b.comment_at) {
+      const at = briefEl('div', 'text-xs text-slate-400 pt-1', 'Sickan · ' + fmtWhen(b.comment_at));
+      c.appendChild(at);
+    }
     body.appendChild(c);
   }
 
