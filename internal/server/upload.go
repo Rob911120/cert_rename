@@ -29,15 +29,12 @@ func marshalJSON(v any) string {
 }
 
 func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", 405)
+	if !requirePOST(w, r) {
 		return
 	}
 	s.uploadMu.Lock()
 	defer s.uploadMu.Unlock()
-	s.mu.Lock()
-	c := s.cfg
-	s.mu.Unlock()
+	c := s.snapshotCfg()
 	if c.InboxDir == "" {
 		http.Error(w, "välj inbox-mapp först", 400)
 		return
@@ -60,149 +57,158 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := filepath.Base(header.Filename)
-	ext := strings.ToLower(filepath.Ext(name))
-	manualB := strings.TrimSpace(r.FormValue("b_number"))
 
-	switch ext {
+	switch strings.ToLower(filepath.Ext(name)) {
 	case ".eml":
-		if err := os.MkdirAll(c.InboxDir, 0755); err != nil {
-			http.Error(w, err.Error(), 500)
-			return
-		}
-		dst, err := store.WriteUniqueFile(c.InboxDir, name, data)
-		if err != nil {
-			http.Error(w, err.Error(), 500)
-			return
-		}
-		s.Logf("📥 uppladdad .eml: %s", filepath.Base(dst))
-		time.AfterFunc(500*time.Millisecond, func() {
-			select {
-			case s.workerKick <- struct{}{}:
-			default:
-			}
-		})
-		s.BroadcastStats()
-		writeJSON(w, map[string]any{"kind": "eml", "name": filepath.Base(dst)})
-
+		s.handleEmlUpload(w, c, name, data)
 	case ".pdf":
-		if c.ApiKey == "" {
-			http.Error(w, "ingen API-nyckel — öppna ⚙️ Inställningar", 400)
-			return
-		}
-		for _, d := range []string{store.QueueDir(c), store.ReviewDir(c)} {
-			if err := os.MkdirAll(d, 0755); err != nil {
-				http.Error(w, err.Error(), 500)
-				return
-			}
-		}
-		bNums := eml.ExtractBNumbers(manualB, name)
-		if manualB != "" {
-			s.Logf("📥 uppladdad PDF: %s — manuell B-nr: %q → bNums=%v", name, manualB, bNums)
-		} else {
-			s.Logf("📥 uppladdad PDF: %s — kör Extract (B-nr från filnamn: %v)", name, bNums)
-		}
-		hintSubject := "Manuellt indragen PDF — originalfilnamn: " + name
-		client := anthropic.NewClient(option.WithAPIKey(c.ApiKey))
-		extr, err := ai.Extract(r.Context(), s, &client, data, hintSubject, "", name)
-		fakeEml := strings.TrimSuffix(name, filepath.Ext(name)) + "-upload.eml"
-		att := &eml.Attachment{Filename: name, Data: data}
+		manualB := strings.TrimSpace(r.FormValue("b_number"))
+		s.handlePdfUpload(w, r, c, name, data, manualB)
+	default:
+		http.Error(w, "bara .pdf och .eml stöds", 400)
+	}
+}
 
-		if err != nil {
-			s.Logf("   ❌ %s — Claude-fel: %v", name, err)
-			store.MoveToReview(c, fakeEml, nil, att, nil, bNums, fmt.Sprintf("claude error: %v", err))
-			s.BroadcastStats()
-			s.BroadcastReview()
-			writeJSON(w, map[string]any{"kind": "pdf", "verdict": "review (claude error)"})
+// handleEmlUpload lägger en uppladdad .eml i inbox-mappen och kickar workern.
+func (s *Server) handleEmlUpload(w http.ResponseWriter, c store.Config, name string, data []byte) {
+	if err := os.MkdirAll(c.InboxDir, 0755); err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	dst, err := store.WriteUniqueFile(c.InboxDir, name, data)
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	s.Logf("📥 uppladdad .eml: %s", filepath.Base(dst))
+	time.AfterFunc(500*time.Millisecond, func() {
+		select {
+		case s.workerKick <- struct{}{}:
+		default:
+		}
+	})
+	s.BroadcastStats()
+	writeJSON(w, map[string]any{"kind": "eml", "name": filepath.Base(dst)})
+}
+
+// handlePdfUpload kör Extract → Validate på en manuellt uppladdad PDF och
+// lägger den i kön (eller review vid fel). Dubbletter (samma slutnamn + hash)
+// ersätts på plats.
+func (s *Server) handlePdfUpload(w http.ResponseWriter, r *http.Request, c store.Config, name string, data []byte, manualB string) {
+	if c.ApiKey == "" {
+		http.Error(w, "ingen API-nyckel — öppna ⚙️ Inställningar", 400)
+		return
+	}
+	for _, d := range []string{store.QueueDir(c), store.ReviewDir(c)} {
+		if err := os.MkdirAll(d, 0755); err != nil {
+			http.Error(w, err.Error(), 500)
 			return
 		}
-		fails := cert.Validate(extr, bNums)
-		if len(fails) > 0 {
-			s.Logf("   ❌ %s — %s", name, strings.Join(fails, "; "))
-			store.MoveToReview(c, fakeEml, nil, att, extr, bNums, strings.Join(fails, "; "))
-			s.BroadcastStats()
-			s.BroadcastReview()
-			writeJSON(w, map[string]any{"kind": "pdf", "verdict": "review: " + strings.Join(fails, "; ")})
+	}
+	bNums := eml.ExtractBNumbers(manualB, name)
+	if manualB != "" {
+		s.Logf("📥 uppladdad PDF: %s — manuell B-nr: %q → bNums=%v", name, manualB, bNums)
+	} else {
+		s.Logf("📥 uppladdad PDF: %s — kör Extract (B-nr från filnamn: %v)", name, bNums)
+	}
+	hintSubject := "Manuellt indragen PDF — originalfilnamn: " + name
+	client := anthropic.NewClient(option.WithAPIKey(c.ApiKey))
+	extr, err := ai.Extract(r.Context(), s, &client, data, hintSubject, "", name)
+	fakeEml := strings.TrimSuffix(name, filepath.Ext(name)) + "-upload.eml"
+	att := &eml.Attachment{Filename: name, Data: data}
+
+	if err != nil {
+		s.Logf("   ❌ %s — Claude-fel: %v", name, err)
+		store.MoveToReview(c, fakeEml, nil, att, nil, bNums, fmt.Sprintf("claude error: %v", err))
+		s.BroadcastStats()
+		s.BroadcastReview()
+		writeJSON(w, map[string]any{"kind": "pdf", "verdict": "review (claude error)"})
+		return
+	}
+	fails := cert.Validate(extr, bNums)
+	if len(fails) > 0 {
+		s.Logf("   ❌ %s — %s", name, strings.Join(fails, "; "))
+		store.MoveToReview(c, fakeEml, nil, att, extr, bNums, strings.Join(fails, "; "))
+		s.BroadcastStats()
+		s.BroadcastReview()
+		writeJSON(w, map[string]any{"kind": "pdf", "verdict": "review: " + strings.Join(fails, "; ")})
+		return
+	}
+	finalName := cert.BuildFilename(extr, bNums)
+	sum := sha256.Sum256(data)
+	hash := hex.EncodeToString(sum[:])
+	meta := store.PdfMeta{
+		Charge:            extr.Charge,
+		Material:          extr.Material,
+		EnStandardPresent: extr.EnStandardPresent,
+		ProductForm:       extr.ProductForm,
+		Dimensions:        extr.Dimensions,
+		CountryOfOrigin:   extr.CountryOfOrigin,
+		BNumbers:          bNums,
+		Confidence:        extr.Confidence,
+		Issues:            extr.Issues,
+		OriginalFilename:  name,
+		ExtractedAt:       time.Now().Format(time.RFC3339),
+		Schema:            4,
+		Status:            "queue",
+		Hash:              hash,
+	}
+
+	existingPath := filepath.Join(store.QueueDir(c), finalName)
+	if existingMeta, ok := store.ReadMetadata(existingPath); ok && existingMeta.Hash == hash {
+		if err := os.WriteFile(existingPath, data, 0644); err != nil {
+			http.Error(w, err.Error(), 500)
 			return
 		}
-		finalName := cert.BuildFilename(extr, bNums)
-		sum := sha256.Sum256(data)
-		hash := hex.EncodeToString(sum[:])
-		meta := store.PdfMeta{
+		if err := store.EmbedMetadata(existingPath, meta); err != nil {
+			s.Logf("   ⚠️  metadata-fel %s: %v", finalName, err)
+		}
+		s.Logf("   ♻️  ersatte befintlig: %s", finalName)
+		s.BroadcastStats()
+		s.BroadcastQueue()
+		writeJSON(w, map[string]any{"kind": "pdf", "verdict": "ersatte befintlig: " + finalName})
+		return
+	}
+
+	dst, err := store.WriteUniqueFile(store.QueueDir(c), finalName, data)
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	if err := store.EmbedMetadata(dst, meta); err != nil {
+		s.Logf("   ⚠️  metadata-fel %s: %v", filepath.Base(dst), err)
+	}
+	s.Logf("   ✅ %s", filepath.Base(dst))
+	s.IncrementOK()
+
+	// Skapa DB-post för uppladdad PDF
+	if s.repo != nil {
+		cert := &store.Certificate{
+			PDFHash:           hash,
+			Filename:          filepath.Base(dst),
+			OriginalFilename:  name,
+			CertType:          extr.CertType,
 			Charge:            extr.Charge,
 			Material:          extr.Material,
 			EnStandardPresent: extr.EnStandardPresent,
 			ProductForm:       extr.ProductForm,
 			Dimensions:        extr.Dimensions,
 			CountryOfOrigin:   extr.CountryOfOrigin,
-			BNumbers:          bNums,
+			BNumbers:          marshalJSON(bNums),
 			Confidence:        extr.Confidence,
-			Issues:            extr.Issues,
-			OriginalFilename:  name,
-			ExtractedAt:       time.Now().Format(time.RFC3339),
-			Schema:            4,
+			Issues:            marshalJSON(extr.Issues),
+			ModelUsed:         ai.ModelExtract,
 			Status:            "queue",
-			Hash:              hash,
+			ExtractedAt:       time.Now().Format(time.RFC3339),
 		}
-
-		existingPath := filepath.Join(store.QueueDir(c), finalName)
-		if existingMeta, ok := store.ReadMetadata(existingPath); ok && existingMeta.Hash == hash {
-			if err := os.WriteFile(existingPath, data, 0644); err != nil {
-				http.Error(w, err.Error(), 500)
-				return
-			}
-			if err := store.EmbedMetadata(existingPath, meta); err != nil {
-				s.Logf("   ⚠️  metadata-fel %s: %v", finalName, err)
-			}
-			s.Logf("   ♻️  ersatte befintlig: %s", finalName)
-			s.BroadcastStats()
-			s.BroadcastQueue()
-			writeJSON(w, map[string]any{"kind": "pdf", "verdict": "ersatte befintlig: " + finalName})
-			return
+		if _, insertErr := s.repo.InsertCertificate(cert); insertErr != nil {
+			s.Logf("⚠️  DB-insert misslyckades: %v", insertErr)
 		}
-
-		dst, err := store.WriteUniqueFile(store.QueueDir(c), finalName, data)
-		if err != nil {
-			http.Error(w, err.Error(), 500)
-			return
-		}
-		if err := store.EmbedMetadata(dst, meta); err != nil {
-			s.Logf("   ⚠️  metadata-fel %s: %v", filepath.Base(dst), err)
-		}
-		s.Logf("   ✅ %s", filepath.Base(dst))
-		s.IncrementOK()
-
-		// Skapa DB-post för uppladdad PDF
-		if s.repo != nil {
-			cert := &store.Certificate{
-				PDFHash:           hash,
-				Filename:          filepath.Base(dst),
-				OriginalFilename:  name,
-				CertType:          extr.CertType,
-				Charge:            extr.Charge,
-				Material:          extr.Material,
-				EnStandardPresent: extr.EnStandardPresent,
-				ProductForm:       extr.ProductForm,
-				Dimensions:        extr.Dimensions,
-				CountryOfOrigin:   extr.CountryOfOrigin,
-				BNumbers:          marshalJSON(bNums),
-				Confidence:        extr.Confidence,
-				Issues:            marshalJSON(extr.Issues),
-				ModelUsed:         ai.ModelExtract,
-				Status:            "queue",
-				ExtractedAt:       time.Now().Format(time.RFC3339),
-			}
-			if _, insertErr := s.repo.InsertCertificate(cert); insertErr != nil {
-				s.Logf("⚠️  DB-insert misslyckades: %v", insertErr)
-			}
-		}
-
-		s.BroadcastStats()
-		s.BroadcastQueue()
-		writeJSON(w, map[string]any{"kind": "pdf", "verdict": "kö: " + filepath.Base(dst)})
-
-	default:
-		http.Error(w, "bara .pdf och .eml stöds", 400)
 	}
+
+	s.BroadcastStats()
+	s.BroadcastQueue()
+	writeJSON(w, map[string]any{"kind": "pdf", "verdict": "kö: " + filepath.Base(dst)})
 }
 
 func writeJSON(w http.ResponseWriter, v any) {

@@ -15,6 +15,27 @@ import (
 	"cert-renamer/internal/eml"
 )
 
+// callTool gör ett Messages-anrop där svaret förväntas komma via tool_use,
+// plockar ut verktygets input och unmarshalar till T. Delas av alla
+// task-funktioner så anrops-/avkodningsmönstret bara finns på ett ställe.
+func callTool[T any](ctx context.Context, client *anthropic.Client, params anthropic.MessageNewParams) (*T, anthropic.Usage, error) {
+	resp, err := client.Messages.New(ctx, params)
+	if err != nil {
+		return nil, anthropic.Usage{}, err
+	}
+	for _, block := range resp.Content {
+		if block.Type == "tool_use" {
+			tu := block.AsToolUse()
+			var out T
+			if err := json.Unmarshal(tu.Input, &out); err != nil {
+				return nil, resp.Usage, fmt.Errorf("unmarshal: %w", err)
+			}
+			return &out, resp.Usage, nil
+		}
+	}
+	return nil, resp.Usage, fmt.Errorf("inget tool_use-svar från Claude")
+}
+
 // Extract anropar sonnet med en PDF + email-context och returnerar extraherade fält.
 func Extract(ctx context.Context, log Logger, client *anthropic.Client, pdf []byte, subject, body, filename string) (*cert.Extraction, error) {
 	b64 := base64.StdEncoding.EncodeToString(pdf)
@@ -22,7 +43,7 @@ func Extract(ctx context.Context, log Logger, client *anthropic.Client, pdf []by
 		subject, filename, body)
 	return logAICall(log, "sonnet Extract("+filename+")",
 		func() (*cert.Extraction, anthropic.Usage, error) {
-			resp, err := client.Messages.New(ctx, anthropic.MessageNewParams{
+			return callTool[cert.Extraction](ctx, client, anthropic.MessageNewParams{
 				Model:     ModelExtract,
 				MaxTokens: 1024,
 				Thinking:  anthropic.ThinkingConfigParamUnion{OfDisabled: &anthropic.ThinkingConfigDisabledParam{}},
@@ -43,20 +64,6 @@ func Extract(ctx context.Context, log Logger, client *anthropic.Client, pdf []by
 					},
 				},
 			})
-			if err != nil {
-				return nil, anthropic.Usage{}, err
-			}
-			for _, block := range resp.Content {
-				if block.Type == "tool_use" {
-					tu := block.AsToolUse()
-					var ext cert.Extraction
-					if err := json.Unmarshal(tu.Input, &ext); err != nil {
-						return nil, resp.Usage, fmt.Errorf("unmarshal: %w", err)
-					}
-					return &ext, resp.Usage, nil
-				}
-			}
-			return nil, resp.Usage, fmt.Errorf("inget tool_use-svar från Claude")
 		},
 		func(ext *cert.Extraction) string {
 			return fmt.Sprintf("type=%s charge=%s mat=%s", ext.CertType, ext.Charge, ext.Material)
@@ -78,7 +85,7 @@ func Classify(ctx context.Context, log Logger, client *anthropic.Client, c *eml.
 		c.Subject, c.From, c.Date, strings.Join(attNames, ", "), body)
 	return logAICall(log, "haiku Classify",
 		func() (*cert.Classification, anthropic.Usage, error) {
-			resp, err := client.Messages.New(ctx, anthropic.MessageNewParams{
+			return callTool[cert.Classification](ctx, client, anthropic.MessageNewParams{
 				Model:     ModelClassify,
 				MaxTokens: 256,
 				System:    []anthropic.TextBlockParam{{Text: classifySystemPrompt}},
@@ -95,20 +102,6 @@ func Classify(ctx context.Context, log Logger, client *anthropic.Client, c *eml.
 					},
 				},
 			})
-			if err != nil {
-				return nil, anthropic.Usage{}, err
-			}
-			for _, block := range resp.Content {
-				if block.Type == "tool_use" {
-					tu := block.AsToolUse()
-					var cls cert.Classification
-					if err := json.Unmarshal(tu.Input, &cls); err != nil {
-						return nil, resp.Usage, fmt.Errorf("unmarshal: %w", err)
-					}
-					return &cls, resp.Usage, nil
-				}
-			}
-			return nil, resp.Usage, fmt.Errorf("inget tool_use-svar från Claude")
 		},
 		func(cls *cert.Classification) string {
 			return fmt.Sprintf("cert=%t conf=%s — %s", cls.IsCertMail, cls.Confidence, cls.Reason)
@@ -152,7 +145,7 @@ func ClassifyMailCategory(ctx context.Context, log Logger, client *anthropic.Cli
 		c.Subject, c.From, c.Date, strings.Join(attNames, ", "), body)
 	return logAICall(log, "haiku ClassifyMailCategory",
 		func() (*MailClassification, anthropic.Usage, error) {
-			resp, err := client.Messages.New(ctx, anthropic.MessageNewParams{
+			return callTool[MailClassification](ctx, client, anthropic.MessageNewParams{
 				Model:     ModelClassify,
 				MaxTokens: 256,
 				System:    []anthropic.TextBlockParam{{Text: classifyCategorySystemPrompt}},
@@ -169,20 +162,6 @@ func ClassifyMailCategory(ctx context.Context, log Logger, client *anthropic.Cli
 					},
 				},
 			})
-			if err != nil {
-				return nil, anthropic.Usage{}, err
-			}
-			for _, block := range resp.Content {
-				if block.Type == "tool_use" {
-					tu := block.AsToolUse()
-					var mc MailClassification
-					if err := json.Unmarshal(tu.Input, &mc); err != nil {
-						return nil, resp.Usage, fmt.Errorf("unmarshal: %w", err)
-					}
-					return &mc, resp.Usage, nil
-				}
-			}
-			return nil, resp.Usage, fmt.Errorf("inget tool_use-svar från Claude")
 		},
 		func(mc *MailClassification) string {
 			return fmt.Sprintf("category=%s conf=%s — %s", mc.Category, mc.Confidence, mc.Reason)
@@ -215,7 +194,7 @@ func ExtractFromImage(ctx context.Context, log Logger, client *anthropic.Client,
 	b64 := base64.StdEncoding.EncodeToString(img)
 	return logAICall(log, "sonnet ExtractFromImage",
 		func() (*DeliveryNoteExtraction, anthropic.Usage, error) {
-			resp, err := client.Messages.New(ctx, anthropic.MessageNewParams{
+			return callTool[DeliveryNoteExtraction](ctx, client, anthropic.MessageNewParams{
 				Model:     ModelExtract,
 				MaxTokens: 1024,
 				Thinking:  anthropic.ThinkingConfigParamUnion{OfDisabled: &anthropic.ThinkingConfigDisabledParam{}},
@@ -234,20 +213,6 @@ func ExtractFromImage(ctx context.Context, log Logger, client *anthropic.Client,
 					},
 				},
 			})
-			if err != nil {
-				return nil, anthropic.Usage{}, err
-			}
-			for _, block := range resp.Content {
-				if block.Type == "tool_use" {
-					tu := block.AsToolUse()
-					var dn DeliveryNoteExtraction
-					if err := json.Unmarshal(tu.Input, &dn); err != nil {
-						return nil, resp.Usage, fmt.Errorf("unmarshal: %w", err)
-					}
-					return &dn, resp.Usage, nil
-				}
-			}
-			return nil, resp.Usage, fmt.Errorf("inget tool_use-svar från Claude")
 		},
 		func(dn *DeliveryNoteExtraction) string {
 			return fmt.Sprintf("leverantör=%s order=%s charge=%s antal=%g %s", dn.Supplier, dn.OrderNumber, dn.Charge, dn.Quantity, dn.Unit)
@@ -303,7 +268,7 @@ CERT VI HAR (redan extraherat vid intag — extrahera inte om)
 
 	return logAICall(log, "sonnet ClassifyUpcoming("+in.PartNumber+")",
 		func() (*UpcomingClassification, anthropic.Usage, error) {
-			resp, err := client.Messages.New(ctx, anthropic.MessageNewParams{
+			return callTool[UpcomingClassification](ctx, client, anthropic.MessageNewParams{
 				Model:     ModelExtract, // sonnet
 				MaxTokens: 512,
 				Thinking:  anthropic.ThinkingConfigParamUnion{OfDisabled: &anthropic.ThinkingConfigDisabledParam{}},
@@ -321,20 +286,6 @@ CERT VI HAR (redan extraherat vid intag — extrahera inte om)
 					},
 				},
 			})
-			if err != nil {
-				return nil, anthropic.Usage{}, err
-			}
-			for _, block := range resp.Content {
-				if block.Type == "tool_use" {
-					tu := block.AsToolUse()
-					var uc UpcomingClassification
-					if err := json.Unmarshal(tu.Input, &uc); err != nil {
-						return nil, resp.Usage, fmt.Errorf("unmarshal: %w", err)
-					}
-					return &uc, resp.Usage, nil
-				}
-			}
-			return nil, resp.Usage, fmt.Errorf("inget tool_use-svar från Claude")
 		},
 		func(uc *UpcomingClassification) string {
 			return fmt.Sprintf("krav=%s vårt=%s → %s", uc.RequiredMaterial, uc.OurMaterial, uc.MaterialOK)
@@ -364,7 +315,7 @@ func Verify(ctx context.Context, log Logger, client *anthropic.Client, c *eml.Co
 	})
 	return logAICall(log, fmt.Sprintf("haiku Verify(%d pdf)", len(c.Attachments)),
 		func() (*cert.Verification, anthropic.Usage, error) {
-			resp, err := client.Messages.New(ctx, anthropic.MessageNewParams{
+			return callTool[cert.Verification](ctx, client, anthropic.MessageNewParams{
 				Model:     ModelClassify,
 				MaxTokens: 256,
 				System:    []anthropic.TextBlockParam{{Text: verifySystemPrompt}},
@@ -379,20 +330,6 @@ func Verify(ctx context.Context, log Logger, client *anthropic.Client, c *eml.Co
 					},
 				},
 			})
-			if err != nil {
-				return nil, anthropic.Usage{}, err
-			}
-			for _, block := range resp.Content {
-				if block.Type == "tool_use" {
-					tu := block.AsToolUse()
-					var ver cert.Verification
-					if err := json.Unmarshal(tu.Input, &ver); err != nil {
-						return nil, resp.Usage, fmt.Errorf("unmarshal: %w", err)
-					}
-					return &ver, resp.Usage, nil
-				}
-			}
-			return nil, resp.Usage, fmt.Errorf("inget tool_use-svar från Claude")
 		},
 		func(ver *cert.Verification) string {
 			return fmt.Sprintf("any_cert=%t — %s", ver.AnyIsCert, ver.Reason)

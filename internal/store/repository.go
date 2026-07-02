@@ -133,6 +133,13 @@ func (r *Repository) InsertEmail(e *Email) (int64, error) {
 }
 
 // UpdateEmailStatus uppdaterar status för en email.
+// UpdateEmailContent fyller i parsat innehåll på en befintlig email-rad.
+func (r *Repository) UpdateEmailContent(id int64, subject, from, date, body string) error {
+	_, err := r.db.Exec(`UPDATE emails SET subject = ?, from_addr = ?, date = ?, body = ? WHERE id = ?`,
+		subject, from, date, body, id)
+	return err
+}
+
 func (r *Repository) UpdateEmailStatus(id int64, status string) error {
 	_, err := r.db.Exec(`UPDATE emails SET status = ? WHERE id = ?`, status, id)
 	return err

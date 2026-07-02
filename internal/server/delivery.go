@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
@@ -19,15 +18,12 @@ import (
 // och skapar en delivery_notes-rad (status unmatched). Returnerar id + extraktion.
 // Matchning/registrering sker sedan via Sickan (match → propose → register).
 func (s *Server) handleUploadDeliveryNote(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", 405)
+	if !requirePOST(w, r) {
 		return
 	}
 	s.uploadMu.Lock()
 	defer s.uploadMu.Unlock()
-	s.mu.Lock()
-	c := s.cfg
-	s.mu.Unlock()
+	c := s.snapshotCfg()
 	if c.InboxDir == "" {
 		http.Error(w, "välj inbox-mapp först", 400)
 		return
@@ -55,7 +51,7 @@ func (s *Server) handleUploadDeliveryNote(w http.ResponseWriter, r *http.Request
 	}
 
 	name := filepath.Base(header.Filename)
-	mediaType := deliveryNoteMediaType(name)
+	mediaType := store.ImageMediaType(name)
 	if mediaType == "" {
 		http.Error(w, "bara PNG/JPEG/GIF/WebP stöds för följesedel-bild", 400)
 		return
@@ -106,20 +102,4 @@ func (s *Server) handleUploadDeliveryNote(w http.ResponseWriter, r *http.Request
 	s.Logf("   ✅ följesedel #%d sparad (leverantör=%q order=%q charge=%q)", id, ext.Supplier, ext.OrderNumber, ext.Charge)
 	s.BroadcastStats()
 	writeJSON(w, map[string]any{"id": id, "extraction": ext, "image": imageFilename})
-}
-
-// deliveryNoteMediaType mappar filändelse → bild-media-type, eller "" om ej stödd.
-func deliveryNoteMediaType(name string) string {
-	switch strings.ToLower(filepath.Ext(name)) {
-	case ".png":
-		return "image/png"
-	case ".jpg", ".jpeg":
-		return "image/jpeg"
-	case ".gif":
-		return "image/gif"
-	case ".webp":
-		return "image/webp"
-	default:
-		return ""
-	}
 }

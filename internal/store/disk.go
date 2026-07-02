@@ -285,6 +285,22 @@ func PromoteReview(cfg Config, repo *Repository, in PromoteReviewInput) (newName
 	return newName, insertErr, nil
 }
 
+// ImageMediaType mappar filändelse → bild-media-type, eller "" om ej stödd.
+func ImageMediaType(name string) string {
+	switch strings.ToLower(filepath.Ext(name)) {
+	case ".png":
+		return "image/png"
+	case ".jpg", ".jpeg":
+		return "image/jpeg"
+	case ".gif":
+		return "image/gif"
+	case ".webp":
+		return "image/webp"
+	default:
+		return ""
+	}
+}
+
 // SafeName avvisar tomma strängar, path-separatorer och ".." för operationer
 // som tar användarinmatade fil-/mappnamn. Delas av HTTP-handlers, Sickan-verktyg
 // och disk-ops så traverseringsregeln bara finns på ett ställe.

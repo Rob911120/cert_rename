@@ -47,8 +47,8 @@ func (p Pricing) Usd(tc TokenCounts) float64 {
 		float64(tc.CacheRead)*p.CacheRead) / 1_000_000
 }
 
-// Add ökar token-räknarna för givet modell-id ("sonnet" eller "haiku").
-// Andra modell-id:n ignoreras tyst — vi vill inte krascha appen om
+// Add ökar token-räknarna för given kostnadsnyckel ("sonnet", "haiku" eller
+// "opus"). Andra nycklar ignoreras tyst — vi vill inte krascha appen om
 // modellen byts en framtida release.
 func (c *Costs) Add(model string, in, out, cacheCreate, cacheRead int64) {
 	var tc *TokenCounts

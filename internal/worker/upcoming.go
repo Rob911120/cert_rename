@@ -198,21 +198,24 @@ func buildUpcomingRow(ctx context.Context, mc *monitor.Client, repo *store.Repos
 		if matched == nil {
 			ud.CertStatus = store.CertMissing // mjuk varning (cert kommer ofta dagen efter godset)
 		} else {
+			material := effectiveMaterial(matched)
+			dims := effectiveDimensions(matched)
+			charge := effectiveCharge(matched)
 			ud.CertStatus = store.CertMatched
 			ud.MatchBy = matchBy
 			ud.CertFilename = matched.Filename
-			ud.OurMaterial = effectiveMaterial(matched)
-			ud.Dimensions = effectiveDimensions(matched)
-			ud.CertCharge = effectiveCharge(matched)
+			ud.OurMaterial = material
+			ud.Dimensions = dims
+			ud.CertCharge = charge
 			ud.CertProductForm = effectiveProductForm(matched)
-			ud.CertMaterial = effectiveMaterial(matched)
-			ud.CertDimensions = effectiveDimensions(matched)
+			ud.CertMaterial = material
+			ud.CertDimensions = dims
 			ud.CertBNumbers = bNumbersDisplay(matched)
 			ud.CertType = matched.CertType
 			ud.CertIsEnglish = matched.IsEnglish
 			evidence["cert_filename"] = matched.Filename
-			evidence["cert_material"] = effectiveMaterial(matched)
-			evidence["cert_charge"] = effectiveCharge(matched)
+			evidence["cert_material"] = material
+			evidence["cert_charge"] = charge
 			evidence["match_by"] = matchBy
 			if part != nil && aiClient != nil {
 				dom := classifyWithCache(ctx, repo, aiClient, n, part, matched, ud.CertRequired)

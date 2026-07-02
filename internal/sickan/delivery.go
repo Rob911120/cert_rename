@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/anthropics/anthropic-sdk-go"
 
@@ -146,6 +145,14 @@ func (tb *Toolbox) matchDeliveryNoteToPO(input json.RawMessage) (string, error) 
 	ctx, cancel := monitorCtx()
 	defer cancel()
 
+	// ProductRecords för chargen hämtas EN gång — de behövs både som
+	// PO-fallback (steg 1) och för att peka ut rätt orderrad (steg 2).
+	var chargeRecs []monitor.ProductRecord
+	var chargeRecsErr error
+	if dn.Charge != "" {
+		chargeRecs, chargeRecsErr = tb.Monitor.FindProductRecords(ctx, dn.Charge)
+	}
+
 	// 1. Hitta inköpsordern (via ordernummer, annars via charge→ProductRecord).
 	var po *monitor.PurchaseOrder
 	if dn.OrderNumber != "" {
@@ -154,11 +161,10 @@ func (tb *Toolbox) matchDeliveryNoteToPO(input json.RawMessage) (string, error) 
 		}
 	}
 	if po == nil && dn.Charge != "" {
-		recs, rerr := tb.Monitor.FindProductRecords(ctx, dn.Charge)
-		if rerr != nil {
-			return "", rerr
+		if chargeRecsErr != nil {
+			return "", chargeRecsErr
 		}
-		for _, r := range recs {
+		for _, r := range chargeRecs {
 			if r.PurchaseOrderId != 0 {
 				if po, _ = tb.Monitor.GetPurchaseOrder(ctx, r.PurchaseOrderId); po != nil {
 					break
@@ -177,12 +183,10 @@ func (tb *Toolbox) matchDeliveryNoteToPO(input json.RawMessage) (string, error) 
 		return "", err
 	}
 	var partIDs map[monitor.ID]bool
-	if dn.Charge != "" {
-		if recs, rerr := tb.Monitor.FindProductRecords(ctx, dn.Charge); rerr == nil {
-			partIDs = map[monitor.ID]bool{}
-			for _, r := range recs {
-				partIDs[r.PartId] = true
-			}
+	if len(chargeRecs) > 0 && chargeRecsErr == nil {
+		partIDs = map[monitor.ID]bool{}
+		for _, r := range chargeRecs {
+			partIDs[r.PartId] = true
 		}
 	}
 	var candidates []monitor.PurchaseOrderRow
@@ -225,17 +229,11 @@ func (tb *Toolbox) matchDeliveryNoteToPO(input json.RawMessage) (string, error) 
 	return string(out), nil
 }
 
+// imageMediaType mappar filändelse → media-type via store.ImageMediaType;
+// okänd ändelse defaultar till image/png (vision-anropet kräver en konkret typ).
 func imageMediaType(name string) string {
-	switch strings.ToLower(filepath.Ext(name)) {
-	case ".png":
-		return "image/png"
-	case ".jpg", ".jpeg":
-		return "image/jpeg"
-	case ".gif":
-		return "image/gif"
-	case ".webp":
-		return "image/webp"
-	default:
-		return "image/png"
+	if mt := store.ImageMediaType(name); mt != "" {
+		return mt
 	}
+	return "image/png"
 }
