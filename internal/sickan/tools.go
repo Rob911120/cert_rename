@@ -24,6 +24,9 @@ type Notifier interface {
 	BroadcastQueue()
 	BroadcastReview()
 	BroadcastStats()
+	// BroadcastUpcoming pushar Kommande inleveranser-payloaden (rader + noter)
+	// till UI:t — anropas efter not-/leverans-/task-mutationer.
+	BroadcastUpcoming()
 	// DriveMonitorRoutine styr Monitor-skrivbordsklienten (UI-automation) för
 	// rutinen "report_arrival" eller "inspection". save=true begär även en
 	// Ctrl+S-sparning (server-sidan kan spärra det via inställning).
@@ -40,35 +43,76 @@ type Toolbox struct {
 	Repo           *store.Repository
 	Monitor        *monitor.Client
 	MonitorConnect func() (*monitor.Client, error)
+
+	// Rules är Robs inlärda arbetsregler (agent_rules) — injiceras som ett
+	// extra system-block i varje request.
+	Rules []string
+	// ReadOnly gäller proaktiva körningar (morgonbriefen): muterande verktyg
+	// avvisas i Dispatch och utelämnas ur ToolDefs. Noter/tasks/regler/utkast
+	// räknas som säkra (förslag, inte handlingar).
+	ReadOnly bool
+}
+
+// mutatingTools är verktygen som ändrar filer, kö-ordning eller styr Monitor —
+// spärrade i läs-läge (proaktiva körningar).
+var mutatingTools = map[string]bool{
+	"apply_queue_order":         true,
+	"update_queue_item":         true,
+	"archive_review_item":       true,
+	"promote_review_to_queue":   true,
+	"monitor_ui_report_arrival": true,
+	"mark_delivered":            true,
+	"complete_task":             true,
 }
 
 // ToolDefs returnerar tool-defs som skickas till Claude i varje request.
-// Sista entry har CacheControl=ephemeral satt så hela tools-arrayen + system
-// cachas — ger ~10% input-pris från tur två i en session.
-func ToolDefs() []anthropic.ToolUnionParam {
-	last := promoteReviewTool
-	last.CacheControl = anthropic.NewCacheControlEphemeralParam()
-	return []anthropic.ToolUnionParam{
-		{OfTool: &listQueueTool},
-		{OfTool: &listReviewTool},
-		{OfTool: &applyOrderTool},
-		{OfTool: &analyzeReviewTool},
-		{OfTool: &analyzeQueueTool},
-		{OfTool: &updateQueueTool},
-		{OfTool: &archiveReviewTool},
-		{OfTool: &readPdfTool},
-		{OfTool: &listClassifiedMailTool},
-		{OfTool: &monitorFindPurchaseOrderTool},
-		{OfTool: &monitorFindSupplierTool},
-		{OfTool: &monitorFillMissingCertDataTool},
-		{OfTool: &listDeliveryNotesTool},
-		{OfTool: &readDeliveryNoteImageTool},
-		{OfTool: &matchDeliveryNoteToPOTool},
-		{OfTool: &monitorUIReportArrivalTool},
-		{OfTool: &addImprovementTool},
-		{OfTool: &listImprovementsTool},
-		{OfTool: &last},
+// readOnly utelämnar de muterande verktygen (proaktiva körningar). Sista entry
+// har CacheControl=ephemeral satt så hela tools-arrayen + system cachas —
+// ger ~10% input-pris från tur två i en session.
+func ToolDefs(readOnly bool) []anthropic.ToolUnionParam {
+	all := []*anthropic.ToolParam{
+		&listQueueTool,
+		&listReviewTool,
+		&applyOrderTool,
+		&analyzeReviewTool,
+		&analyzeQueueTool,
+		&updateQueueTool,
+		&archiveReviewTool,
+		&readPdfTool,
+		&listClassifiedMailTool,
+		&monitorFindPurchaseOrderTool,
+		&monitorFindSupplierTool,
+		&monitorFillMissingCertDataTool,
+		&listDeliveryNotesTool,
+		&readDeliveryNoteImageTool,
+		&matchDeliveryNoteToPOTool,
+		&monitorUIReportArrivalTool,
+		&addImprovementTool,
+		&listImprovementsTool,
+		&listUpcomingTool,
+		&addUpcomingNoteTool,
+		&getUpcomingNotesTool,
+		&markDeliveredTool,
+		&composeDeviationMailTool,
+		&rememberRuleTool,
+		&listRulesTool,
+		&addTaskTool,
+		&listTasksTool,
+		&completeTaskTool,
+		&promoteReviewTool,
 	}
+	out := make([]anthropic.ToolUnionParam, 0, len(all))
+	for _, t := range all {
+		if readOnly && mutatingTools[t.Name] {
+			continue
+		}
+		out = append(out, anthropic.ToolUnionParam{OfTool: t})
+	}
+	// Cache-brytpunkt på sista verktyget (kopia — muterar inte originalet).
+	lastCopy := *out[len(out)-1].OfTool
+	lastCopy.CacheControl = anthropic.NewCacheControlEphemeralParam()
+	out[len(out)-1] = anthropic.ToolUnionParam{OfTool: &lastCopy}
+	return out
 }
 
 // DispatchResult är resultatet av en tool-körning. Content är vad som skickas
@@ -91,6 +135,9 @@ func textResult(s string) DispatchResult {
 // Dispatch kör en namngiven tool med JSON-input och returnerar resultat-block
 // + en sammanfattning för UI:t. Fel översätts till is_error-tool_result av anroparen.
 func (tb *Toolbox) Dispatch(name string, input json.RawMessage) (DispatchResult, error) {
+	if tb.ReadOnly && mutatingTools[name] {
+		return DispatchResult{}, fmt.Errorf("verktyget %s är spärrat i läs-läge (proaktiv körning) — föreslå åtgärden i din sammanfattning istället", name)
+	}
 	switch name {
 	case "list_queue":
 		return wrapText(tb.listQueue())
@@ -130,6 +177,26 @@ func (tb *Toolbox) Dispatch(name string, input json.RawMessage) (DispatchResult,
 		return wrapText(tb.addImprovement(input))
 	case "list_improvements":
 		return wrapText(tb.listImprovements())
+	case "list_upcoming":
+		return wrapText(tb.listUpcoming(input))
+	case "add_upcoming_note":
+		return wrapText(tb.addUpcomingNote(input))
+	case "get_upcoming_notes":
+		return wrapText(tb.getUpcomingNotes(input))
+	case "mark_delivered":
+		return wrapText(tb.markDelivered(input))
+	case "compose_deviation_mail":
+		return wrapText(tb.composeDeviationMail(input))
+	case "remember_rule":
+		return wrapText(tb.rememberRule(input))
+	case "list_rules":
+		return wrapText(tb.listRules())
+	case "add_task":
+		return wrapText(tb.addTask(input))
+	case "list_tasks":
+		return wrapText(tb.listTasks())
+	case "complete_task":
+		return wrapText(tb.completeTask(input))
 	default:
 		return DispatchResult{}, fmt.Errorf("okänt verktyg: %s", name)
 	}

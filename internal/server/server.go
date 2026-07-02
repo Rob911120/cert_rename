@@ -238,5 +238,13 @@ func NewMux(s *Server) *http.ServeMux {
 	mux.HandleFunc("/api/upcoming/mark-delivered", s.handleUpcomingMarkDelivered)
 	mux.HandleFunc("/api/upcoming/deliver-in", s.handleUpcomingDeliverIn)
 	mux.HandleFunc("/api/upcoming/hide-supplier", s.handleUpcomingHideSupplier)
+	mux.HandleFunc("/api/upcoming/note", s.handleUpcomingNote)
+	mux.HandleFunc("/api/upcoming/note-delete", s.handleUpcomingNoteDelete)
+	mux.HandleFunc("/api/sickan/rules", s.handleSickanRules)
+	mux.HandleFunc("/api/sickan/rules/add", s.handleSickanRuleAdd)
+	mux.HandleFunc("/api/sickan/rules/remove", s.handleSickanRuleRemove)
+	mux.HandleFunc("/api/tasks", s.handleTasks)
+	mux.HandleFunc("/api/tasks/done", s.handleTaskDone)
+	mux.HandleFunc("/api/tasks/delete", s.handleTaskDelete)
 	return mux
 }

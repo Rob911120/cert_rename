@@ -183,7 +183,10 @@ func (s *Server) handleSickanStream(w http.ResponseWriter, r *http.Request) {
 	client := anthropic.NewClient(option.WithAPIKey(c.ApiKey))
 	// Monitor: återanvänd ev. redan inloggad klient, annars logga in lazy först
 	// när ett verktyg behöver API:t (ensureMonitor).
-	tb := &sickan.Toolbox{Cfg: c, N: s, Repo: s.repo, Monitor: mon, MonitorConnect: s.ensureMonitor}
+	tb := &sickan.Toolbox{
+		Cfg: c, N: s, Repo: s.repo, Monitor: mon, MonitorConnect: s.ensureMonitor,
+		Rules: s.agentRules(),
+	}
 
 	updated, err := sickan.Run(r.Context(), &client, tb, s, model, history, emit)
 	if err != nil {

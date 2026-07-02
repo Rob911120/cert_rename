@@ -700,6 +700,11 @@ type UpcomingDelivery struct {
 	CertDimensions     string  `json:"cert_dimensions"`
 	CertType           string  `json:"cert_type"`
 	CertIsEnglish      bool    `json:"cert_is_english"`
+
+	// RowNotes är radens noter (upcoming_notes-tabellen, ingen DB-kolumn här —
+	// Notes ovan är Monitor-radens egen anteckning). Fylls av ListUpcoming så
+	// UI och Sickan alltid ser vad som redan är känt.
+	RowNotes []UpcomingNote `json:"row_notes,omitempty"`
 }
 
 const upcomingColumns = `delivery_row_id, purchase_order_id, purchase_order_row_id, order_number, supplier_name, part_id, part_number, description, dimensions, planned_qty, delivery_date, cert_required, cert_status, cert_filename, match_by, required_material, required_cert, our_material, material_ok, required_product_form, product_form_ok, notes, evidence_json, delivery_raw, part_raw, local_status, first_seen, last_seen, cert_charge, cert_product_form, cert_material, cert_b_numbers, cert_dimensions, cert_type, cert_is_english`
@@ -840,7 +845,13 @@ func (r *Repository) ListUpcoming() ([]UpcomingDelivery, error) {
 		}
 		out = append(out, u)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := r.attachUpcomingNotes(out); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // GetUpcomingByRowID hämtar en rad via Monitor-radens Id. nil utan fel om saknas.

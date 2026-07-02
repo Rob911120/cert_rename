@@ -35,6 +35,17 @@ Verktyg du har:
 - archive_review_item: arkiverar en review-post till arkiverat/
 - list_improvements: läser förbättringslistan (Robs "borde-fixas"-anteckningsblock)
 - add_improvement: lägger till en post i förbättringslistan
+- list_upcoming: kommande inleveranser (order, artikel, datum, leveransstatus, cert-status, NOTER)
+- add_upcoming_note / get_upcoming_notes: noter på inleveransrader — det gemensamma minnet
+- mark_delivered: markerar inleveransrader som levererade i UI:t (kräver ja)
+- compose_deviation_mail: bygger färdigt mailutkast (mailto) för en order — 'rest' (ej inlevererat) eller 'cert_missing' (cert saknas); skickar inget
+- remember_rule / list_rules: dina inlärda arbetsregler
+- add_task / list_tasks / complete_task: att-göra-listan ("glöm inte att X")
+
+Minne och lärande:
+- NOTER: innan du föreslår något på en inleverans — läs radens noter (list_upcoming/get_upcoming_notes). Jobba inte om sådant som redan är känt ("ringde 2/7" betyder att det inte behöver göras igen). När du lärt dig något nytt om en rad: skriv en not med add_upcoming_note direkt.
+- REGLER: när Rob uttrycker ett arbetssätt ("vi gör aldrig X", "vänta alltid med Y tills Z") — spara det med remember_rule DIREKT utan att fråga, och nämn kort i svaret att du sparat det. Dina aktiva regler injiceras i den här prompten under "Robs arbetsregler".
+- TASKS: "glöm inte att X" eller "påminn mig om Y på fredag" → add_task (med due_date om datum nämns). complete_task kräver ja om det inte är din egen task.
 
 Inleverans (registrering sker ALLTID via monitor_ui_report_arrival):
 - Monitors skriv-API är inte licensierat — det finns INGET API-skrivverktyg. För att registrera en inleverans eller mottagningskontroll, använd ALLTID monitor_ui_report_arrival (styr Monitor-klienten).
@@ -49,6 +60,24 @@ Regler:
 - Svara på svenska. Korta svar är bättre än långa. Markdown-tabeller är OK.
 - Om användaren bara säger hej eller frågar något allmänt, svara utan att kalla verktyg.
 - Förbättringslistan är ditt eget anteckningsblock. Om du själv hittar något som borde förbättras med dig (Sickan) eller appen — ett verktyg du saknar, ett återkommande missförstånd, en UI-friktion, ett svar du gav men ångrade — anropa add_improvement DIREKT, utan att fråga. Det är aldrig destruktivt; rådgör inte. Nämn gärna kort i ditt svar att du la till det.`
+
+// buildSystem bygger system-blocken: den cachade grundprompten + (om regler
+// finns) ett extra OCACHAT block med Robs inlärda arbetsregler. Reglerna ligger
+// EFTER cache-brytpunkten så grundpromptens prefix-cache består när de ändras.
+func buildSystem(rules []string) []anthropic.TextBlockParam {
+	system := []anthropic.TextBlockParam{{
+		Text:         SystemPrompt,
+		CacheControl: anthropic.NewCacheControlEphemeralParam(),
+	}}
+	if len(rules) > 0 {
+		text := "Robs arbetsregler (inlärda — följ dem):\n"
+		for _, r := range rules {
+			text += "- " + r + "\n"
+		}
+		system = append(system, anthropic.TextBlockParam{Text: text})
+	}
+	return system
+}
 
 // Event är vad chat-loopen rapporterar tillbaka under körning.
 type Event struct {
@@ -75,15 +104,17 @@ func Run(
 		model = ai.ChatDefault
 	}
 	costKey := ai.ChatCostKey(model)
+	system := buildSystem(tb.Rules)
+	tools := ToolDefs(tb.ReadOnly)
 	for round := 0; round < MaxRounds; round++ {
 		if ctx.Err() != nil {
 			return history, ctx.Err()
 		}
 		streamFn := func() (anthropic.Message, bool, error) {
-			return streamOnce(ctx, client, model, history, emit)
+			return streamOnce(ctx, client, model, system, tools, history, emit)
 		}
 		syncFn := func() (anthropic.Message, error) {
-			return syncOnce(ctx, client, model, history, emit)
+			return syncOnce(ctx, client, model, system, tools, history, emit)
 		}
 		msg, err := runWithFallback(ctx, streamFn, syncFn, logger)
 		if err != nil {
@@ -167,18 +198,17 @@ func streamOnce(
 	ctx context.Context,
 	client *anthropic.Client,
 	model string,
+	system []anthropic.TextBlockParam,
+	tools []anthropic.ToolUnionParam,
 	history []anthropic.MessageParam,
 	emit EmitFunc,
 ) (anthropic.Message, bool, error) {
 	stream := client.Messages.NewStreaming(ctx, anthropic.MessageNewParams{
 		Model:     anthropic.Model(model),
 		MaxTokens: 4096,
-		System: []anthropic.TextBlockParam{{
-			Text:         SystemPrompt,
-			CacheControl: anthropic.NewCacheControlEphemeralParam(),
-		}},
-		Tools:    ToolDefs(),
-		Messages: history,
+		System:    system,
+		Tools:     tools,
+		Messages:  history,
 	})
 	msg := anthropic.Message{}
 	var emitted bool
@@ -204,18 +234,17 @@ func syncOnce(
 	ctx context.Context,
 	client *anthropic.Client,
 	model string,
+	system []anthropic.TextBlockParam,
+	tools []anthropic.ToolUnionParam,
 	history []anthropic.MessageParam,
 	emit EmitFunc,
 ) (anthropic.Message, error) {
 	msg, err := client.Messages.New(ctx, anthropic.MessageNewParams{
 		Model:     anthropic.Model(model),
 		MaxTokens: 4096,
-		System: []anthropic.TextBlockParam{{
-			Text:         SystemPrompt,
-			CacheControl: anthropic.NewCacheControlEphemeralParam(),
-		}},
-		Tools:    ToolDefs(),
-		Messages: history,
+		System:    system,
+		Tools:     tools,
+		Messages:  history,
 	})
 	if err != nil {
 		return anthropic.Message{}, err

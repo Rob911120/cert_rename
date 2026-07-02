@@ -21,9 +21,10 @@ type stubNotifier struct {
 }
 
 func (s *stubNotifier) Logf(string, ...any) { s.logs++ }
-func (s *stubNotifier) BroadcastQueue()     {}
-func (s *stubNotifier) BroadcastReview()    {}
-func (s *stubNotifier) BroadcastStats()     {}
+func (s *stubNotifier) BroadcastQueue()    {}
+func (s *stubNotifier) BroadcastReview()   {}
+func (s *stubNotifier) BroadcastStats()    {}
+func (s *stubNotifier) BroadcastUpcoming() {}
 func (s *stubNotifier) DriveMonitorRoutine(routine, orderNumber string, save bool) error {
 	s.driveCalls++
 	s.lastRoutine, s.lastOrder, s.lastSave = routine, orderNumber, save

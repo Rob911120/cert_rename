@@ -154,6 +154,43 @@ CREATE TABLE IF NOT EXISTS app_state (
     value TEXT NOT NULL DEFAULT ''
 );
 
+-- Noter på kommande inleveranser: vad vi redan vet om en rad ("ringde 2/7,
+-- cert kommer med nästa sändning"). Skrivs av Rob (UI) och Sickan (verktyg).
+-- Fristående tabell — överlever refreshens stale-delete av raderna.
+CREATE TABLE IF NOT EXISTS upcoming_notes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    delivery_row_id INTEGER NOT NULL,
+    order_number TEXT NOT NULL DEFAULT '',
+    part_number TEXT NOT NULL DEFAULT '',
+    author TEXT NOT NULL DEFAULT 'rob',          -- rob|sickan
+    text TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Inlärda arbetsregler för Sickan (injiceras i systemprompten). Synliga och
+-- raderbara i ⚙️ så det aldrig är magiskt vad hon "lärt sig".
+CREATE TABLE IF NOT EXISTS agent_rules (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    text TEXT NOT NULL,
+    source TEXT NOT NULL DEFAULT 'rob',          -- rob|sickan|seed
+    active INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Att-göra-lista ("glöm inte att X"), med valfritt datum och orderkoppling.
+-- Visas i morgonbriefen; skrivs av Rob (UI/chat) och Sickan (verktyg).
+CREATE TABLE IF NOT EXISTS tasks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    text TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'open',         -- open|done
+    due_date TEXT NOT NULL DEFAULT '',           -- YYYY-MM-DD eller tomt
+    order_number TEXT NOT NULL DEFAULT '',
+    delivery_row_id INTEGER NOT NULL DEFAULT 0,
+    source TEXT NOT NULL DEFAULT 'rob',          -- rob|sickan
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    done_at TEXT NOT NULL DEFAULT ''
+);
+
 -- Cache för AI-materialdomen (sonnet) per innehålls-hash, så att identiska rader
 -- (samma artikel-ExtraDescription + samma cert) inte betalas varje kväll.
 CREATE TABLE IF NOT EXISTS upcoming_classifications (
@@ -177,6 +214,8 @@ CREATE INDEX IF NOT EXISTS idx_cost_entries_certificate_id ON cost_entries(certi
 CREATE INDEX IF NOT EXISTS idx_delivery_notes_status ON delivery_notes(status);
 CREATE INDEX IF NOT EXISTS idx_upcoming_delivery_date ON upcoming_deliveries(delivery_date);
 CREATE INDEX IF NOT EXISTS idx_upcoming_cert_status ON upcoming_deliveries(cert_status);
+CREATE INDEX IF NOT EXISTS idx_upcoming_notes_row ON upcoming_notes(delivery_row_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
 `
 
 // InitDB öppnar (eller skapar) SQLite-databasen och kör migrations.
@@ -195,8 +234,29 @@ func InitDB(dbPath string) (*sql.DB, error) {
 	if err := migrate(db); err != nil {
 		return nil, err
 	}
+	if err := seedAgentRules(db); err != nil {
+		return nil, err
+	}
 	log.Printf("🗄️  Databas initierad: %s", dbPath)
 	return db, nil
+}
+
+// seedAgentRules lägger in grundregeln exakt en gång per databas (markör i
+// app_state) — raderar användaren regeln ska den inte återuppstå vid nästa start.
+func seedAgentRules(db *sql.DB) error {
+	var done int
+	if err := db.QueryRow(`SELECT count(*) FROM app_state WHERE key = 'agent_rules_seeded'`).Scan(&done); err != nil {
+		return err
+	}
+	if done > 0 {
+		return nil
+	}
+	if _, err := db.Exec(`INSERT INTO agent_rules (text, source) VALUES (?, 'seed')`,
+		"Skriv inte om/jaga inte cert som saknas förrän leveransen faktiskt har dykt upp (godset kommer ofta före certet)."); err != nil {
+		return err
+	}
+	_, err := db.Exec(`INSERT INTO app_state (key, value) VALUES ('agent_rules_seeded', '1')`)
+	return err
 }
 
 // migrate applicerar idempotenta schema-ändringar på en befintlig databas.

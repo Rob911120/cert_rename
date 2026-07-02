@@ -298,6 +298,19 @@
       </div>
 
       <div class="panel-section">
+        <div class="panel-label">🤖 Sickans arbetsregler</div>
+        <div class="text-xs text-slate-500 dark:text-slate-400 mb-2">
+          Inlärda arbetssätt som Sickan följer (injiceras i hennes systemprompt).
+          Hon sparar själv när du uttrycker ett arbetssätt i chatten.
+        </div>
+        <div id="rulesList" class="flex flex-col gap-1 mb-2 text-sm"></div>
+        <div class="flex items-center gap-2">
+          <input type="text" id="ruleInput" placeholder="Ny regel…" autocomplete="off" class="input-field !py-1.5">
+          <button class="btn-secondary" onclick="addRule()">Lägg till</button>
+        </div>
+      </div>
+
+      <div class="panel-section">
         <div class="panel-label">🎨 Tema</div>
         <div class="segmented" id="themeMode">
           <button data-mode="light" data-active="true" onclick="setTheme('light')">Ljus</button>
@@ -530,6 +543,57 @@ async function saveReportEmail() {
   if (cfg.report_email) toast('✉️ Avvikelsemail går till ' + cfg.report_email);
 }
 
+// --- Sickans arbetsregler (⚙️) ---
+async function loadRules() {
+  try {
+    const r = await fetch('/api/sickan/rules');
+    if (!r.ok) return;
+    const data = await r.json();
+    const el = document.getElementById('rulesList');
+    el.innerHTML = '';
+    const rules = data.rules || [];
+    if (!rules.length) {
+      el.innerHTML = '<div class="text-xs italic text-slate-400">Inga regler ännu</div>';
+      return;
+    }
+    for (const rule of rules) {
+      const line = document.createElement('div');
+      line.className = 'flex items-start justify-between gap-2 text-slate-700 dark:text-slate-200';
+      const txt = document.createElement('span');
+      txt.className = 'flex-1 min-w-0';
+      txt.textContent = rule.text;
+      txt.title = 'Källa: ' + rule.source + ' · ' + rule.created_at;
+      const x = document.createElement('button');
+      x.className = 'btn-ghost btn-sm shrink-0';
+      x.textContent = 'x';
+      x.title = 'Ta bort regeln';
+      x.addEventListener('click', async () => {
+        const rr = await fetch('/api/sickan/rules/remove', {
+          method: 'POST', headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ id: rule.id }),
+        });
+        if (!rr.ok) { toast('⚠️ ' + await apiError(rr)); return; }
+        loadRules();
+      });
+      line.appendChild(txt); line.appendChild(x);
+      el.appendChild(line);
+    }
+  } catch (e) { console.warn(e); }
+}
+
+async function addRule() {
+  const input = document.getElementById('ruleInput');
+  const text = input.value.trim();
+  if (!text) return;
+  const r = await fetch('/api/sickan/rules/add', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ text }),
+  });
+  if (!r.ok) { toast('⚠️ ' + await apiError(r)); return; }
+  input.value = '';
+  loadRules();
+}
+
 function setTheme(t) {
   cfg.theme = t;
   document.documentElement.dataset.theme = t;
@@ -661,6 +725,7 @@ function openSettings() {
   b.classList.remove('opacity-0', 'pointer-events-none');
   b.classList.add('opacity-100');
   p.setAttribute('aria-hidden', 'false');
+  loadRules();
 }
 function closeSettings() {
   const p = document.getElementById('settingsPanel');
@@ -1157,7 +1222,8 @@ function renderArticle(row, enabled) {
     (desc ? '<span class="text-xs text-slate-500 dark:text-slate-400 truncate">— ' + escapeHtml(desc) + '</span>' : '') +
     (row.dimensions ? '<span class="text-xs text-slate-400 shrink-0">· ' + escapeHtml(row.dimensions) + '</span>' : '') +
     (row.planned_qty ? '<span class="text-xs text-slate-400 shrink-0">· ' + escapeHtml(String(row.planned_qty)) + ' st</span>' : '') +
-    '<span class="ml-1 shrink-0">' + (isOverdue(row) ? '<span class="badge-red">⏰ försenad</span> ' : '') + upcomingBadge(row) + (row.local_status === 'delivered' ? ' <span class="badge-gray">levererad</span>' : '') + '</span>';
+    '<span class="ml-1 shrink-0">' + (isOverdue(row) ? '<span class="badge-red">⏰ försenad</span> ' : '') + upcomingBadge(row) + (row.local_status === 'delivered' ? ' <span class="badge-gray">levererad</span>' : '') +
+    ((row.row_notes || []).length ? ' <span class="text-xs text-slate-400" title="Rad med noter">📝' + row.row_notes.length + '</span>' : '') + '</span>';
   header.appendChild(left);
 
   if (row.local_status !== 'delivered') {
@@ -1185,6 +1251,8 @@ function renderArticle(row, enabled) {
     const diag = renderDiagnostics(row);
     if (diag) detail.appendChild(diag);
   }
+
+  detail.appendChild(renderNotesSection(row));
 
   const detailActions = document.createElement('div');
   detailActions.className = 'flex items-center gap-1.5 justify-end mt-2 pt-2 border-t border-slate-200 dark:border-slate-700';
@@ -1286,6 +1354,64 @@ function renderCertCopyBlock(row) {
     line.appendChild(v);
     grid.appendChild(line);
   }
+  return wrap;
+}
+
+// renderNotesSection: radens noter (det gemensamma minnet med Sickan) + inputfält.
+// Noter skrivna av Sickan märks 🤖, dina 👤. Enter i fältet sparar.
+function renderNotesSection(row) {
+  const wrap = document.createElement('div');
+  wrap.className = 'mt-2 pt-2 border-t border-slate-200 dark:border-slate-700';
+  const title = document.createElement('div');
+  title.className = 'font-semibold text-slate-500 dark:text-slate-400 mb-1 uppercase tracking-wide text-[10px]';
+  title.textContent = 'Noter';
+  wrap.appendChild(title);
+  for (const n of (row.row_notes || [])) {
+    const line = document.createElement('div');
+    line.className = 'flex items-start gap-2 py-0.5 group';
+    const who = document.createElement('span');
+    who.className = 'shrink-0';
+    who.textContent = n.author === 'sickan' ? '🤖' : '👤';
+    who.title = (n.author === 'sickan' ? 'Sickan' : 'Rob') + ' · ' + n.created_at;
+    const txt = document.createElement('span');
+    txt.className = 'flex-1 min-w-0 whitespace-pre-wrap';
+    txt.textContent = n.text;
+    const del = document.createElement('button');
+    del.className = 'shrink-0 text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100';
+    del.textContent = '×';
+    del.title = 'Ta bort not';
+    del.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const r = await fetch('/api/upcoming/note-delete', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ id: n.id }),
+      });
+      if (!r.ok) toast('⚠️ ' + await apiError(r));
+    });
+    line.appendChild(who); line.appendChild(txt); line.appendChild(del);
+    wrap.appendChild(line);
+  }
+  const inputRow = document.createElement('div');
+  inputRow.className = 'flex items-center gap-2 mt-1';
+  const input = document.createElement('input');
+  input.className = 'input-field !py-1 text-xs';
+  input.placeholder = 'Lägg till not… (Enter sparar)';
+  input.addEventListener('click', (e) => e.stopPropagation());
+  input.addEventListener('keydown', async (e) => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    const text = input.value.trim();
+    if (!text) return;
+    input.disabled = true;
+    const r = await fetch('/api/upcoming/note', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ delivery_row_id: String(row.delivery_row_id), text }),
+    });
+    if (!r.ok) { toast('⚠️ ' + await apiError(r)); input.disabled = false; return; }
+    // SSE-broadcasten ritar om raden med noten; fältet behöver inte återställas.
+  });
+  inputRow.appendChild(input);
+  wrap.appendChild(inputRow);
   return wrap;
 }
 
@@ -1928,6 +2054,26 @@ function sickanBubble(role, text) {
   return div;
 }
 
+// finalizeBotBubble gör mailto-länkar i en färdig bot-bubbla klickbara
+// ("✉️ Öppna mailutkast"). Byggs med DOM-noder — ingen HTML-injektion.
+function finalizeBotBubble(div) {
+  if (!div || !div.textContent.includes('mailto:')) return;
+  const text = div.textContent;
+  div.textContent = '';
+  const re = /mailto:[^\s"'<>()]+/g;
+  let last = 0, m;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) div.appendChild(document.createTextNode(text.slice(last, m.index)));
+    const a = document.createElement('a');
+    a.href = m[0];
+    a.textContent = '✉️ Öppna mailutkast';
+    a.className = 'underline text-accent';
+    div.appendChild(a);
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) div.appendChild(document.createTextNode(text.slice(last)));
+}
+
 function sickanTypingBubble() {
   const div = document.createElement('div');
   div.className = 'sickan-typing';
@@ -1979,6 +2125,16 @@ function sickanToolLabel(name, payload) {
       case 'read_pdf': return p.summary || (r ? `Läste ${(p.input && p.input.filename) || 'PDF'}` : 'Läser PDF…');
       case 'add_improvement':   return r ? '✅ Lagd på förbättringslistan' : 'Skickar till förbättringslistan…';
       case 'list_improvements': return r ? `Hämtade ${r.count} poster` : 'Läser förbättringslistan…';
+      case 'list_upcoming':     return r ? `Listade ${r.count} inleveransrader` : 'Listar inleveranser…';
+      case 'add_upcoming_note': return r ? '📝 Not sparad' : 'Skriver not…';
+      case 'get_upcoming_notes': return r ? `Läste ${r.count} noter` : 'Läser noter…';
+      case 'mark_delivered':    return r ? `✓ Markerade ${r.marked} levererade` : 'Markerar levererade…';
+      case 'compose_deviation_mail': return r ? `✉️ Utkast klart: ${r.subject} — klicka för att öppna` : 'Bygger mailutkast…';
+      case 'remember_rule':     return r ? '📌 Regel sparad (syns i ⚙️)' : 'Sparar regel…';
+      case 'list_rules':        return r ? `Läste ${r.count} regler` : 'Läser regler…';
+      case 'add_task':          return r ? '✅ Lagd på att-göra-listan' : 'Lägger till task…';
+      case 'list_tasks':        return r ? `Läste ${r.count} tasks` : 'Läser att-göra-listan…';
+      case 'complete_task':     return r ? `☑️ Avbockad: ${r.completed || ''}` : 'Bockar av…';
       default: return p.name;
     }
   } catch (e) { return name; }
@@ -2037,6 +2193,7 @@ async function sendSickan(text) {
     sickanBusy = false;
     document.getElementById('sickanSend').disabled = false;
     setSickanStatus('Klar');
+    finalizeBotBubble(sickanCurrentBot);
     sickanCurrentBot = null;
     if (sickanTyping) { sickanTyping.remove(); sickanTyping = null; }
   }
@@ -2059,6 +2216,7 @@ function handleSickanEvent(kind, payload, pendingTools) {
       break;
     }
     case 'tool_call': {
+      finalizeBotBubble(sickanCurrentBot);
       sickanCurrentBot = null;
       const card = sickanToolCard(sickanToolLabel('?', payload));
       try { pendingTools.set(JSON.parse(payload).id, card); } catch (e) {}
@@ -2069,7 +2227,15 @@ function handleSickanEvent(kind, payload, pendingTools) {
       try {
         const p = JSON.parse(payload);
         const card = pendingTools.get(p.id);
-        if (card) card.textContent = '▸ ' + sickanToolLabel(p.name, payload);
+        if (card) {
+          card.textContent = '▸ ' + sickanToolLabel(p.name, payload);
+          // Mailutkast: gör kortet klickbart — öppnar mailto-utkastet direkt.
+          const url = p.result && p.result.mailto_url;
+          if (url && /^mailto:/.test(url)) {
+            card.classList.add('cursor-pointer', 'hover:underline', 'text-accent');
+            card.addEventListener('click', () => { window.location.href = url; });
+          }
+        }
       } catch (e) {}
       break;
     }
@@ -2091,6 +2257,7 @@ function handleSickanEvent(kind, payload, pendingTools) {
     }
     case 'done': {
       // text-stream slut; nästa runda börjar nytt bot-bubbla
+      finalizeBotBubble(sickanCurrentBot);
       sickanCurrentBot = null;
       break;
     }
