@@ -25,46 +25,46 @@ func (s *Server) handleUploadDeliveryNote(w http.ResponseWriter, r *http.Request
 	defer s.uploadMu.Unlock()
 	c := s.snapshotCfg()
 	if c.InboxDir == "" {
-		http.Error(w, "välj inbox-mapp först", 400)
+		httpError(w, "välj inbox-mapp först", http.StatusBadRequest)
 		return
 	}
 	if c.ApiKey == "" {
-		http.Error(w, "ingen API-nyckel — öppna ⚙️ Inställningar", 400)
+		httpError(w, "ingen API-nyckel — öppna ⚙️ Inställningar", http.StatusBadRequest)
 		return
 	}
 
 	r.Body = http.MaxBytesReader(w, r.Body, maxUploadBytes+1<<20)
 	if err := r.ParseMultipartForm(32 << 20); err != nil {
-		http.Error(w, "kunde inte läsa multipart: "+err.Error(), 400)
+		httpError(w, "kunde inte läsa multipart: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 	file, header, err := r.FormFile("image")
 	if err != nil {
-		http.Error(w, "saknar fält 'image': "+err.Error(), 400)
+		httpError(w, "saknar fält 'image': "+err.Error(), http.StatusBadRequest)
 		return
 	}
 	defer file.Close()
 	data, err := io.ReadAll(file)
 	if err != nil {
-		http.Error(w, "läsfel: "+err.Error(), 400)
+		httpError(w, "läsfel: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 
 	name := filepath.Base(header.Filename)
 	mediaType := store.ImageMediaType(name)
 	if mediaType == "" {
-		http.Error(w, "bara PNG/JPEG/GIF/WebP stöds för följesedel-bild", 400)
+		httpError(w, "bara PNG/JPEG/GIF/WebP stöds för följesedel-bild", http.StatusBadRequest)
 		return
 	}
 
 	dir := store.DeliveryNotesDir(c)
 	if err := os.MkdirAll(dir, 0755); err != nil {
-		http.Error(w, err.Error(), 500)
+		httpError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	dst, err := store.WriteUniqueFile(dir, name, data)
 	if err != nil {
-		http.Error(w, err.Error(), 500)
+		httpError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	imageFilename := filepath.Base(dst)
@@ -74,7 +74,7 @@ func (s *Server) handleUploadDeliveryNote(w http.ResponseWriter, r *http.Request
 	ext, err := ai.ExtractFromImage(r.Context(), s, &client, data, mediaType)
 	if err != nil {
 		s.Logf("   ❌ vision-fel: %v", err)
-		http.Error(w, "vision misslyckades: "+err.Error(), 502)
+		httpError(w, "vision misslyckades: "+err.Error(), http.StatusBadGateway)
 		return
 	}
 
@@ -95,7 +95,7 @@ func (s *Server) handleUploadDeliveryNote(w http.ResponseWriter, r *http.Request
 	id, err := s.repo.InsertDeliveryNote(dn)
 	if err != nil {
 		s.Logf("   ⚠️  kunde inte spara följesedel i DB: %v", err)
-		http.Error(w, "DB-fel: "+err.Error(), 500)
+		httpError(w, "DB-fel: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	dn.ID = id

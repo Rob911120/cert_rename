@@ -64,7 +64,7 @@ func (s *Server) broadcastStateInternal() {
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
-		http.Error(w, "streaming unsupported", 500)
+		httpError(w, "streaming unsupported", http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "text/event-stream")

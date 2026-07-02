@@ -24,7 +24,7 @@ func (s *Server) handleUpcoming(w http.ResponseWriter, r *http.Request) {
 // säker att anropa även innan Steg 0 är grön.
 func (s *Server) handleUpcomingRun(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		httpError(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	s.KickUpcoming()
@@ -35,22 +35,22 @@ func (s *Server) handleUpcomingRun(w http.ResponseWriter, r *http.Request) {
 // överlever refresh).
 func (s *Server) handleUpcomingMarkDelivered(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		httpError(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	var body struct {
 		DeliveryRowID int64 `json:"delivery_row_id,string"` // sträng: 64-bitars-id, JS-precision
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		httpError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	if body.DeliveryRowID == 0 {
-		http.Error(w, "delivery_row_id krävs", http.StatusBadRequest)
+		httpError(w, "delivery_row_id krävs", http.StatusBadRequest)
 		return
 	}
 	if err := s.repo.MarkUpcomingDelivered(body.DeliveryRowID); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		httpError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	s.BroadcastUpcoming()
@@ -65,7 +65,7 @@ func (s *Server) handleUpcomingMarkDelivered(w http.ResponseWriter, r *http.Requ
 // UI-automationen per ordernr inte själv kan peka ut raden vid fleradersorder.
 func (s *Server) handleUpcomingDeliverIn(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		httpError(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	var body struct {
@@ -74,7 +74,7 @@ func (s *Server) handleUpcomingDeliverIn(w http.ResponseWriter, r *http.Request)
 		Routine       string `json:"routine"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		httpError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	routine := body.Routine
@@ -82,16 +82,16 @@ func (s *Server) handleUpcomingDeliverIn(w http.ResponseWriter, r *http.Request)
 		routine = "report_arrival"
 	}
 	if routine != "report_arrival" && routine != "inspection" {
-		http.Error(w, "ogiltig routine", http.StatusBadRequest)
+		httpError(w, "ogiltig routine", http.StatusBadRequest)
 		return
 	}
 	row, err := s.repo.GetUpcomingByRowID(body.DeliveryRowID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		httpError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	if row == nil {
-		http.Error(w, "raden finns inte", http.StatusNotFound)
+		httpError(w, "raden finns inte", http.StatusNotFound)
 		return
 	}
 	rowInfo := map[string]any{
@@ -139,7 +139,7 @@ func (s *Server) handleUpcomingDeliverIn(w http.ResponseWriter, r *http.Request)
 	autoSave := s.cfg.MonitorUIAutoSave
 	s.mu.Unlock()
 	if err := s.driveRoutine(routine, row.OrderNumber, autoSave); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		httpError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	s.Logf("📦 Leverera in (%s): öppnade Monitor-rutin för order %s (rad %d)", routine, row.OrderNumber, row.PurchaseOrderRowID)
@@ -161,7 +161,7 @@ func deliverInBlocked(row *store.UpcomingDelivery) (bool, string) {
 // och kan återställas i Inställningar.
 func (s *Server) handleUpcomingHideSupplier(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		httpError(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	var body struct {
@@ -169,11 +169,11 @@ func (s *Server) handleUpcomingHideSupplier(w http.ResponseWriter, r *http.Reque
 		Hidden   bool   `json:"hidden"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		httpError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	if body.Supplier == "" {
-		http.Error(w, "supplier krävs", http.StatusBadRequest)
+		httpError(w, "supplier krävs", http.StatusBadRequest)
 		return
 	}
 
@@ -196,26 +196,9 @@ func (s *Server) handleUpcomingHideSupplier(w http.ResponseWriter, r *http.Reque
 	s.mu.Unlock()
 
 	if err := store.SaveConfig(cfg); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		httpError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	s.BroadcastUpcoming()
 	w.WriteHeader(http.StatusNoContent)
-}
-
-func writeJSONStatus(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(v)
-}
-
-func mergeMap(a, b map[string]any) map[string]any {
-	out := make(map[string]any, len(a)+len(b))
-	for k, v := range a {
-		out[k] = v
-	}
-	for k, v := range b {
-		out[k] = v
-	}
-	return out
 }

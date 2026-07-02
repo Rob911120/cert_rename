@@ -46,7 +46,7 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPost {
 		var c store.Config
 		if err := json.NewDecoder(r.Body).Decode(&c); err != nil {
-			http.Error(w, err.Error(), 400)
+			httpError(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 		s.mu.Lock()
@@ -79,7 +79,7 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(204)
 		return
 	}
-	http.Error(w, "method not allowed", 405)
+	httpError(w, "method not allowed", http.StatusMethodNotAllowed)
 }
 
 func (s *Server) handleQueue(w http.ResponseWriter, r *http.Request) {
@@ -99,7 +99,7 @@ func (s *Server) handlePickFolder(w http.ResponseWriter, r *http.Request) {
 	}
 	path, err := nativeFolderDialog(prompt)
 	if err != nil {
-		http.Error(w, err.Error(), 500)
+		httpError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -114,7 +114,7 @@ func (s *Server) resolveRequestFile(w http.ResponseWriter, r *http.Request) (str
 	name := q.Get("name")
 	base := q.Get("base")
 	if !store.SafeName(name) {
-		http.Error(w, "ogiltigt namn", http.StatusBadRequest)
+		httpError(w, "ogiltigt namn", http.StatusBadRequest)
 		return "", false
 	}
 	c, ok := s.requireInbox(w)
@@ -129,17 +129,17 @@ func (s *Server) resolveRequestFile(w http.ResponseWriter, r *http.Request) (str
 		dir = store.ApprovedDir(c)
 	case "review":
 		if !store.SafeName(base) {
-			http.Error(w, "ogiltig base", http.StatusBadRequest)
+			httpError(w, "ogiltig base", http.StatusBadRequest)
 			return "", false
 		}
 		dir = filepath.Join(store.ReviewDir(c), base)
 	default:
-		http.Error(w, "ogiltig kind", http.StatusBadRequest)
+		httpError(w, "ogiltig kind", http.StatusBadRequest)
 		return "", false
 	}
 	full := filepath.Clean(filepath.Join(dir, name))
 	if !strings.HasPrefix(full, filepath.Clean(dir)+string(os.PathSeparator)) {
-		http.Error(w, "ogiltig sökväg", http.StatusBadRequest)
+		httpError(w, "ogiltig sökväg", http.StatusBadRequest)
 		return "", false
 	}
 	return full, true
@@ -170,11 +170,11 @@ func (s *Server) handleOpen(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := os.Stat(full); err != nil {
-		http.Error(w, err.Error(), 404)
+		httpError(w, err.Error(), http.StatusNotFound)
 		return
 	}
 	if err := openLocalFile(full); err != nil {
-		http.Error(w, err.Error(), 500)
+		httpError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	w.WriteHeader(204)
@@ -208,7 +208,7 @@ func (s *Server) handleApprove(w http.ResponseWriter, r *http.Request) {
 	}
 	name := body.Filename
 	if !store.SafeName(name) {
-		http.Error(w, "ogiltigt filnamn", 400)
+		httpError(w, "ogiltigt filnamn", http.StatusBadRequest)
 		return
 	}
 	c, ok := s.requireInbox(w)
@@ -216,7 +216,7 @@ func (s *Server) handleApprove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := store.ApproveQueueItem(c, name); err != nil {
-		http.Error(w, err.Error(), 500)
+		httpError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	// Uppdatera status i DB
@@ -246,7 +246,7 @@ func (s *Server) handleArchive(w http.ResponseWriter, r *http.Request) {
 	}
 	base := body.Base
 	if !store.SafeName(base) {
-		http.Error(w, "ogiltig base", 400)
+		httpError(w, "ogiltig base", http.StatusBadRequest)
 		return
 	}
 	c, ok := s.requireInbox(w)
@@ -256,16 +256,16 @@ func (s *Server) handleArchive(w http.ResponseWriter, r *http.Request) {
 	src := filepath.Join(store.ReviewDir(c), base)
 	info, err := os.Stat(src)
 	if err != nil || !info.IsDir() {
-		http.Error(w, "review-mapp finns inte", 404)
+		httpError(w, "review-mapp finns inte", http.StatusNotFound)
 		return
 	}
 	if err := os.MkdirAll(store.ArkiveratDir(c), 0755); err != nil {
-		http.Error(w, err.Error(), 500)
+		httpError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	dst := store.UniquePath(store.ArkiveratDir(c), base)
 	if err := os.Rename(src, dst); err != nil {
-		http.Error(w, err.Error(), 500)
+		httpError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	s.BroadcastStats()
@@ -303,7 +303,7 @@ func (s *Server) handlePromoteReview(w http.ResponseWriter, r *http.Request) {
 		BNumbers:    body.BNumbers,
 	})
 	if err != nil {
-		http.Error(w, err.Error(), 400)
+		httpError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	if insertErr != nil {
@@ -322,7 +322,7 @@ func (s *Server) handleStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.startWorker(); err != nil {
-		http.Error(w, err.Error(), 400)
+		httpError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	w.WriteHeader(204)

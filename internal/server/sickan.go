@@ -97,7 +97,7 @@ func (s *Server) handleSickanModel(w http.ResponseWriter, r *http.Request) {
 		body.Session = "default"
 	}
 	if ai.ChatCostKey(body.Model) == "" {
-		http.Error(w, "okänd modell", 400)
+		httpError(w, "okänd modell", http.StatusBadRequest)
 		return
 	}
 	s.persistSickanModel(body.Session, body.Model)
@@ -135,7 +135,7 @@ func (s *Server) handleSickanStream(w http.ResponseWriter, r *http.Request) {
 		body.Session = "default"
 	}
 	if body.Text == "" {
-		http.Error(w, "tom text", 400)
+		httpError(w, "tom text", http.StatusBadRequest)
 		return
 	}
 	s.mu.Lock()
@@ -143,17 +143,17 @@ func (s *Server) handleSickanStream(w http.ResponseWriter, r *http.Request) {
 	mon := s.mon
 	s.mu.Unlock()
 	if c.ApiKey == "" {
-		http.Error(w, "ingen API-nyckel", 400)
+		httpError(w, "ingen API-nyckel", http.StatusBadRequest)
 		return
 	}
 	if c.InboxDir == "" {
-		http.Error(w, "ingen inbox vald", 400)
+		httpError(w, "ingen inbox vald", http.StatusBadRequest)
 		return
 	}
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
-		http.Error(w, "streaming unsupported", 500)
+		httpError(w, "streaming unsupported", http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "text/event-stream")

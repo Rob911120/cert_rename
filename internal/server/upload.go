@@ -36,24 +36,24 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	defer s.uploadMu.Unlock()
 	c := s.snapshotCfg()
 	if c.InboxDir == "" {
-		http.Error(w, "välj inbox-mapp först", 400)
+		httpError(w, "välj inbox-mapp först", http.StatusBadRequest)
 		return
 	}
 
 	r.Body = http.MaxBytesReader(w, r.Body, maxUploadBytes+1<<20)
 	if err := r.ParseMultipartForm(32 << 20); err != nil {
-		http.Error(w, "kunde inte läsa multipart: "+err.Error(), 400)
+		httpError(w, "kunde inte läsa multipart: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 	file, header, err := r.FormFile("file")
 	if err != nil {
-		http.Error(w, "saknar fält 'file': "+err.Error(), 400)
+		httpError(w, "saknar fält 'file': "+err.Error(), http.StatusBadRequest)
 		return
 	}
 	defer file.Close()
 	data, err := io.ReadAll(file)
 	if err != nil {
-		http.Error(w, "läsfel: "+err.Error(), 400)
+		httpError(w, "läsfel: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 	name := filepath.Base(header.Filename)
@@ -65,19 +65,19 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		manualB := strings.TrimSpace(r.FormValue("b_number"))
 		s.handlePdfUpload(w, r, c, name, data, manualB)
 	default:
-		http.Error(w, "bara .pdf och .eml stöds", 400)
+		httpError(w, "bara .pdf och .eml stöds", http.StatusBadRequest)
 	}
 }
 
 // handleEmlUpload lägger en uppladdad .eml i inbox-mappen och kickar workern.
 func (s *Server) handleEmlUpload(w http.ResponseWriter, c store.Config, name string, data []byte) {
 	if err := os.MkdirAll(c.InboxDir, 0755); err != nil {
-		http.Error(w, err.Error(), 500)
+		httpError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	dst, err := store.WriteUniqueFile(c.InboxDir, name, data)
 	if err != nil {
-		http.Error(w, err.Error(), 500)
+		httpError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	s.Logf("📥 uppladdad .eml: %s", filepath.Base(dst))
@@ -96,12 +96,12 @@ func (s *Server) handleEmlUpload(w http.ResponseWriter, c store.Config, name str
 // ersätts på plats.
 func (s *Server) handlePdfUpload(w http.ResponseWriter, r *http.Request, c store.Config, name string, data []byte, manualB string) {
 	if c.ApiKey == "" {
-		http.Error(w, "ingen API-nyckel — öppna ⚙️ Inställningar", 400)
+		httpError(w, "ingen API-nyckel — öppna ⚙️ Inställningar", http.StatusBadRequest)
 		return
 	}
 	for _, d := range []string{store.QueueDir(c), store.ReviewDir(c)} {
 		if err := os.MkdirAll(d, 0755); err != nil {
-			http.Error(w, err.Error(), 500)
+			httpError(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 	}
@@ -157,7 +157,7 @@ func (s *Server) handlePdfUpload(w http.ResponseWriter, r *http.Request, c store
 	existingPath := filepath.Join(store.QueueDir(c), finalName)
 	if existingMeta, ok := store.ReadMetadata(existingPath); ok && existingMeta.Hash == hash {
 		if err := os.WriteFile(existingPath, data, 0644); err != nil {
-			http.Error(w, err.Error(), 500)
+			httpError(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		if err := store.EmbedMetadata(existingPath, meta); err != nil {
@@ -172,7 +172,7 @@ func (s *Server) handlePdfUpload(w http.ResponseWriter, r *http.Request, c store
 
 	dst, err := store.WriteUniqueFile(store.QueueDir(c), finalName, data)
 	if err != nil {
-		http.Error(w, err.Error(), 500)
+		httpError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	if err := store.EmbedMetadata(dst, meta); err != nil {
@@ -209,9 +209,4 @@ func (s *Server) handlePdfUpload(w http.ResponseWriter, r *http.Request, c store
 	s.BroadcastStats()
 	s.BroadcastQueue()
 	writeJSON(w, map[string]any{"kind": "pdf", "verdict": "kö: " + filepath.Base(dst)})
-}
-
-func writeJSON(w http.ResponseWriter, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(v)
 }

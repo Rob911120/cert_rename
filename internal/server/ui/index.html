@@ -468,7 +468,7 @@ async function saveApiKey() {
   const key = input.value.trim();
   if (!key) return;
   const r = await postConfig({api_key: key});
-  if (!r.ok) { toast('⚠️ ' + await r.text()); return; }
+  if (!r.ok) { toast('⚠️ ' + await apiError(r)); return; }
   input.value = '';
   if (running) document.getElementById('apiKeyNotice').classList.remove('hidden');
   loadConfig();
@@ -483,7 +483,7 @@ async function saveMonitor() {
   const overrides = { monitor_url: url, monitor_user: user };
   if (pass) overrides.monitor_password = pass;
   const r = await postConfig(overrides);
-  if (!r.ok) { toast('⚠️ ' + await r.text()); return; }
+  if (!r.ok) { toast('⚠️ ' + await apiError(r)); return; }
   document.getElementById('monitorPassInput').value = '';
   loadConfig();
 }
@@ -491,7 +491,7 @@ async function saveMonitor() {
 async function saveMonitorUI() {
   cfg.monitor_ui_auto_save = document.getElementById('monitorAutoSaveInput').checked;
   const r = await postConfig({ monitor_ui_auto_save: cfg.monitor_ui_auto_save });
-  if (!r.ok) { toast('⚠️ ' + await r.text()); return; }
+  if (!r.ok) { toast('⚠️ ' + await apiError(r)); return; }
   loadConfig();
 }
 
@@ -507,7 +507,7 @@ async function saveUpcomingSettings() {
     upcoming_window_days: cfg.upcoming_window_days,
     upcoming_back_days: cfg.upcoming_back_days,
   });
-  if (!r.ok) { toast('⚠️ ' + await r.text()); return; }
+  if (!r.ok) { toast('⚠️ ' + await apiError(r)); return; }
   loadUpcoming();
 }
 
@@ -587,7 +587,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 async function pickFolder() {
   const r = await fetch('/api/pick-folder?prompt=' + encodeURIComponent('Välj inbox-mapp'));
-  if (!r.ok) { toast('⚠️ ' + await r.text()); return; }
+  if (!r.ok) { toast('⚠️ ' + await apiError(r)); return; }
   const data = await r.json();
   if (!data.path) return;
   cfg.inbox_dir = data.path;
@@ -604,7 +604,7 @@ async function setRunMode(mode) {
     if (!running) {
       const r = await fetch('/api/start', {method: 'POST'});
       if (!r.ok) {
-        toast('⚠️ ' + await r.text());
+        toast('⚠️ ' + await apiError(r));
         openSettings();
         switchPanelTab('settings');
         updateRunMode();
@@ -653,6 +653,13 @@ function closeSettings() {
 }
 // Escape hanteras samlat i en prioriterad lyssnare längre ner (modal > Sickan > panel).
 
+// apiError: läs felmeddelande ur ett svar — JSON {"error":"..."} med fallback till rå text.
+async function apiError(r) {
+  const text = await r.text();
+  try { const j = JSON.parse(text); if (j.error) return j.error; } catch (_) {}
+  return text || ('HTTP ' + r.status);
+}
+
 function escapeHtml(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
@@ -672,7 +679,7 @@ async function approveRow(filename, btn) {
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({filename})
   });
-  if (!r.ok) { btn.disabled = false; toast('⚠️ ' + await r.text()); return; }
+  if (!r.ok) { btn.disabled = false; toast('⚠️ ' + await apiError(r)); return; }
   approvedCount++;
   document.getElementById('statApp').textContent = '📦 ' + approvedCount + ' klara';
 }
@@ -1243,7 +1250,7 @@ async function deliverIn(row, btn, routine) {
     });
     const data = await r.json().catch(() => ({}));
     if (r.status === 409 || data.blocked) { toast('🚫 Blockerad: ' + (data.reason || 'materialavvikelse')); return; }
-    if (!r.ok) { toast('⚠️ Kunde inte öppna Monitor-rutinen: ' + (data.reason || r.statusText)); return; }
+    if (!r.ok) { toast('⚠️ Kunde inte öppna Monitor-rutinen: ' + (data.reason || data.error || r.statusText)); return; }
     // Lyckades: Monitor-fönstret öppnas och loggraden visas — ingen popup behövs.
   } catch (e) {
     toast('⚠️ Fel: ' + e);
@@ -1344,7 +1351,7 @@ function renderReview(items) {
         a.addEventListener('click', (e) => {
           e.preventDefault();
           fetch('/api/open?kind=review&base=' + encodeURIComponent(it.base) + '&name=' + encodeURIComponent(f), {method:'POST'})
-            .then(r => { if (!r.ok) r.text().then(t => toast('⚠️ ' + t)); });
+            .then(r => { if (!r.ok) apiError(r).then(t => toast('⚠️ ' + t)); });
         });
       } else {
         a.href = '/api/file?kind=review&base=' + encodeURIComponent(it.base) + '&name=' + encodeURIComponent(f);
@@ -1442,7 +1449,7 @@ async function submitAdjust() {
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify(body),
     });
-    if (!r.ok) { err.textContent = await r.text(); err.classList.remove('hidden'); btn.disabled = false; return; }
+    if (!r.ok) { err.textContent = await apiError(r); err.classList.remove('hidden'); btn.disabled = false; return; }
     closeAdjustModal();
     loadReview(); loadQueue();
   } catch (e) {
@@ -1457,7 +1464,7 @@ async function archiveRow(base, btn) {
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({base})
   });
-  if (!r.ok) { btn.disabled = false; toast('⚠️ ' + await r.text()); return; }
+  if (!r.ok) { btn.disabled = false; toast('⚠️ ' + await apiError(r)); return; }
   loadReview();
 }
 
@@ -1690,8 +1697,8 @@ async function uploadOneFile(file, bNumber) {
     fd.append('image', file, file.name);
     try {
       const r = await fetch('/api/upload-delivery-note', { method: 'POST', body: fd });
+      if (!r.ok) throw new Error(await apiError(r));
       const text = await r.text();
-      if (!r.ok) throw new Error(text || ('HTTP ' + r.status));
       let msg = `📦 ${file.name} → följesedel`;
       try {
         const j = JSON.parse(text);
@@ -1715,8 +1722,8 @@ async function uploadOneFile(file, bNumber) {
   if (bNumber) fd.append('b_number', bNumber);
   try {
     const r = await fetch('/api/upload', { method: 'POST', body: fd });
+    if (!r.ok) throw new Error(await apiError(r));
     const text = await r.text();
-    if (!r.ok) throw new Error(text || ('HTTP ' + r.status));
     let msg = `✅ ${file.name}`;
     try {
       const j = JSON.parse(text);
@@ -1835,7 +1842,7 @@ async function sendSickan(text) {
       body: JSON.stringify({session: sickanSession, text, model: sickanModel}),
     });
     if (!resp.ok || !resp.body) {
-      sickanAppend(sickanErrorCard(await resp.text()));
+      sickanAppend(sickanErrorCard(await apiError(resp)));
       return;
     }
     const reader = resp.body.getReader();
