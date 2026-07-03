@@ -81,19 +81,30 @@ func (a *App) IngestCert(ctx context.Context, in IngestInput) (*domain.Cert, boo
 		ModelUsed: in.Model, TokensInput: in.TokensIn, TokensOutput: in.TokensOut,
 		ProcessingMs: in.ProcessingMS, OriginalFilename: in.OriginalFilename,
 		ExtractedAt: a.ts(), Hash: hash, Schema: 6, Status: "received",
+
+		// Kolumnkalibrerad extraktion (Task 1+2) — sidecaren listar fälten
+		// explicit (ingen helstruct-serialisering), så de nya fälten hänger
+		// med hit också. Katastrofskydd bara: DB-raden nedan är sanningen.
+		IsLegible: ext.IsLegible, IsUnaltered: ext.IsUnaltered,
+		NormSystem: ext.NormSystem, ImpactTempC: ext.ImpactTempC, ImpactEnergyJ: ext.ImpactEnergyJ,
+		NormEdition: ext.NormEdition, PedDirective: ext.PedDirective,
+		Cev: ext.Cev, CarbonPct: ext.CarbonPct, PPct: ext.PPct, SPct: ext.SPct,
+		HasBendTest: ext.HasBendTest, HasIntergranularTest: ext.HasIntergranularTest,
+		HasStampPhoto: ext.HasStampPhoto, MinTemperatureC: ext.MinTemperatureC,
+		DeliveryCondition: ext.DeliveryCondition,
 	}
 	writeSidecar(storePath, sidecar)
 
 	c := &domain.Cert{
-		PdfHash:          hash,
-		OriginalFilename: in.OriginalFilename,
-		StoredName:       storedName,
-		EmailSubject:     in.EmailSubject,
-		EmailFrom:        in.EmailFrom,
-		EmailDate:        in.EmailDate,
-		CertType:         ext.CertType,
-		Charge:           ext.Charge,
-		Material:         ext.Material,
+		PdfHash:           hash,
+		OriginalFilename:  in.OriginalFilename,
+		StoredName:        storedName,
+		EmailSubject:      in.EmailSubject,
+		EmailFrom:         in.EmailFrom,
+		EmailDate:         in.EmailDate,
+		CertType:          ext.CertType,
+		Charge:            ext.Charge,
+		Material:          ext.Material,
 		EnStandardPresent: ext.EnStandardPresent,
 		IsEnglish:         ext.IsEnglish,
 		ProductForm:       ext.ProductForm,
@@ -106,8 +117,28 @@ func (a *App) IngestCert(ctx context.Context, in IngestInput) (*domain.Cert, boo
 		TokensInput:       in.TokensIn,
 		TokensOutput:      in.TokensOut,
 		ProcessingMS:      in.ProcessingMS,
-		Status:            domain.CertMottagen,
-		ReceivedAt:        a.ts(),
+
+		// Kolumnkalibrerad extraktion (Task 1+2): pekare kopieras som pekare —
+		// nil ("ej angivet på certet") förblir nil hela vägen till DB-raden.
+		IsLegible:            ext.IsLegible,
+		IsUnaltered:          ext.IsUnaltered,
+		NormSystem:           ext.NormSystem,
+		ImpactTempC:          ext.ImpactTempC,
+		ImpactEnergyJ:        ext.ImpactEnergyJ,
+		NormEdition:          ext.NormEdition,
+		PedDirective:         ext.PedDirective,
+		Cev:                  ext.Cev,
+		CarbonPct:            ext.CarbonPct,
+		PPct:                 ext.PPct,
+		SPct:                 ext.SPct,
+		HasBendTest:          ext.HasBendTest,
+		HasIntergranularTest: ext.HasIntergranularTest,
+		HasStampPhoto:        ext.HasStampPhoto,
+		MinTemperatureC:      ext.MinTemperatureC,
+		DeliveryCondition:    ext.DeliveryCondition,
+
+		Status:     domain.CertMottagen,
+		ReceivedAt: a.ts(),
 	}
 	if _, err := a.Repo.InsertCert(ctx, c); err != nil {
 		return nil, false, err

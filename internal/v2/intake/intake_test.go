@@ -54,6 +54,9 @@ func (f *fakeAI) Extract(ctx context.Context, pdf []byte, subject, body, filenam
 			IsEN10204_3_1: true, CertType: "3.1", Charge: "43136", Material: "S690QL",
 			EnStandardPresent: true, IsEnglish: true, ProductForm: "plåt", Dimensions: "60",
 			Confidence: "high",
+			// V2-fält: bevisar att hela pipelinen (inte bara IngestCert direkt)
+			// för dem vidare oförändrade — is_legible=false ska INTE tvingas om.
+			IsLegible: false, IsUnaltered: true, NormSystem: "Charpy",
 		},
 		Model: "fake-model", TokensIn: 1234, TokensOut: 56, DurationMS: 10,
 	}, nil
@@ -127,6 +130,9 @@ func TestProcessEmlHappyPath(t *testing.T) {
 	c := certs[0]
 	if c.OriginalFilename != "heat_43136.pdf" || c.Charge != "43136" {
 		t.Errorf("cert: %+v", c)
+	}
+	if c.IsLegible != false || c.IsUnaltered != true || c.NormSystem != "Charpy" {
+		t.Errorf("v2-fält gick inte hela vägen genom pipelinen: %+v", c)
 	}
 	if c.TokensInput != 1234 {
 		t.Errorf("riktiga tokental ska sparas: tokens_input = %d", c.TokensInput)

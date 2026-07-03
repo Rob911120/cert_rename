@@ -75,6 +75,12 @@ func TestImportV1(t *testing.T) {
 	if saved.Status != domain.CertSparad || saved.FinalFilename != "70703-plat-16-S690QL-B127562.pdf" {
 		t.Errorf("sparad: %+v", saved)
 	}
+	// V1-cert saknar ALDRIG is_legible/is_unaltered (fanns inte i V1:s
+	// extraktion) — importern ska sätta vettiga defaults i stället för att
+	// låta dem se ut som "problem upptäckt".
+	if !saved.IsLegible || !saved.IsUnaltered {
+		t.Errorf("importerat cert ska få IsLegible/IsUnaltered=true: %+v", saved)
+	}
 	if saved.SavedAt != "2026-06-01T10:00:00Z" {
 		t.Errorf("saved_at ska tas från metadatan: %q", saved.SavedAt)
 	}
@@ -97,6 +103,9 @@ func TestImportV1(t *testing.T) {
 	}
 	if living.Status != domain.CertMottagen {
 		t.Errorf("kö-cert ska vara levande: %s", living.Status)
+	}
+	if !living.IsLegible || !living.IsUnaltered {
+		t.Errorf("importerat cert ska få IsLegible/IsUnaltered=true: %+v", living)
 	}
 
 	// Om-import är no-op (dubbletter på hash)

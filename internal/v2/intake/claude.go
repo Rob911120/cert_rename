@@ -37,10 +37,12 @@ func (c *Claude) Verify(ctx context.Context, m *eml.Content) (*cert.Verification
 	return ai.Verify(ctx, c.Base, c.Client, m)
 }
 
+// Extract kör V2:s kolumnkalibrerade extraktion (ai.ExtractV2) — samma port,
+// samma signatur som V1, men fyller de 16 extra slag-/kemi-/märkningsfälten.
 func (c *Claude) Extract(ctx context.Context, pdf []byte, subject, body, filename string) (*ExtractResult, error) {
 	capture := &usageCapture{base: c.Base}
 	start := time.Now()
-	ext, err := ai.Extract(ctx, capture, c.Client, pdf, subject, body, filename)
+	ext, err := ai.ExtractV2(ctx, capture, c.Client, pdf, subject, body, filename)
 	if err != nil {
 		return nil, err
 	}

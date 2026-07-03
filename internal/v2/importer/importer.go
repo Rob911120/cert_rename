@@ -106,6 +106,13 @@ func importOne(ctx context.Context, a *app.App, path string, saved bool, st *Sta
 			CountryOfOrigin:   meta.CountryOfOrigin,
 			Confidence:        meta.Confidence,
 			Issues:            meta.Issues,
+
+			// V1 hade aldrig kolumnkalibrerad extraktion (Task 1+2) — utan
+			// dessa defaults skulle gamla, redan godkända cert se ut att ha
+			// "problem upptäckt" (oläsligt/ändrat). Övriga nya fält: zero-value
+			// (tom sträng/nil/false) = "ej angivet", vilket är rätt för V1-cert.
+			IsLegible:   true,
+			IsUnaltered: true,
 		},
 		BNumbers:     meta.BNumbers,
 		Model:        meta.ModelUsed,
