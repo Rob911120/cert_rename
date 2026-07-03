@@ -3,6 +3,7 @@ package monitorsync
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -17,26 +18,57 @@ import (
 
 // fakeERP serverar ett fast Monitor-fönster.
 type fakeERP struct {
-	rows     []monitor.PurchaseOrderRow
-	orders   map[monitor.ID]*monitor.PurchaseOrder
-	sups     map[monitor.ID]*monitor.Supplier
-	records  map[string][]monitor.ProductRecord // charge → records
+	rows    []monitor.PurchaseOrderRow
+	orders  map[monitor.ID]*monitor.PurchaseOrder
+	sups    map[monitor.ID]*monitor.Supplier
+	records map[string][]monitor.ProductRecord // charge → records
+
+	// fullErr != nil ⇒ alla *Full-varianter felar, så sync-lagret måste falla
+	// tillbaka till bas-queryerna. Räknarna bevisar att fallbacken skedde.
+	fullErr        error
+	plainRowsCalls int
+	plainPOCalls   int
+	plainPartCalls int
 }
 
+// Bas-varianterna (delas med V1) — räknas så fallback-testet kan bevisa att de anropas.
 func (f *fakeERP) GetUpcomingOrderRows(ctx context.Context, from, to time.Time) ([]monitor.PurchaseOrderRow, monitor.UpcomingFetchStats, error) {
+	f.plainRowsCalls++
 	return f.rows, monitor.UpcomingFetchStats{Fetched: len(f.rows)}, nil
 }
 func (f *fakeERP) GetPurchaseOrder(ctx context.Context, id monitor.ID) (*monitor.PurchaseOrder, error) {
+	f.plainPOCalls++
 	return f.orders[id], nil
 }
 func (f *fakeERP) GetSupplier(ctx context.Context, id monitor.ID) (*monitor.Supplier, error) {
 	return f.sups[id], nil
 }
 func (f *fakeERP) GetPartsByIds(ctx context.Context, ids []monitor.ID) (map[monitor.ID]monitor.Part, error) {
+	f.plainPartCalls++
 	return nil, nil
 }
 func (f *fakeERP) FindProductRecords(ctx context.Context, charge string) ([]monitor.ProductRecord, error) {
 	return f.records[charge], nil
+}
+
+// *Full-varianterna: felar om fullErr satt (annars samma data som bas-varianten).
+func (f *fakeERP) GetUpcomingOrderRowsFull(ctx context.Context, from, to time.Time) ([]monitor.PurchaseOrderRow, monitor.UpcomingFetchStats, error) {
+	if f.fullErr != nil {
+		return nil, monitor.UpcomingFetchStats{}, f.fullErr
+	}
+	return f.rows, monitor.UpcomingFetchStats{Fetched: len(f.rows)}, nil
+}
+func (f *fakeERP) GetPurchaseOrderFull(ctx context.Context, id monitor.ID) (*monitor.PurchaseOrder, error) {
+	if f.fullErr != nil {
+		return nil, f.fullErr
+	}
+	return f.orders[id], nil
+}
+func (f *fakeERP) GetPartsByIdsFull(ctx context.Context, ids []monitor.ID) (map[monitor.ID]monitor.Part, error) {
+	if f.fullErr != nil {
+		return nil, f.fullErr
+	}
+	return nil, nil
 }
 
 // fakeJudge räknar anrop och svarar med fast dom.
@@ -161,6 +193,45 @@ func TestRefreshUpsertsAndPreservesBookkeeping(t *testing.T) {
 	}
 	if row.InMonitor {
 		t.Error("in_monitor ska vara 0 när raden inte återkom")
+	}
+}
+
+// FIX 1: när de cert-rika *Full-varianterna felar (Monitor avvisar den overifierade
+// expanden) MÅSTE sync falla tillbaka till bas-queryerna — refreshen får aldrig
+// hard-faila, raden synkas ändå och ordernummer/leverantör bevaras (nollställs inte).
+func TestRefreshFallsBackWhenFullQueriesFail(t *testing.T) {
+	erp := &fakeERP{
+		rows: []monitor.PurchaseOrderRow{
+			mkRow(201, 2, 22, part(22, "40-202-002", "Plåt S355"), "2026-07-10"),
+		},
+		orders:  map[monitor.ID]*monitor.PurchaseOrder{2: {OrderNumber: "B999", BusinessContactId: 9}},
+		sups:    map[monitor.ID]*monitor.Supplier{9: {Name: "BE Group"}},
+		fullErr: errors.New("400 Bad Request: expand rejected"),
+	}
+	s := testSync(t, erp, nil)
+	ctx := context.Background()
+
+	n, err := s.Refresh(ctx)
+	if err != nil || n != 1 {
+		t.Fatalf("Refresh med Full-fel ska inte hard-faila: n=%d err=%v", n, err)
+	}
+	// Bas-queryerna måste ha anropats som fallback (en gång vardera).
+	if erp.plainRowsCalls != 1 {
+		t.Errorf("bas GetUpcomingOrderRows-anrop = %d, vill ha 1 (fallback)", erp.plainRowsCalls)
+	}
+	if erp.plainPOCalls != 1 {
+		t.Errorf("bas GetPurchaseOrder-anrop = %d, vill ha 1 (fallback)", erp.plainPOCalls)
+	}
+	row, err := s.App.Repo.GetOrderRow(ctx, 201)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Ordern får ALDRIG tyst nollställas när bara expanden är problemet.
+	if row.OrderNumber != "B999" || row.SupplierName != "BE Group" {
+		t.Errorf("orderfält nollställdes vid Full-fel: %+v", row)
+	}
+	if row.PartNumber != "40-202-002" || row.ExtraDescription != "Plåt S355" {
+		t.Errorf("artikelidentiteten tappades vid fallback: %+v", row)
 	}
 }
 

@@ -97,7 +97,7 @@ func TestID_UnmarshalJSON(t *testing.T) {
 		wantErr bool
 	}{
 		{`"123456789012345678"`, 123456789012345678, false}, // Monitor: strängat 64-bitars-ID
-		{`123`, 123, false},                                 // bart tal
+		{`123`, 123, false}, // bart tal
 		{`"0"`, 0, false},
 		{`null`, 0, false},
 		{`""`, 0, false},
@@ -486,9 +486,9 @@ func TestGetPartsByIds_BatchesAndMaps(t *testing.T) {
 		ids = append(ids, ID(i))
 	}
 	ids = append(ids, 1, 7) // dubletter ska inte ge extra rader/anrop
-	m, err := c.GetPartsByIds(context.Background(), ids)
+	m, err := c.GetPartsByIdsFull(context.Background(), ids)
 	if err != nil {
-		t.Fatalf("GetPartsByIds: %v", err)
+		t.Fatalf("GetPartsByIdsFull: %v", err)
 	}
 	if len(m) != 25 {
 		t.Fatalf("vill ha 25 unika parts, fick %d", len(m))
@@ -498,6 +498,35 @@ func TestGetPartsByIds_BatchesAndMaps(t *testing.T) {
 	}
 	if m[5].PartNumber != "P5" {
 		t.Errorf("part 5 = %+v", m[5])
+	}
+}
+
+// Bas-varianten GetPartsByIds delas med V1 och MÅSTE vara byte-identisk mot
+// pre-cert-branchen: batchad "Id eq …"-filter men INGET $expand.
+func TestGetPartsByIds_BaseSendsNoExpand(t *testing.T) {
+	var gotExpand string
+	var gotExpandSet bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/001.1/login"):
+			_, _ = w.Write([]byte(`{"SessionId":"s1"}`))
+		case strings.Contains(r.URL.Path, "Inventory/Parts"):
+			gotExpand = r.URL.Query().Get("$expand")
+			_, gotExpandSet = r.URL.Query()["$expand"]
+			_, _ = w.Write([]byte(`{"value":[{"Id":"5","PartNumber":"P5"}]}`))
+		default:
+			http.Error(w, "unexpected "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL)
+	_ = c.Login(context.Background(), "kalle", "hemligt")
+	if _, err := c.GetPartsByIds(context.Background(), []ID{5}); err != nil {
+		t.Fatalf("GetPartsByIds: %v", err)
+	}
+	if gotExpandSet || gotExpand != "" {
+		t.Errorf("bas GetPartsByIds skickade $expand=%q — ska vara helt utelämnat", gotExpand)
 	}
 }
 
@@ -701,9 +730,43 @@ func TestPart_DecodesAlloyDimensionsLinksDrawings(t *testing.T) {
 	}
 }
 
-// GetUpcomingOrderRows ska expandera radnivåns Comment-referenser samt Part med
+// GetUpcomingOrderRowsFull ska expandera radnivåns Comment-referenser samt Part med
 // nästlad expand av dess cert-navigeringar (stålsort, kommentarer, länkar, ritningar).
-func TestGetUpcomingOrderRows_ExpandsCertNavigations(t *testing.T) {
+func TestGetUpcomingOrderRowsFull_ExpandsCertNavigations(t *testing.T) {
+	var gotExpand string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/001.1/login"):
+			_, _ = w.Write([]byte(`{"SessionId":"s1"}`))
+		case strings.Contains(r.URL.Path, "PurchaseOrderRows"):
+			gotExpand = r.URL.Query().Get("$expand")
+			_, _ = w.Write([]byte(`{"value":[]}`))
+		default:
+			http.Error(w, "unexpected "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL)
+	_ = c.Login(context.Background(), "kalle", "hemligt")
+	from := time.Date(2026, 6, 25, 0, 0, 0, 0, time.UTC)
+	if _, _, err := c.GetUpcomingOrderRowsFull(context.Background(), from, from.AddDate(0, 0, 14)); err != nil {
+		t.Fatalf("GetUpcomingOrderRowsFull: %v", err)
+	}
+	for _, want := range []string{
+		"ReceivingMessage", "ReceivingInspectionInstruction",
+		"Part($expand=", "CurrentAlloy", "HyperLinks", "Drawings",
+		"ReceivingInstruction", "PurchaseComment",
+	} {
+		if !strings.Contains(gotExpand, want) {
+			t.Errorf("$expand %q saknar %q", gotExpand, want)
+		}
+	}
+}
+
+// Bas-varianten GetUpcomingOrderRows delas med V1 (morgonbriefen) och MÅSTE skicka
+// EXAKT $expand=Part — byte-identiskt mot pre-cert-branchen, inga cert-navigeringar.
+func TestGetUpcomingOrderRows_BaseExpandsOnlyPart(t *testing.T) {
 	var gotExpand string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -724,20 +787,14 @@ func TestGetUpcomingOrderRows_ExpandsCertNavigations(t *testing.T) {
 	if _, _, err := c.GetUpcomingOrderRows(context.Background(), from, from.AddDate(0, 0, 14)); err != nil {
 		t.Fatalf("GetUpcomingOrderRows: %v", err)
 	}
-	for _, want := range []string{
-		"ReceivingMessage", "ReceivingInspectionInstruction",
-		"Part($expand=", "CurrentAlloy", "HyperLinks", "Drawings",
-		"ReceivingInstruction", "PurchaseComment",
-	} {
-		if !strings.Contains(gotExpand, want) {
-			t.Errorf("$expand %q saknar %q", gotExpand, want)
-		}
+	if gotExpand != "Part" {
+		t.Errorf("bas GetUpcomingOrderRows $expand = %q, vill ha exakt \"Part\"", gotExpand)
 	}
 }
 
-// GetPurchaseOrder ska expandera ExternalComment och avkoda dess RawText samt de
+// GetPurchaseOrderFull ska expandera ExternalComment och avkoda dess RawText samt de
 // nya skalära orderfälten (GoodsLabel, BusinessContactOrderNumber).
-func TestGetPurchaseOrder_ExpandsExternalComment(t *testing.T) {
+func TestGetPurchaseOrderFull_ExpandsExternalComment(t *testing.T) {
 	var gotExpand string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -754,9 +811,9 @@ func TestGetPurchaseOrder_ExpandsExternalComment(t *testing.T) {
 
 	c := New(srv.URL)
 	_ = c.Login(context.Background(), "kalle", "hemligt")
-	po, err := c.GetPurchaseOrder(context.Background(), 1)
+	po, err := c.GetPurchaseOrderFull(context.Background(), 1)
 	if err != nil {
-		t.Fatalf("GetPurchaseOrder: %v", err)
+		t.Fatalf("GetPurchaseOrderFull: %v", err)
 	}
 	if !strings.Contains(gotExpand, "ExternalComment") {
 		t.Errorf("$expand %q saknar ExternalComment", gotExpand)
@@ -766,6 +823,38 @@ func TestGetPurchaseOrder_ExpandsExternalComment(t *testing.T) {
 	}
 	if po.ExternalComment == nil || po.ExternalComment.RawText != "Extern notis" {
 		t.Errorf("ExternalComment fel: %+v", po.ExternalComment)
+	}
+}
+
+// Bas-varianten GetPurchaseOrder delas med V1 (morgonbrief + Sickan) och MÅSTE vara
+// byte-identisk mot pre-cert-branchen: filter på Id, INGET $expand.
+func TestGetPurchaseOrder_BaseSendsNoExpand(t *testing.T) {
+	var gotExpand string
+	var gotExpandSet bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/001.1/login"):
+			_, _ = w.Write([]byte(`{"SessionId":"s1"}`))
+		case strings.HasSuffix(r.URL.Path, "/Purchase/PurchaseOrders"):
+			gotExpand = r.URL.Query().Get("$expand")
+			_, gotExpandSet = r.URL.Query()["$expand"]
+			if f := r.URL.Query().Get("$filter"); !strings.Contains(f, "Id eq 1") {
+				t.Errorf("bas GetPurchaseOrder $filter = %q, saknar 'Id eq 1'", f)
+			}
+			_, _ = w.Write([]byte(`{"value":[{"Id":1,"OrderNumber":"PO-1"}]}`))
+		default:
+			http.Error(w, "unexpected "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL)
+	_ = c.Login(context.Background(), "kalle", "hemligt")
+	if _, err := c.GetPurchaseOrder(context.Background(), 1); err != nil {
+		t.Fatalf("GetPurchaseOrder: %v", err)
+	}
+	if gotExpandSet || gotExpand != "" {
+		t.Errorf("bas GetPurchaseOrder skickade $expand=%q — ska vara helt utelämnat", gotExpand)
 	}
 }
 

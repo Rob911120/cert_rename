@@ -22,12 +22,18 @@ import (
 )
 
 // ERP är porten mot Monitor (read-only — skriv-API:t är inte licensierat och
-// V2 gör ingen inleveransregistrering).
+// V2 gör ingen inleveransregistrering). Både bas- och *Full-varianterna ligger
+// på porten: V2 anropar de cert-rika Full-varianterna men faller tillbaka till
+// bas-queryerna om Monitor avvisar den overifierade expanden (se fallback-wrappers
+// nedan). Bas-varianterna delas byte-identiskt med V1.
 type ERP interface {
 	GetUpcomingOrderRows(ctx context.Context, from, to time.Time) ([]monitor.PurchaseOrderRow, monitor.UpcomingFetchStats, error)
+	GetUpcomingOrderRowsFull(ctx context.Context, from, to time.Time) ([]monitor.PurchaseOrderRow, monitor.UpcomingFetchStats, error)
 	GetPurchaseOrder(ctx context.Context, id monitor.ID) (*monitor.PurchaseOrder, error)
+	GetPurchaseOrderFull(ctx context.Context, id monitor.ID) (*monitor.PurchaseOrder, error)
 	GetSupplier(ctx context.Context, id monitor.ID) (*monitor.Supplier, error)
 	GetPartsByIds(ctx context.Context, ids []monitor.ID) (map[monitor.ID]monitor.Part, error)
+	GetPartsByIdsFull(ctx context.Context, ids []monitor.ID) (map[monitor.ID]monitor.Part, error)
 	FindProductRecords(ctx context.Context, charge string) ([]monitor.ProductRecord, error)
 }
 
@@ -55,7 +61,7 @@ func (s *Sync) Refresh(ctx context.Context) (int, error) {
 	from := now.AddDate(0, 0, -cfg.UpcomingBackDays) // bakåt: försenade/överförda
 	to := now.AddDate(0, 0, cfg.UpcomingWindowDays)
 
-	windowRows, stats, err := s.ERP.GetUpcomingOrderRows(ctx, from, to)
+	windowRows, stats, err := s.upcomingOrderRows(ctx, from, to)
 	if err != nil {
 		return 0, fmt.Errorf("hämta kommande inleveranser: %w", err)
 	}
@@ -122,7 +128,7 @@ func (s *Sync) resolveOrders(ctx context.Context, rows []monitor.PurchaseOrderRo
 			return infos
 		}
 		info := orderInfo{}
-		po, err := s.ERP.GetPurchaseOrder(ctx, id)
+		po, err := s.purchaseOrder(ctx, id)
 		if err != nil {
 			s.App.Notify.Logf("⚠️  kunde inte hämta order %d: %v", id, err)
 		} else if po != nil {
@@ -153,12 +159,46 @@ func (s *Sync) fetchMissingParts(ctx context.Context, rows []monitor.PurchaseOrd
 	if len(missing) == 0 {
 		return nil
 	}
-	parts, err := s.ERP.GetPartsByIds(ctx, missing)
+	parts, err := s.partsByIds(ctx, missing)
 	if err != nil {
 		s.App.Notify.Logf("⚠️  kunde inte hämta artiklar för %d rader: %v", len(missing), err)
 		return nil
 	}
 	return parts
+}
+
+// ---------------------------------------------------------------------------
+// Fallback-wrappers: V2 anropar de cert-rika Full-varianterna men får ALDRIG
+// hard-faila pga en overifierad expand. Om Full-anropet felar loggas en varning
+// och bas-queryn körs i stället — de nya cert-fälten blir då tomma men order-
+// och radidentiteten (ordernummer, leverantör, artikel) bevaras.
+// ---------------------------------------------------------------------------
+
+func (s *Sync) upcomingOrderRows(ctx context.Context, from, to time.Time) ([]monitor.PurchaseOrderRow, monitor.UpcomingFetchStats, error) {
+	rows, stats, err := s.ERP.GetUpcomingOrderRowsFull(ctx, from, to)
+	if err != nil {
+		s.App.Notify.Logf("⚠️  expanderad Monitor-query (orderrader) avvisades — faller tillbaka till bas-query; nya fält blir tomma: %v", err)
+		return s.ERP.GetUpcomingOrderRows(ctx, from, to)
+	}
+	return rows, stats, nil
+}
+
+func (s *Sync) purchaseOrder(ctx context.Context, id monitor.ID) (*monitor.PurchaseOrder, error) {
+	po, err := s.ERP.GetPurchaseOrderFull(ctx, id)
+	if err != nil {
+		s.App.Notify.Logf("⚠️  expanderad Monitor-query (order %d) avvisades — faller tillbaka till bas-query; nya fält blir tomma: %v", id, err)
+		return s.ERP.GetPurchaseOrder(ctx, id)
+	}
+	return po, nil
+}
+
+func (s *Sync) partsByIds(ctx context.Context, ids []monitor.ID) (map[monitor.ID]monitor.Part, error) {
+	parts, err := s.ERP.GetPartsByIdsFull(ctx, ids)
+	if err != nil {
+		s.App.Notify.Logf("⚠️  expanderad Monitor-query (artiklar) avvisades — faller tillbaka till bas-query; nya fält blir tomma: %v", err)
+		return s.ERP.GetPartsByIds(ctx, ids)
+	}
+	return parts, nil
 }
 
 func buildOrderRow(row monitor.PurchaseOrderRow, orders map[monitor.ID]orderInfo, parts map[monitor.ID]monitor.Part) *domain.OrderRow {
