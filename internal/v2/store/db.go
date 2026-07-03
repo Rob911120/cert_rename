@@ -245,6 +245,32 @@ ALTER TABLE order_rows ADD COLUMN extra_fields_raw TEXT NOT NULL DEFAULT '';
 ALTER TABLE order_rows ADD COLUMN hyperlinks TEXT NOT NULL DEFAULT '';
 ALTER TABLE order_rows ADD COLUMN drawing_numbers TEXT NOT NULL DEFAULT '';
 `,
+	// 004 — Task 8 (B1b): AI-tolkade artikelkrav (RowRequirements) persisterade
+	// på order_rows + en cache så oförändrade artiklar aldrig omparsas. Fälten
+	// skrivs ENDAST via App.SetRowRequirements och röres ALDRIG av sync-upserten
+	// (samma undantag som delivered/first_seen). req_parsed_at följer first_seen:
+	// TEXT (tom = aldrig parsad). Cachen speglar ai_match_cache-mönstret men i
+	// egen tabell — värdet är kraven som JSON, nyckeln en hash av artikel + alla
+	// kravtexter som skickas till AI:n.
+	`
+ALTER TABLE order_rows ADD COLUMN req_material TEXT NOT NULL DEFAULT '';
+ALTER TABLE order_rows ADD COLUMN req_en_norm TEXT NOT NULL DEFAULT '';
+ALTER TABLE order_rows ADD COLUMN req_cert_type TEXT NOT NULL DEFAULT '';
+ALTER TABLE order_rows ADD COLUMN req_english INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE order_rows ADD COLUMN req_product_form TEXT NOT NULL DEFAULT '';
+ALTER TABLE order_rows ADD COLUMN req_dimensions TEXT NOT NULL DEFAULT '';
+ALTER TABLE order_rows ADD COLUMN req_impact TEXT NOT NULL DEFAULT '';
+ALTER TABLE order_rows ADD COLUMN req_notes TEXT NOT NULL DEFAULT '';
+ALTER TABLE order_rows ADD COLUMN req_parsed_at TEXT NOT NULL DEFAULT '';
+
+-- Krav-tolkningscache: nyckel = hash(artikel + alla kravtexter), värde = kraven
+-- som JSON. Ändras någon kravtext ändras nyckeln → färsk tolkning.
+CREATE TABLE ai_requirements_cache (
+    cache_key    TEXT PRIMARY KEY,
+    requirements TEXT NOT NULL DEFAULT '',
+    created_at   TEXT NOT NULL
+);
+`,
 }
 
 // Open öppnar (eller skapar) V2-databasen och applicerar väntande migrationer.

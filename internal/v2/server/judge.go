@@ -29,3 +29,7 @@ type claudeJudge struct {
 func (j *claudeJudge) ClassifyUpcoming(ctx context.Context, in ai.UpcomingClassifyInput) (*ai.UpcomingClassification, error) {
 	return ai.ClassifyUpcoming(ctx, j.log, j.client, in)
 }
+
+func (j *claudeJudge) ParseRequirements(ctx context.Context, in ai.RequirementsInput) (*ai.ArticleRequirements, error) {
+	return ai.ParseRequirements(ctx, j.log, j.client, in)
+}

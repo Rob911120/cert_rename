@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"cert-renamer/internal/v2/domain"
 )
@@ -338,12 +339,14 @@ const orderRowCols = `delivery_row_id, purchase_order_id, order_number, supplier
  order_goods_label, external_comment, business_contact_order_number,
  alloy_code, alloy_description, part_receiving_instruction, part_purchase_comment,
  part_comment, part_length, part_width, part_height, weight_per_unit,
- goods_type, category_string, extra_fields_raw, hyperlinks, drawing_numbers`
+ goods_type, category_string, extra_fields_raw, hyperlinks, drawing_numbers,
+ req_material, req_en_norm, req_cert_type, req_english, req_product_form,
+ req_dimensions, req_impact, req_notes, req_parsed_at`
 
 func scanOrderRow(sc rowScanner) (*domain.OrderRow, error) {
 	var r domain.OrderRow
-	var certReq, delivered, inMonitor int
-	var hyperlinks string
+	var certReq, delivered, inMonitor, reqEnglish int
+	var hyperlinks, reqParsedAt string
 	err := sc.Scan(&r.DeliveryRowID, &r.PurchaseOrderID, &r.OrderNumber, &r.SupplierName,
 		&r.PartID, &r.PartNumber, &r.Description, &r.ExtraDescription, &r.PlannedQty, &r.DeliveryDate,
 		&certReq, &r.DeliveryRaw, &r.PartRaw, &delivered, &inMonitor, &r.FirstSeen, &r.LastSeen,
@@ -352,7 +355,9 @@ func scanOrderRow(sc rowScanner) (*domain.OrderRow, error) {
 		&r.OrderGoodsLabel, &r.ExternalComment, &r.BusinessContactOrderNumber,
 		&r.AlloyCode, &r.AlloyDescription, &r.PartReceivingInstruction, &r.PartPurchaseComment,
 		&r.PartComment, &r.PartLength, &r.PartWidth, &r.PartHeight, &r.WeightPerUnit,
-		&r.GoodsType, &r.CategoryString, &r.ExtraFieldsRaw, &hyperlinks, &r.DrawingNumbers)
+		&r.GoodsType, &r.CategoryString, &r.ExtraFieldsRaw, &hyperlinks, &r.DrawingNumbers,
+		&r.Req.Material, &r.Req.EnNorm, &r.Req.CertType, &reqEnglish, &r.Req.ProductForm,
+		&r.Req.Dimensions, &r.Req.Impact, &r.Req.Notes, &reqParsedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, domain.ErrNotFound
 	}
@@ -363,7 +368,30 @@ func scanOrderRow(sc rowScanner) (*domain.OrderRow, error) {
 	r.Delivered = delivered == 1
 	r.InMonitor = inMonitor == 1
 	r.Hyperlinks = unmarshalHyperlinks(hyperlinks)
+	r.Req.English = reqEnglish == 1
+	r.ReqParsedAt = parseRowTime(reqParsedAt)
 	return &r, nil
+}
+
+// parseRowTime/formatRowTime bygger bron mellan order_rows TEXT-tidsstämplar och
+// domänens time.Time. Tom sträng ↔ zero time (aldrig parsad). Följer samma
+// serialiserings-i-store-lagret-princip som nullFloat/hyperlinks ovan.
+func parseRowTime(s string) time.Time {
+	if s == "" {
+		return time.Time{}
+	}
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		return time.Time{}
+	}
+	return t
+}
+
+func formatRowTime(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.UTC().Format(time.RFC3339)
 }
 
 // UpsertOrderRow skriver/uppdaterar en Monitor-rad. delivered och first_seen
@@ -371,6 +399,9 @@ func scanOrderRow(sc rowScanner) (*domain.OrderRow, error) {
 // alltid till 1 (raden sågs i denna sync). De cert-bärande fälten (Task 6) är
 // alla syncade Monitor-värden och skrivs om vid varje refresh, precis som
 // description/part_raw m.fl. — de rör inte länk-/AI-kolumner (de bor i links).
+// De AI-tolkade kravfälten (Task 8, req_*) är med i INSERT (tomma på nya rader)
+// men UNDANTAS medvetet ur ON CONFLICT DO UPDATE — precis som delivered/
+// first_seen — så en re-sync av en oförändrad rad ALDRIG nollställer kraven.
 func (q *Q) UpsertOrderRow(ctx context.Context, r *domain.OrderRow, now string) error {
 	_, err := q.db.ExecContext(ctx, `INSERT INTO order_rows (`+orderRowCols+`)
 		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,?,
@@ -379,7 +410,8 @@ func (q *Q) UpsertOrderRow(ctx context.Context, r *domain.OrderRow, now string) 
 		        ?,?,?,
 		        ?,?,?,?,
 		        ?,?,?,?,?,
-		        ?,?,?,?,?)
+		        ?,?,?,?,?,
+		        ?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(delivery_row_id) DO UPDATE SET
 			purchase_order_id=excluded.purchase_order_id,
 			order_number=excluded.order_number,
@@ -427,8 +459,22 @@ func (q *Q) UpsertOrderRow(ctx context.Context, r *domain.OrderRow, now string) 
 		r.OrderGoodsLabel, r.ExternalComment, r.BusinessContactOrderNumber,
 		r.AlloyCode, r.AlloyDescription, r.PartReceivingInstruction, r.PartPurchaseComment,
 		r.PartComment, r.PartLength, r.PartWidth, r.PartHeight, r.WeightPerUnit,
-		r.GoodsType, r.CategoryString, r.ExtraFieldsRaw, marshalHyperlinks(r.Hyperlinks), r.DrawingNumbers)
+		r.GoodsType, r.CategoryString, r.ExtraFieldsRaw, marshalHyperlinks(r.Hyperlinks), r.DrawingNumbers,
+		r.Req.Material, r.Req.EnNorm, r.Req.CertType, b2i(r.Req.English), r.Req.ProductForm,
+		r.Req.Dimensions, r.Req.Impact, r.Req.Notes, formatRowTime(r.ReqParsedAt))
 	return err
+}
+
+// SetOrderRowRequirements skriver de AI-tolkade kraven på EN rad (dum CRUD).
+// Guard/klocka/notifiering ligger i App.SetRowRequirements — enda skrivvägen.
+func (q *Q) SetOrderRowRequirements(ctx context.Context, rowID int64, r domain.RowRequirements, parsedAt string) error {
+	res, err := q.db.ExecContext(ctx, `UPDATE order_rows SET
+		req_material=?, req_en_norm=?, req_cert_type=?, req_english=?,
+		req_product_form=?, req_dimensions=?, req_impact=?, req_notes=?, req_parsed_at=?
+		WHERE delivery_row_id = ?`,
+		r.Material, r.EnNorm, r.CertType, b2i(r.English),
+		r.ProductForm, r.Dimensions, r.Impact, r.Notes, parsedAt, rowID)
+	return oneRow(res, err)
 }
 
 // MarkAllRowsUnseen nollar in_monitor inför en sync; efterföljande upserts
@@ -688,6 +734,36 @@ func (q *Q) PutMatchCache(ctx context.Context, key string, v *MatchVerdict, now 
 		VALUES (?,?,?,?,?,?,?,?,?)`,
 		key, v.RequiredMaterial, v.RequiredCert, v.OurMaterial, v.MaterialOK,
 		v.RequiredProductForm, v.ProductFormOK, v.Notes, now)
+	return err
+}
+
+// GetRequirementsCache/PutRequirementsCache är krav-tolkningscachen (Task 8):
+// samma mönster som match-cachen men värdet är RowRequirements som JSON. Nyckeln
+// (byggd i monitorsync) täcker artikel + alla kravtexter som skickas till AI:n.
+func (q *Q) GetRequirementsCache(ctx context.Context, key string) (*domain.RowRequirements, error) {
+	var raw string
+	err := q.db.QueryRowContext(ctx,
+		`SELECT requirements FROM ai_requirements_cache WHERE cache_key = ?`, key).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, domain.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	var r domain.RowRequirements
+	if err := json.Unmarshal([]byte(raw), &r); err != nil {
+		return nil, err
+	}
+	return &r, nil
+}
+
+func (q *Q) PutRequirementsCache(ctx context.Context, key string, r *domain.RowRequirements, now string) error {
+	raw, err := json.Marshal(r)
+	if err != nil {
+		return err
+	}
+	_, err = q.db.ExecContext(ctx, `INSERT OR REPLACE INTO ai_requirements_cache
+		(cache_key, requirements, created_at) VALUES (?,?,?)`, key, string(raw), now)
 	return err
 }
 

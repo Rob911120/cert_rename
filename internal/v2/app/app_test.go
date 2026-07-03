@@ -253,6 +253,52 @@ func TestArchiveAndUnarchive(t *testing.T) {
 	}
 }
 
+// TestSetRowRequirementsStampsClock bevisar att SetRowRequirements skriver
+// kraven, stämplar ReqParsedAt via den frysta klockan, och är no-op (ingen ny
+// SSE-ping) när kraven är oförändrade.
+func TestSetRowRequirementsStampsClock(t *testing.T) {
+	a, notify, _ := testApp(t)
+	ctx := context.Background()
+
+	if err := a.Repo.UpsertOrderRow(ctx, &domain.OrderRow{
+		DeliveryRowID: 77, PurchaseOrderID: 1, OrderNumber: "B127575", PartID: 11,
+	}, "2026-07-01T00:00:00Z"); err != nil {
+		t.Fatal(err)
+	}
+
+	req := domain.RowRequirements{
+		Material: "S355J2+N", EnNorm: "EN 10025-2", CertType: "3.1", English: true,
+		ProductForm: "plåt", Dimensions: "16", Impact: "27J/-20°C", Notes: "ok",
+	}
+	before := notify.overview
+	if err := a.SetRowRequirements(ctx, 77, req); err != nil {
+		t.Fatal(err)
+	}
+	got, err := a.Repo.GetOrderRow(ctx, 77)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Req != req {
+		t.Errorf("krav ej skrivna: %+v", got.Req)
+	}
+	want := time.Date(2026, 7, 3, 10, 0, 0, 0, time.UTC)
+	if !got.ReqParsedAt.Equal(want) {
+		t.Errorf("ReqParsedAt = %v, vill ha %v (frysta klockan)", got.ReqParsedAt, want)
+	}
+	if notify.overview == before {
+		t.Error("ingen SSE-ping efter kravskrivning")
+	}
+
+	// Oförändrade krav → no-op, ingen ny ping.
+	mid := notify.overview
+	if err := a.SetRowRequirements(ctx, 77, req); err != nil {
+		t.Fatal(err)
+	}
+	if notify.overview != mid {
+		t.Error("oförändrade krav ska inte ge ny SSE-ping")
+	}
+}
+
 func listPDFs(t *testing.T, dir string) []string {
 	t.Helper()
 	entries, err := os.ReadDir(dir)

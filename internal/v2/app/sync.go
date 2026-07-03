@@ -64,6 +64,32 @@ func (a *App) SetLinkVerdict(ctx context.Context, linkID int64, v *store.MatchVe
 	return nil
 }
 
+// SetRowRequirements skriver de AI-tolkade artikelkraven (Task 8) på en orderrad
+// och stämplar tolkningstiden via klock-porten. Enda skrivvägen för kravfälten.
+// No-op om kraven är oförändrade (undviker SSE-brus varje sync), samma mönster
+// som SetLinkVerdict. Kravfälten röres aldrig av sync-upserten.
+func (a *App) SetRowRequirements(ctx context.Context, rowID int64, r domain.RowRequirements) error {
+	changed := false
+	err := a.Repo.Tx(ctx, func(q *store.Q) error {
+		row, err := q.GetOrderRow(ctx, rowID)
+		if err != nil {
+			return err
+		}
+		if row.Req == r {
+			return nil // oförändrat — ingen skrivning, ingen omstämpling
+		}
+		changed = true
+		return q.SetOrderRowRequirements(ctx, rowID, r, a.ts())
+	})
+	if err != nil {
+		return err
+	}
+	if changed {
+		a.Notify.OverviewChanged()
+	}
+	return nil
+}
+
 // State/SetState är tunna genomstick till app_state (last_sync m.m.).
 func (a *App) State(ctx context.Context, key string) string {
 	v, err := a.Repo.GetState(ctx, key)

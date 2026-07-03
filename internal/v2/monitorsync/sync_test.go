@@ -41,8 +41,9 @@ func (f *fakeERP) FindProductRecords(ctx context.Context, charge string) ([]moni
 
 // fakeJudge räknar anrop och svarar med fast dom.
 type fakeJudge struct {
-	calls int
-	ok    string
+	calls      int // ClassifyUpcoming-anrop
+	ok         string
+	parseCalls int // ParseRequirements-anrop
 }
 
 func (f *fakeJudge) ClassifyUpcoming(ctx context.Context, in ai.UpcomingClassifyInput) (*ai.UpcomingClassification, error) {
@@ -51,6 +52,19 @@ func (f *fakeJudge) ClassifyUpcoming(ctx context.Context, in ai.UpcomingClassify
 		RequiredMaterial: "S690QL", RequiredCert: "3.1",
 		OurMaterial: in.CertMaterial, MaterialOK: f.ok,
 		RequiredProductForm: "plåt", ProductFormOK: "ok", Notes: "test",
+	}, nil
+}
+
+// ParseRequirements räknar anrop och ekar radens ExtraDescription i Notes så
+// testerna kan se att en ändrad text faktiskt gav en färsk tolkning (inte bara
+// en ny anropsräkning). Övriga fält är fasta.
+func (f *fakeJudge) ParseRequirements(ctx context.Context, in ai.RequirementsInput) (*ai.ArticleRequirements, error) {
+	f.parseCalls++
+	return &ai.ArticleRequirements{
+		RequiredMaterial: "S355J2+N", RequiredEnNorm: "EN 10025-2",
+		RequiredCertType: "3.1", RequiresEnglish: true,
+		RequiredProductForm: "plåt", RequiredDimensions: "16",
+		RequiredImpact: "27J/-20°C", Notes: in.ExtraDescription,
 	}, nil
 }
 
@@ -321,6 +335,104 @@ func TestJudgeCachedWithWidenedKey(t *testing.T) {
 	}
 	if judge.calls != 2 {
 		t.Errorf("dimensionsrättelse invaliderade inte cachen: %d anrop", judge.calls)
+	}
+}
+
+// TestRefreshParsesRequirementsWithCache täcker scenario (a) + (b): en rad med
+// kravtexter tolkas och persisteras vid Refresh, och en andra Refresh med
+// OFÖRÄNDRADE texter ger cache-träff — noll nya AI-anrop, kraven kvar.
+func TestRefreshParsesRequirementsWithCache(t *testing.T) {
+	erp := &fakeERP{
+		rows: []monitor.PurchaseOrderRow{
+			mkRow(401, 1, 11, part(11, "30-101241-001", "Plåt t=16 S355J2+N EN 10025-2 cert 3.1"), "2026-07-10"),
+		},
+		orders: map[monitor.ID]*monitor.PurchaseOrder{1: {OrderNumber: "B127575"}},
+	}
+	judge := &fakeJudge{ok: "ok"}
+	s := testSync(t, erp, judge)
+	ctx := context.Background()
+
+	// (a) första Refresh: tolkar och persisterar kraven på raden.
+	if _, err := s.Refresh(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if judge.parseCalls != 1 {
+		t.Fatalf("parse-anrop efter första Refresh = %d, vill ha 1", judge.parseCalls)
+	}
+	row, err := s.App.Repo.GetOrderRow(ctx, 401)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row.Req.Material != "S355J2+N" || row.Req.EnNorm != "EN 10025-2" || row.Req.CertType != "3.1" ||
+		!row.Req.English || row.Req.ProductForm != "plåt" || row.Req.Dimensions != "16" ||
+		row.Req.Impact != "27J/-20°C" {
+		t.Errorf("kraven ej persisterade: %+v", row.Req)
+	}
+	if row.ReqParsedAt.IsZero() {
+		t.Error("ReqParsedAt ska stämplas när kraven skrivs")
+	}
+
+	// (b) andra Refresh, oförändrade texter: cache-träff → noll nya AI-anrop.
+	if _, err := s.Refresh(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if judge.parseCalls != 1 {
+		t.Errorf("cachen missade: %d parse-anrop efter andra Refresh", judge.parseCalls)
+	}
+	row2, _ := s.App.Repo.GetOrderRow(ctx, 401)
+	if row2.Req.Material != "S355J2+N" {
+		t.Errorf("kraven försvann vid re-sync: %+v", row2.Req)
+	}
+}
+
+// TestRequirementsResyncPreservesAndReparses täcker scenario (c): sync-upserten
+// nollställer ALDRIG kraven, och en ändrad ExtraDescription ger ny nyckel → ny
+// tolkning (nytt AI-anrop + uppdaterade krav).
+func TestRequirementsResyncPreservesAndReparses(t *testing.T) {
+	erp := &fakeERP{
+		rows: []monitor.PurchaseOrderRow{
+			mkRow(501, 1, 11, part(11, "P-1", "Plåt S355J2+N"), "2026-07-10"),
+		},
+		orders: map[monitor.ID]*monitor.PurchaseOrder{1: {OrderNumber: "B127575"}},
+	}
+	judge := &fakeJudge{ok: "ok"}
+	s := testSync(t, erp, judge)
+	ctx := context.Background()
+
+	if _, err := s.Refresh(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if judge.parseCalls != 1 {
+		t.Fatalf("parse-anrop = %d, vill ha 1", judge.parseCalls)
+	}
+	row, _ := s.App.Repo.GetOrderRow(ctx, 501)
+	if row.Req.Notes != "Plåt S355J2+N" {
+		t.Fatalf("kraven ej satta: %+v", row.Req)
+	}
+
+	// Re-sync med OFÖRÄNDRAD text: upsert bevarar kraven, ingen ny tolkning.
+	if _, err := s.Refresh(ctx); err != nil {
+		t.Fatal(err)
+	}
+	row, _ = s.App.Repo.GetOrderRow(ctx, 501)
+	if row.Req.Notes != "Plåt S355J2+N" {
+		t.Error("upserten nollställde kraven vid re-sync")
+	}
+	if judge.parseCalls != 1 {
+		t.Errorf("onödig re-tolkning vid oförändrad text: %d anrop", judge.parseCalls)
+	}
+
+	// ÄNDRAD ExtraDescription → ny nyckel → ny tolkning + uppdaterade krav.
+	erp.rows[0] = mkRow(501, 1, 11, part(11, "P-1", "Rundstång S690QL"), "2026-07-10")
+	if _, err := s.Refresh(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if judge.parseCalls != 2 {
+		t.Errorf("ändrad text gav ingen re-tolkning: %d anrop", judge.parseCalls)
+	}
+	row, _ = s.App.Repo.GetOrderRow(ctx, 501)
+	if row.Req.Notes != "Rundstång S690QL" {
+		t.Errorf("kraven uppdaterades inte efter ändrad text: %+v", row.Req)
 	}
 }
 

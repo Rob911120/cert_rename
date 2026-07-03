@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"cert-renamer/internal/v2/domain"
+
 	_ "modernc.org/sqlite"
 )
 
@@ -132,5 +134,63 @@ func Test_Migrate_AddsOrderRowCertFieldsToExistingDB(t *testing.T) {
 	}
 	if len(got.Hyperlinks) != 0 {
 		t.Errorf("hyperlinks ska defaulta till tom lista: %+v", got.Hyperlinks)
+	}
+}
+
+// Test_Migrate_AddsOrderRowRequirementFieldsToExistingDB speglar en verklig
+// cert-renamer-v2.db skapad före Task 8: order_rows saknar de AI-tolkade
+// kravfälten (req_*). migrate() ska lägga till dem med neutrala defaults (tomma
+// krav + zero ReqParsedAt) utan att tappa den befintliga raden. Samma "bygg
+// gammalt schema minus sista steget"-mönster som testerna ovan.
+func Test_Migrate_AddsOrderRowRequirementFieldsToExistingDB(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "old-req.db")
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer db.Close()
+
+	oldVersion := len(migrations) - 1
+	for i := 0; i < oldVersion; i++ {
+		if _, err := db.Exec(migrations[i]); err != nil {
+			t.Fatalf("gammalt schema, migration %d: %v", i, err)
+		}
+	}
+	if _, err := db.Exec(fmt.Sprintf("PRAGMA user_version = %d", oldVersion)); err != nil {
+		t.Fatalf("stämpla user_version: %v", err)
+	}
+
+	// Befintlig rad, skapad före Task 8 — kravkolumnerna finns inte än.
+	if _, err := db.Exec(`INSERT INTO order_rows
+		(delivery_row_id, purchase_order_id, order_number, part_id, extra_description, first_seen, last_seen)
+		VALUES (42, 7, 'B127575', 11, 'Plåt S355J2+N', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')`); err != nil {
+		t.Fatalf("insert gammal rad: %v", err)
+	}
+
+	if err := migrate(db); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	if err := migrate(db); err != nil {
+		t.Fatalf("migrate (andra körningen ska vara no-op): %v", err)
+	}
+
+	repo := NewRepository(db)
+	got, err := repo.GetOrderRow(context.Background(), 42)
+	if err != nil {
+		t.Fatalf("GetOrderRow efter migration: %v", err)
+	}
+	if got.OrderNumber != "B127575" || got.ExtraDescription != "Plåt S355J2+N" {
+		t.Errorf("befintlig rad tappad: %+v", got)
+	}
+	if got.Req != (domain.RowRequirements{}) {
+		t.Errorf("kraven ska defaulta till tomma: %+v", got.Req)
+	}
+	if !got.ReqParsedAt.IsZero() {
+		t.Errorf("req_parsed_at ska defaulta till zero (aldrig parsad), fick %v", got.ReqParsedAt)
+	}
+
+	// Cachetabellen ska finnas och vara tom (miss → ErrNotFound).
+	if _, err := repo.GetRequirementsCache(context.Background(), "vadsomhelst"); err != domain.ErrNotFound {
+		t.Errorf("tom krav-cache ska ge ErrNotFound, fick %v", err)
 	}
 }

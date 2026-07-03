@@ -30,9 +30,11 @@ type ERP interface {
 	FindProductRecords(ctx context.Context, charge string) ([]monitor.ProductRecord, error)
 }
 
-// Judge är porten mot AI-parbedömningen (nil = ingen API-nyckel, hoppa över).
+// Judge är porten mot AI (nil = ingen API-nyckel, hoppa över). Bär både
+// parbedömningen (cert↔rad) och kravtolkningen (rad → strukturerade krav).
 type Judge interface {
 	ClassifyUpcoming(ctx context.Context, in ai.UpcomingClassifyInput) (*ai.UpcomingClassification, error)
+	ParseRequirements(ctx context.Context, in ai.RequirementsInput) (*ai.ArticleRequirements, error)
 }
 
 // Sync är hela refresh-jobbet. All mutation går genom App.
@@ -82,6 +84,9 @@ func (s *Sync) Refresh(ctx context.Context) (int, error) {
 
 	if err := s.SuggestAll(ctx); err != nil {
 		n.Logf("⚠️  förslagspass: %v", err)
+	}
+	if err := s.ParseAllRequirements(ctx); err != nil {
+		n.Logf("⚠️  kravtolkning: %v", err)
 	}
 	if err := s.JudgeAll(ctx); err != nil {
 		n.Logf("⚠️  parbedömning: %v", err)
@@ -375,4 +380,122 @@ func matchCacheKey(row *domain.OrderRow, c *domain.Cert) string {
 		c.EffectiveCertType(), row.CertRequired)
 	sum := sha256.Sum256([]byte(raw))
 	return hex.EncodeToString(sum[:])
+}
+
+// ---------------------------------------------------------------------------
+// Kravtolkning per rad, cachad (Task 8). Artikelns kravtexter blir persisterad
+// strukturerad sanning på raden — oförändrade artiklar omparsas ALDRIG.
+// ---------------------------------------------------------------------------
+
+// ParseAllRequirements tolkar kravtexterna för varje rad som kräver cert eller
+// bär någon kravtext. Cache-träff → applicera utan AI-anrop; cache-miss → AI +
+// cache-skrivning. Per-rad-AI-fel loggas och hoppas över (samma tolerans som
+// JudgeAll). All skrivning går via App.SetRowRequirements.
+func (s *Sync) ParseAllRequirements(ctx context.Context) error {
+	rows, err := s.App.Repo.ListOrderRows(ctx)
+	if err != nil {
+		return err
+	}
+	for _, row := range rows {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if !requirementsCandidate(row) {
+			continue
+		}
+		in := buildRequirementsInput(row)
+		key := requirementsCacheKey(row.PartID, in)
+
+		// Cache-träff: applicera bara vid diff (raden saknar kraven eller de
+		// skiljer sig) — undvik onödiga skrivningar. INGET AI-anrop.
+		if cached, err := s.App.Repo.GetRequirementsCache(ctx, key); err == nil {
+			if row.Req != *cached {
+				if err := s.App.SetRowRequirements(ctx, row.DeliveryRowID, *cached); err != nil {
+					return err
+				}
+			}
+			continue
+		}
+
+		// Cache-miss: kräver AI-porten. Utan nyckel fylls kraven i när den finns.
+		if s.Judge == nil {
+			continue
+		}
+		ar, err := s.Judge.ParseRequirements(ctx, in)
+		if err != nil {
+			s.App.Notify.Logf("⚠️  kravtolkning %s: %v", row.PartNumber, err)
+			continue
+		}
+		req := requirementsFromAI(ar)
+		if err := s.App.SetRowRequirements(ctx, row.DeliveryRowID, req); err != nil {
+			return err
+		}
+		if err := s.App.Repo.PutRequirementsCache(ctx, key, &req, time.Now().UTC().Format(time.RFC3339)); err != nil {
+			s.App.Notify.Logf("⚠️  krav-cache-skrivning: %v", err)
+		}
+	}
+	return nil
+}
+
+// requirementsCandidate: raden behöver tolkas om den kräver cert eller bär
+// någon kravtext (annars finns inget att tolka).
+func requirementsCandidate(r *domain.OrderRow) bool {
+	if r.CertRequired {
+		return true
+	}
+	return strings.TrimSpace(r.ExtraDescription) != "" ||
+		strings.TrimSpace(r.ReceivingMessage) != "" ||
+		strings.TrimSpace(r.ReceivingInspectionInstruction) != "" ||
+		strings.TrimSpace(r.PartReceivingInstruction) != "" ||
+		strings.TrimSpace(r.ExternalComment) != "" ||
+		strings.TrimSpace(r.FreeText) != ""
+}
+
+// buildRequirementsInput samlar radens alla kravbärande texter/mått till
+// AI-inputen. Samma uppsättning ligger till grund för cachenyckeln nedan.
+func buildRequirementsInput(r *domain.OrderRow) ai.RequirementsInput {
+	return ai.RequirementsInput{
+		Description:              r.Description,
+		ExtraDescription:         r.ExtraDescription,
+		ReceivingMessage:         r.ReceivingMessage,
+		RowInspectionInstruction: r.ReceivingInspectionInstruction,
+		PartReceivingInstruction: r.PartReceivingInstruction,
+		RowGoodsLabel:            r.RowGoodsLabel,
+		OrderGoodsLabel:          r.OrderGoodsLabel,
+		RowNotes:                 r.RowNotes,
+		FreeText:                 r.FreeText,
+		ExternalComment:          r.ExternalComment,
+		AlloyCode:                r.AlloyCode,
+		AlloyDescription:         r.AlloyDescription,
+		PartLength:               r.PartLength,
+		PartWidth:                r.PartWidth,
+		PartHeight:               r.PartHeight,
+	}
+}
+
+// requirementsCacheKey hashar artikeln + ALLA fält som skickas till AI:n (i
+// samma ordning som buildRequirementsInput bygger). Ändras någon text/mått →
+// ny nyckel → färsk tolkning (aldrig stale krav från en gammal beställningstext).
+func requirementsCacheKey(partID int64, in ai.RequirementsInput) string {
+	raw := fmt.Sprintf("requirements|part:%d|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%g|%g|%g",
+		partID, in.Description, in.ExtraDescription, in.ReceivingMessage,
+		in.RowInspectionInstruction, in.PartReceivingInstruction, in.RowGoodsLabel,
+		in.OrderGoodsLabel, in.RowNotes, in.FreeText, in.ExternalComment,
+		in.AlloyCode, in.AlloyDescription, in.PartLength, in.PartWidth, in.PartHeight)
+	sum := sha256.Sum256([]byte(raw))
+	return hex.EncodeToString(sum[:])
+}
+
+// requirementsFromAI mappar AI-svaret till domänens rena krav-struct.
+func requirementsFromAI(ar *ai.ArticleRequirements) domain.RowRequirements {
+	return domain.RowRequirements{
+		Material:    ar.RequiredMaterial,
+		EnNorm:      ar.RequiredEnNorm,
+		CertType:    ar.RequiredCertType,
+		English:     ar.RequiresEnglish,
+		ProductForm: ar.RequiredProductForm,
+		Dimensions:  ar.RequiredDimensions,
+		Impact:      ar.RequiredImpact,
+		Notes:       ar.Notes,
+	}
 }

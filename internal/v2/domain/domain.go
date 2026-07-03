@@ -6,6 +6,7 @@ package domain
 
 import (
 	"strings"
+	"time"
 
 	"cert-renamer/internal/cert"
 )
@@ -144,6 +145,22 @@ type Cert struct {
 // Living rapporterar om certet fortfarande är redigerbart.
 func (c *Cert) Living() bool { return c.Status == CertMottagen }
 
+// RowRequirements är de AI-tolkade (Task 7) artikelkraven för en orderrad:
+// vad ARTIKELN KRÄVER av cert och material, härlett ur radens/orderns/artikelns
+// kravtexter. Ren struct utan IO — tomma fält (och English=false) betyder att
+// inget uttryckligen framgick, inte att inget krävs (samma "gissa aldrig"-princip
+// som ai.ArticleRequirements). Alla fält är jämförbara → == duger för diff.
+type RowRequirements struct {
+	Material    string // beställd ståldesignation, t.ex. "S355J2+N"
+	EnNorm      string // EN-/materialnorm, t.ex. "EN 10025-2"
+	CertType    string // certnivå: "3.1" | "2.2" | "3.2"
+	English     bool   // certet ska vara på engelska
+	ProductForm string // produktform, lowercase svenska
+	Dimensions  string // beställda dimensioner, samma format som certextraktionen
+	Impact      string // slagprovskrav, t.ex. "27J/-20°C"
+	Notes       string // kort svensk kommentar vid tvetydighet
+}
+
 // OrderRow är en inköpsorderrad från Monitor + artikeldata, persisterad lokalt.
 type OrderRow struct {
 	DeliveryRowID    int64
@@ -193,6 +210,13 @@ type OrderRow struct {
 	ExtraFieldsRaw           string      // rå ExtraFields-JSON från Monitor ('' om saknas)
 	Hyperlinks               []Hyperlink // artikelns länkar (typiskt ritningar)
 	DrawingNumbers           string      // Drawings[].DrawingNumber, kommaseparerat
+
+	// AI-tolkade krav (Task 8), skrivna ENDAST via App.SetRowRequirements. En
+	// egen sub-struct (inte utplattat) eftersom kraven är EN sammanhållen enhet
+	// som skrivs atomiskt och mappar 1:1 mot ai.ArticleRequirements — till
+	// skillnad från Monitor-fälten ovan som var för sig hämtas från ERP:t.
+	Req         RowRequirements
+	ReqParsedAt time.Time // zero = aldrig parsad; stämplas via app-klockan
 }
 
 // Hyperlink är en artikellänk (typiskt en ritning) från Monitor. Persisteras
