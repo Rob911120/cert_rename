@@ -73,6 +73,9 @@ function unlinkedCard(c) {
       B-nr: <span class="copy" data-action="copy">${esc(c.effective_b_numbers.join(' ')) || '—'}</span>
       ${c.issues.length ? `<span class="badge warn" title="${esc(c.issues.join('; '))}">⚠ ${c.issues.length}</span>` : ''}
     </div>
+    ${certQualityWarnings(c)}
+    ${certExtraLine(c)}
+    ${certGetingeBadges(c)}
     ${sugg}
     <div class="inline-form">
       <input type="text" placeholder="B-nummer, t.ex. B127575" data-linkinput="${c.id}"
@@ -188,6 +191,7 @@ function linkBlock(r, l) {
   return `
   <div class="certblock ${c.status === 'sparad' ? 'frozen' : ''}">
     ${cmpTable(l, c)}
+    ${certQualityWarnings(c)}
     <div class="origname">📄 <a href="/api/pdf?cert_id=${c.id}" target="_blank"
         title="Ursprungligt filnamn — förhandsvisar ofta charge/heat">${esc(c.original_filename)}</a></div>
     <div class="copyline">
@@ -198,9 +202,76 @@ function linkBlock(r, l) {
       ${l.status === 'bekraftad' && c.status !== 'sparad'
         ? `<button class="btn btn-small" data-action="reject-link" data-link="${l.id}" title="Koppla loss">✕ koppla loss</button>` : ''}
     </div>
+    ${certExtraLine(c)}
+    ${certGetingeBadges(c)}
     ${l.ai_notes ? `<div class="hint">🤖 ${esc(l.ai_notes)}</div>` : ''}
     ${nameLine(c)}
   </div>`;
+}
+
+// ---------------------------------------------------------------------------
+// Nya extraktionsfält (Task 1-3): slag-, kemi- och märkningsdata.
+// ---------------------------------------------------------------------------
+
+// hasVal: skiljer null/undefined (ej angivet) från 0 (ett giltigt tal).
+function hasVal(v) {
+  return v !== null && v !== undefined;
+}
+
+// Slagprov: "27J / -20°C" när båda finns, annars bara den som finns.
+// impact_energy_j === 0 betyder "ej angivet" (icke-nullable fält i domänen).
+function slagprovText(c) {
+  const bits = [];
+  if (c.impact_energy_j) bits.push(c.impact_energy_j + 'J');
+  if (hasVal(c.impact_temp_c)) bits.push(c.impact_temp_c + '°C');
+  return bits.length ? bits.join(' / ') : '—';
+}
+
+// Kemi: "C 0.12 · P 0.01 · S 0.002" — bara de fält som finns.
+function kemiText(c) {
+  const bits = [];
+  if (hasVal(c.carbon_pct)) bits.push('C ' + c.carbon_pct);
+  if (hasVal(c.p_pct)) bits.push('P ' + c.p_pct);
+  if (hasVal(c.s_pct)) bits.push('S ' + c.s_pct);
+  return bits.length ? bits.join(' · ') : '—';
+}
+
+// Kompakt teknisk detaljrad. Helt tom (allt "—") → gömd, för att inte lägga
+// en rad med bara streck på cert som saknar Task 1-3-data (t.ex. V1-import).
+function certExtraLine(c) {
+  const parts = [
+    ['Normsystem', c.norm_system || '—'],
+    ['Normutgåva', c.norm_edition || '—'],
+    ['PED', c.ped_directive || '—'],
+    ['Leveranstillstånd', c.delivery_condition || '—'],
+    ['Slagprov', slagprovText(c)],
+    ['CEV', hasVal(c.cev) ? String(c.cev) : '—'],
+    ['Kemi', kemiText(c)],
+    ['Min-temp', hasVal(c.min_temperature_c) ? c.min_temperature_c + '°C' : '—'],
+  ];
+  if (parts.every(([, v]) => v === '—')) return '';
+  return `<div class="copyline">${parts.map(([label, v]) => `${label} <span class="muted">${esc(v)}</span>`).join(' · ')}</div>`;
+}
+
+// Varningar ENDAST vid explicit false — null/undefined (gamla rader utan
+// data) och true ska inte generera något grönt brus.
+function certQualityWarnings(c) {
+  const warns = [];
+  if (c.is_english === false) warns.push('⚠ Ej engelska');
+  if (c.is_legible === false) warns.push('⚠ Delvis oläslig');
+  if (c.is_unaltered === false) warns.push('⚠ Möjligen redigerad');
+  if (!warns.length) return '';
+  return `<div class="copyline">${warns.map((w) => `<span class="badge warn">${esc(w)}</span>`).join(' ')}</div>`;
+}
+
+// Getinge-krav: diskreta badges bara när testet/fotot finns (true).
+function certGetingeBadges(c) {
+  const badges = [];
+  if (c.has_bend_test) badges.push('Bocktest');
+  if (c.has_intergranular_test) badges.push('Intergranulärtest');
+  if (c.has_stamp_photo) badges.push('Stämpelfoto');
+  if (!badges.length) return '';
+  return `<div class="copyline">${badges.map((b) => `<span class="badge">${esc(b)}</span>`).join(' ')}</div>`;
 }
 
 // KRAV vs CERT-jämförelsen. CERT-cellerna är klicka-för-redigera.

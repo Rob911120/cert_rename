@@ -38,11 +38,32 @@ type certJSON struct {
 	Confidence        string   `json:"confidence"`
 	Issues            []string `json:"issues"`
 
+	// Kolumnkalibrerad extraktion (Task 1-3): slag-, kemi- och märkningsdata.
+	// Nullable-tal förblir *float64 rakt igenom så nil serialiseras som JSON
+	// null (inte 0) — 0 betyder "ej angivet" bara för ImpactEnergyJ, som inte
+	// är nullable i domänmodellen.
+	IsLegible            bool     `json:"is_legible"`
+	IsUnaltered          bool     `json:"is_unaltered"`
+	NormSystem           string   `json:"norm_system"`
+	ImpactTempC          *float64 `json:"impact_temp_c"`
+	ImpactEnergyJ        float64  `json:"impact_energy_j"`
+	NormEdition          string   `json:"norm_edition"`
+	PedDirective         string   `json:"ped_directive"`
+	Cev                  *float64 `json:"cev"`
+	CarbonPct            *float64 `json:"carbon_pct"`
+	PPct                 *float64 `json:"p_pct"`
+	SPct                 *float64 `json:"s_pct"`
+	HasBendTest          bool     `json:"has_bend_test"`
+	HasIntergranularTest bool     `json:"has_intergranular_test"`
+	HasStampPhoto        bool     `json:"has_stamp_photo"`
+	MinTemperatureC      *float64 `json:"min_temperature_c"`
+	DeliveryCondition    string   `json:"delivery_condition"`
+
 	// Rättelser + effektivt
-	Corrected map[string]string   `json:"corrected"` // fält → värde ('' = ej rättad)
-	Effective map[string]string   `json:"effective"`
-	EffectiveBNumbers []string    `json:"effective_b_numbers"`
-	CorrectionLog []domain.Correction `json:"correction_log"`
+	Corrected         map[string]string   `json:"corrected"` // fält → värde ('' = ej rättad)
+	Effective         map[string]string   `json:"effective"`
+	EffectiveBNumbers []string            `json:"effective_b_numbers"`
+	CorrectionLog     []domain.Correction `json:"correction_log"`
 
 	// Levande namn + livscykel
 	NameOverride     string `json:"name_override"`
@@ -154,6 +175,12 @@ func (s *Server) certJSON(ctx context.Context, view *app.CertView) certJSON {
 		EnStandardPresent: c.EnStandardPresent, IsEnglish: c.IsEnglish,
 		ProductForm: c.ProductForm, Dimensions: c.Dimensions, CountryOfOrigin: c.CountryOfOrigin,
 		BNumbers: orEmpty(c.BNumbers), Confidence: c.Confidence, Issues: orEmpty(c.Issues),
+		IsLegible: c.IsLegible, IsUnaltered: c.IsUnaltered,
+		NormSystem: c.NormSystem, ImpactTempC: c.ImpactTempC, ImpactEnergyJ: c.ImpactEnergyJ,
+		NormEdition: c.NormEdition, PedDirective: c.PedDirective,
+		Cev: c.Cev, CarbonPct: c.CarbonPct, PPct: c.PPct, SPct: c.SPct,
+		HasBendTest: c.HasBendTest, HasIntergranularTest: c.HasIntergranularTest, HasStampPhoto: c.HasStampPhoto,
+		MinTemperatureC: c.MinTemperatureC, DeliveryCondition: c.DeliveryCondition,
 		Corrected: map[string]string{
 			"charge": c.CorrectedCharge, "material": c.CorrectedMaterial,
 			"product_form": c.CorrectedProductForm, "dimensions": c.CorrectedDimensions,

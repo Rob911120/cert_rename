@@ -166,6 +166,110 @@ func TestLinkFlow(t *testing.T) {
 	}
 }
 
+// TestCertJSONExtractionFields täcker de 16 nya kolumnkalibrerade
+// extraktionsfälten (Task 1-3) i detalj-JSON:en: ett satt-fall (alla fält
+// ifyllda, inkl. pekarvärden) och ett tomt-fall (nollvärdes-cert — pekarna
+// ska serialiseras som null, inte 0, och impact_energy_j == 0 betyder
+// "ej angivet").
+func TestCertJSONExtractionFields(t *testing.T) {
+	s, _, cfg := testServer(t)
+	ctx := context.Background()
+
+	impactTemp, cev, carbon, phos, sulfur, minTemp := -20.0, 0.43, 0.12, 0.01, 0.002, -40.0
+
+	setData := []byte("%PDF-1.4 set\n")
+	setHash := v2store.HashPDF(setData)
+	setStored := v2store.StoredName(setHash, "set.pdf")
+	if _, err := v2store.WriteStoreFile(cfg, setStored, setData); err != nil {
+		t.Fatal(err)
+	}
+	setCert := &domain.Cert{
+		PdfHash: setHash, OriginalFilename: "set.pdf", StoredName: setStored,
+		CertType: "3.1", Charge: "1", Material: "S355", EnStandardPresent: true, IsEnglish: true,
+		BNumbers: []string{"B1"}, ReceivedAt: "t",
+		IsLegible: false, IsUnaltered: false,
+		NormSystem: "EN 10025-2", ImpactTempC: &impactTemp, ImpactEnergyJ: 27,
+		NormEdition: "2019", PedDirective: "2014/68/EU",
+		Cev: &cev, CarbonPct: &carbon, PPct: &phos, SPct: &sulfur,
+		HasBendTest: true, HasIntergranularTest: true, HasStampPhoto: true,
+		MinTemperatureC: &minTemp, DeliveryCondition: "+N",
+	}
+	setID, err := s.Repo.InsertCert(ctx, setCert)
+	if err != nil {
+		t.Fatal(err)
+	}
+	setView, err := s.App.GetCertView(ctx, setID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scj := s.certJSON(ctx, setView)
+
+	if scj.IsLegible || scj.IsUnaltered {
+		t.Errorf("IsLegible/IsUnaltered ska vara false för satt-fallet: %+v", scj)
+	}
+	if scj.NormSystem != "EN 10025-2" || scj.NormEdition != "2019" || scj.PedDirective != "2014/68/EU" || scj.DeliveryCondition != "+N" {
+		t.Errorf("strängfält tappade: %+v", scj)
+	}
+	if scj.ImpactTempC == nil || *scj.ImpactTempC != -20 {
+		t.Errorf("ImpactTempC = %v, vill ha -20", scj.ImpactTempC)
+	}
+	if scj.ImpactEnergyJ != 27 {
+		t.Errorf("ImpactEnergyJ = %v, vill ha 27", scj.ImpactEnergyJ)
+	}
+	if scj.Cev == nil || *scj.Cev != 0.43 {
+		t.Errorf("Cev = %v, vill ha 0.43", scj.Cev)
+	}
+	if scj.CarbonPct == nil || *scj.CarbonPct != 0.12 || scj.PPct == nil || *scj.PPct != 0.01 || scj.SPct == nil || *scj.SPct != 0.002 {
+		t.Errorf("kemifält tappade: %+v", scj)
+	}
+	if !scj.HasBendTest || !scj.HasIntergranularTest || !scj.HasStampPhoto {
+		t.Errorf("Getinge-flaggor tappade: %+v", scj)
+	}
+	if scj.MinTemperatureC == nil || *scj.MinTemperatureC != -40 {
+		t.Errorf("MinTemperatureC = %v, vill ha -40", scj.MinTemperatureC)
+	}
+
+	// Tomt cert: pekarfälten ska serialiseras som JSON-null (inte 0/tomt tal).
+	nullData := []byte("%PDF-1.4 null\n")
+	nullHash := v2store.HashPDF(nullData)
+	nullStored := v2store.StoredName(nullHash, "null.pdf")
+	if _, err := v2store.WriteStoreFile(cfg, nullStored, nullData); err != nil {
+		t.Fatal(err)
+	}
+	nullCert := &domain.Cert{
+		PdfHash: nullHash, OriginalFilename: "null.pdf", StoredName: nullStored,
+		CertType: "3.1", Charge: "2", Material: "S355", EnStandardPresent: true, IsEnglish: true,
+		BNumbers: []string{"B2"}, ReceivedAt: "t",
+	}
+	nullID, err := s.Repo.InsertCert(ctx, nullCert)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nullView, err := s.App.GetCertView(ctx, nullID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ncj := s.certJSON(ctx, nullView)
+
+	raw, err := json.Marshal(ncj)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"impact_temp_c", "cev", "carbon_pct", "p_pct", "s_pct", "min_temperature_c"} {
+		v, ok := m[key]
+		if !ok || v != nil {
+			t.Errorf("%s ska serialiseras som null för nollvärdes-cert, fick %#v (finns=%v)", key, v, ok)
+		}
+	}
+	if ncj.ImpactEnergyJ != 0 {
+		t.Errorf("ImpactEnergyJ = %v, vill ha 0 (ej angivet)", ncj.ImpactEnergyJ)
+	}
+}
+
 func TestOverviewShape(t *testing.T) {
 	s, mux, cfg := testServer(t)
 	c := seedCert(t, s, cfg)
