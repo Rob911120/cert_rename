@@ -5,6 +5,7 @@
 
 import { get, post, onEvent, connectSSE, toast, act, debounce, esc, ApiError } from './api.js';
 import { initShell, setWorkerState } from './shell.js';
+import { initSickan } from './sickan.js';
 
 const $ = (id) => document.getElementById(id);
 const openOrders = new Set();
@@ -15,6 +16,7 @@ let ov = null; // senaste overview-svaret
 // ---------------------------------------------------------------------------
 
 initShell();
+initSickan();
 connectSSE();
 onEvent('overview', debounce(load, 250));
 load();

@@ -54,6 +54,8 @@ type Server struct {
 
 	intakeKick chan struct{}
 	syncKick   chan struct{}
+
+	sickanSess sickanSessions
 }
 
 func New(cfg v1store.Config, db *sql.DB, logger *slog.Logger) *Server {
@@ -310,6 +312,10 @@ func NewMux(s *Server) *http.ServeMux {
 	mux.HandleFunc("POST /api/upload", s.handleUpload)
 	mux.HandleFunc("POST /api/start", s.handleStart)
 	mux.HandleFunc("POST /api/stop", s.handleStop)
+
+	mux.HandleFunc("POST /api/sickan/stream", s.handleSickanStream)
+	mux.HandleFunc("POST /api/sickan/reset", s.handleSickanReset)
+	mux.HandleFunc("POST /api/sickan/model", s.handleSickanModel)
 
 	return mux
 }

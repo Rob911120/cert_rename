@@ -106,6 +106,26 @@
   </div>
 </dialog>
 
+<button id="sickanFab" class="sickan-fab" title="Prata med Sickan">🤖</button>
+<div id="sickanPanel" class="sickan-panel hidden">
+  <div class="sickan-head">
+    <span>🤖 Sickan</span>
+    <select id="sickanModel" title="Modell">
+      <option value="">standard</option>
+      <option value="claude-sonnet-5">sonnet</option>
+      <option value="claude-haiku-4-5-20251001">haiku</option>
+      <option value="claude-opus-4-8">opus</option>
+    </select>
+    <button id="sickanReset" class="btn btn-small" title="Ny konversation">↺</button>
+    <button id="sickanClose" class="btn btn-small">✕</button>
+  </div>
+  <div id="sickanLog" class="sickan-log"></div>
+  <form id="sickanForm" class="sickan-form">
+    <input id="sickanInput" type="text" placeholder="Fråga Sickan…" autocomplete="off">
+    <button id="sickanSend" class="btn btn-primary" type="submit">➤</button>
+  </form>
+</div>
+
 <div id="toasts" class="toasts"></div>
 
 <script type="module" src="js/overview.js"></script>
