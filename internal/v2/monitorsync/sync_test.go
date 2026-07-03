@@ -338,6 +338,55 @@ func TestJudgeCachedWithWidenedKey(t *testing.T) {
 	}
 }
 
+// TestJudgeCacheKeyCoversParsedRequirements bevisar Task 9: cachenyckeln täcker
+// de nya AI-inputfälten. Samma rad + cert, men ett ändrat parsat krav
+// (req_cert_type) måste ge ett NYTT judge-anrop — annars serveras en stale dom
+// som fortfarande bygger på det gamla kravet.
+func TestJudgeCacheKeyCoversParsedRequirements(t *testing.T) {
+	s := testSync(t, &fakeERP{}, nil)
+	judge := &fakeJudge{ok: "ok"}
+	s.Judge = judge
+	ctx := context.Background()
+
+	if err := s.App.Repo.UpsertOrderRow(ctx, &domain.OrderRow{
+		DeliveryRowID: 601, OrderNumber: "B128293", PartID: 11, PartNumber: "P-1",
+		ExtraDescription: "Plåt S690QL", CertRequired: true,
+		Req: domain.RowRequirements{Material: "S690QL", CertType: "3.1"},
+	}, "t"); err != nil {
+		t.Fatal(err)
+	}
+	c := seedLivingCert(t, s.App, "43136", []string{"B128293"})
+	if _, err := s.App.SuggestLink(ctx, c.ID, 601, "B128293", "auto_b_number"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.JudgeAll(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if judge.calls != 1 {
+		t.Fatalf("första domen: judge-anrop = %d, vill ha 1", judge.calls)
+	}
+
+	// Oförändrade krav → cache-träff, inga nya anrop.
+	if err := s.JudgeAll(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if judge.calls != 1 {
+		t.Errorf("oförändrade krav borde ge cache-träff: %d anrop", judge.calls)
+	}
+
+	// Ändrat req_cert_type via SetRowRequirements → ny nyckel → ny dom.
+	if err := s.App.SetRowRequirements(ctx, 601, domain.RowRequirements{Material: "S690QL", CertType: "3.2"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.JudgeAll(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if judge.calls != 2 {
+		t.Errorf("ändrat req_cert_type invaliderade inte judge-cachen: %d anrop", judge.calls)
+	}
+}
+
 // TestRefreshParsesRequirementsWithCache täcker scenario (a) + (b): en rad med
 // kravtexter tolkas och persisteras vid Refresh, och en andra Refresh med
 // OFÖRÄNDRADE texter ger cache-träff — noll nya AI-anrop, kraven kvar.

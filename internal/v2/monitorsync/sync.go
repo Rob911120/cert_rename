@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -351,6 +352,22 @@ func (s *Sync) judgeWithCache(ctx context.Context, row *domain.OrderRow, c *doma
 		CertType:         c.EffectiveCertType(),
 		CertDimensions:   c.EffectiveDimensions(),
 		CertProductForm:  c.EffectiveProductForm(),
+
+		// Task 9: parsade krav (row.Req) + certets nya kolumner. Alla ingår
+		// också i matchCacheKey nedan — ändrar de sig faller cachen.
+		ReqMaterial:    row.Req.Material,
+		ReqEnNorm:      row.Req.EnNorm,
+		ReqCertType:    row.Req.CertType,
+		ReqProductForm: row.Req.ProductForm,
+		ReqDimensions:  row.Req.Dimensions,
+		ReqImpact:      row.Req.Impact,
+
+		CertNormSystem:        c.NormSystem,
+		CertNormEdition:       c.NormEdition,
+		CertImpactTempC:       c.ImpactTempC,
+		CertImpactEnergyJ:     c.ImpactEnergyJ,
+		CertIsEnglish:         c.IsEnglish,
+		CertDeliveryCondition: c.DeliveryCondition,
 	})
 	if err != nil {
 		return nil, err
@@ -372,14 +389,35 @@ func (s *Sync) judgeWithCache(ctx context.Context, row *domain.OrderRow, c *doma
 
 // matchCacheKey är BREDDAD mot V1: alla effektiva certfält som påverkar domen
 // ingår, så varje rättelse (material, dimensioner, form, cert-typ) ger en ny
-// nyckel och en färsk dom.
+// nyckel och en färsk dom. Task 9: MÅSTE täcka ALLA nya AI-inputfält (parsade
+// krav + certets nya kolumner) — annars serveras stale verdicts när kraven
+// eller certkolumnerna ändras.
 func matchCacheKey(row *domain.OrderRow, c *domain.Cert) string {
-	raw := fmt.Sprintf("part:%d|%s|cert:%d|%s|%s|%s|%s|%t",
+	raw := fmt.Sprintf("part:%d|%s|cert:%d|%s|%s|%s|%s|%t"+
+		"|req:%s|%s|%s|%s|%s|%s"+
+		"|certcol:%s|%s|%s|%s|%s|%t",
 		row.PartID, row.ExtraDescription,
 		c.ID, c.EffectiveMaterial(), c.EffectiveDimensions(), c.EffectiveProductForm(),
-		c.EffectiveCertType(), row.CertRequired)
+		c.EffectiveCertType(), row.CertRequired,
+		row.Req.Material, row.Req.EnNorm, row.Req.CertType,
+		row.Req.ProductForm, row.Req.Dimensions, row.Req.Impact,
+		c.NormSystem, c.NormEdition, fmtPtr(c.ImpactTempC),
+		fmtFloat(c.ImpactEnergyJ), c.DeliveryCondition, c.IsEnglish)
 	sum := sha256.Sum256([]byte(raw))
 	return hex.EncodeToString(sum[:])
+}
+
+// fmtPtr serialiserar ett *float64 stabilt för cachenyckeln: "nil" när ej satt,
+// annars talet (så nil skiljs från 0).
+func fmtPtr(f *float64) string {
+	if f == nil {
+		return "nil"
+	}
+	return fmtFloat(*f)
+}
+
+func fmtFloat(f float64) string {
+	return strconv.FormatFloat(f, 'g', -1, 64)
 }
 
 // ---------------------------------------------------------------------------

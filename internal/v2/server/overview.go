@@ -92,6 +92,13 @@ type linkJSON struct {
 	ProductFormOK       string `json:"product_form_ok"`
 	AINotes             string `json:"ai_notes"`
 
+	// Regelrätta domar (Task 9) — BERÄKNAS FÄRSKT per render ur radens krav +
+	// certets kolumner (domain.*Verdict), persisteras aldrig. Tomma ("") när
+	// ingen cert är kopplad (linkJSONOf utan certkontext, t.ex. handleLink-ACK).
+	EnglishVerdict  string `json:"english_verdict"`
+	CertTypeVerdict string `json:"cert_type_verdict"`
+	ImpactVerdict   string `json:"impact_verdict"`
+
 	Cert *certJSON `json:"cert,omitempty"`
 }
 
@@ -135,6 +142,18 @@ type rowJSON struct {
 	ExtraFieldsRaw                 string             `json:"extra_fields_raw"`
 	Hyperlinks                     []domain.Hyperlink `json:"hyperlinks"`
 	DrawingNumbers                 string             `json:"drawing_numbers"`
+
+	// AI-tolkade krav (Task 8/9): den beställda sanningen, exponerad så UI:ts
+	// Krav-kolumn kan visas ÄVEN utan länkat cert. Tomma fält = inget
+	// uttryckligt krav framgick (samma "gissa aldrig"-princip).
+	ReqMaterial    string `json:"req_material"`
+	ReqEnNorm      string `json:"req_en_norm"`
+	ReqCertType    string `json:"req_cert_type"`
+	ReqEnglish     bool   `json:"req_english"`
+	ReqProductForm string `json:"req_product_form"`
+	ReqDimensions  string `json:"req_dimensions"`
+	ReqImpact      string `json:"req_impact"`
+	ReqNotes       string `json:"req_notes"`
 
 	Links []linkJSON      `json:"links"`
 	Notes []*v2store.Note `json:"notes"`
@@ -302,7 +321,11 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 			ExtraFieldsRaw: row.ExtraFieldsRaw,
 			Hyperlinks:     orEmptyHyperlinks(row.Hyperlinks),
 			DrawingNumbers: row.DrawingNumbers,
-			Links:          []linkJSON{},
+			ReqMaterial:    row.Req.Material, ReqEnNorm: row.Req.EnNorm,
+			ReqCertType: row.Req.CertType, ReqEnglish: row.Req.English,
+			ReqProductForm: row.Req.ProductForm, ReqDimensions: row.Req.Dimensions,
+			ReqImpact: row.Req.Impact, ReqNotes: row.Req.Notes,
+			Links: []linkJSON{},
 		}
 		if notes, _ := s.Repo.ListNotes(ctx, "order_row", row.DeliveryRowID); notes != nil {
 			rj.Notes = notes
@@ -318,6 +341,12 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 			if view := getView(l.CertID); view != nil {
 				cj := s.certJSON(ctx, view)
 				lj.Cert = &cj
+				// Task 9: regelrätta domar beräknas FÄRSKT här ur radens krav
+				// + certets kolumner — aldrig cachade/persisterade.
+				cert := view.Cert
+				lj.EnglishVerdict = domain.EnglishVerdict(row.Req.English, cert.IsEnglish)
+				lj.CertTypeVerdict = domain.CertTypeVerdict(row.Req.CertType, cert.EffectiveCertType())
+				lj.ImpactVerdict = domain.ImpactVerdict(row.Req.Impact, cert.ImpactEnergyJ, cert.ImpactTempC)
 			}
 			rj.Links = append(rj.Links, lj)
 		}

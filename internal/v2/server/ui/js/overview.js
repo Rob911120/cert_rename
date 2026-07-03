@@ -171,6 +171,8 @@ function artRow(r) {
     ${reqTextSection(r)}
     ${drawingSection(r)}
     ${activeLinks.map((l) => linkBlock(r, l)).join('')}
+    ${!activeLinks.some((l) => l.status === 'bekraftad' && l.cert) && rowHasReq(r)
+      ? `<div class="kravonly">${cmpTable(r, null, null)}</div>` : ''}
     ${r.cert_required && !activeLinks.length ? '<div class="hint">Inget cert kopplat ännu.</div>' : ''}
     ${notesBlock('order_row', r.delivery_row_id, r.notes, r.order_number, r.part_number)}
     <div class="row-actions">
@@ -192,7 +194,7 @@ function linkBlock(r, l) {
   }
   return `
   <div class="certblock ${c.status === 'sparad' ? 'frozen' : ''}">
-    ${cmpTable(l, c)}
+    ${cmpTable(r, l, c)}
     ${certQualityWarnings(c)}
     <div class="origname">📄 <a href="/api/pdf?cert_id=${c.id}" target="_blank"
         title="Ursprungligt filnamn — förhandsvisar ofta charge/heat">${esc(c.original_filename)}</a></div>
@@ -332,25 +334,41 @@ function certGetingeBadges(c) {
   return `<div class="copyline">${badges.map((b) => `<span class="badge">${esc(b)}</span>`).join(' ')}</div>`;
 }
 
-// KRAV vs CERT-jämförelsen. CERT-cellerna är klicka-för-redigera.
-function cmpTable(l, c) {
+// rowHasReq: har raden några parsade krav (Task 8) att visa?
+function rowHasReq(r) {
+  return !!(r.req_material || r.req_en_norm || r.req_cert_type || r.req_english ||
+    r.req_product_form || r.req_dimensions || r.req_impact);
+}
+
+// KRAV vs CERT-jämförelsen. Krav-kolumnen läser radens parsade krav (r.req_*)
+// med fallback till AI-domens required_* för oparsade rader. Engelska/Cert-typ/
+// Slagseghet döms regelrätt i Go (l.*_verdict, färskt per render). Anropas även
+// UTAN cert (l och c = null) — då visas bara Krav-kolumnen (cert-celler "—").
+function cmpTable(r, l, c) {
+  const li = l || {};
+  const cEff = (c && c.effective) || {};
   const icon = (ok) => ok === 'ok' ? '<span class="icon-ok">✓</span>'
     : ok === 'mismatch' ? '<span class="icon-bad">⚠</span>' : '<span class="icon-unk">—</span>';
-  const row = (label, krav, field, certVal, ic) => `
-    <tr><td class="lbl">${label}</td><td>${esc(krav) || '—'}</td>
-    <td class="editcell" data-edit="${field}" data-cert="${c.id}" data-value="${esc(certVal)}">${esc(certVal) || '—'}</td>
+  const krav = (reqVal, aiVal) => reqVal || aiVal || '';
+  // Redigerbar cert-cell (bara när ett cert finns); annars ren "—"-cell.
+  const editRow = (label, kravVal, field, certVal, ic) => `
+    <tr><td class="lbl">${label}</td><td>${esc(kravVal) || '—'}</td>
+    ${c ? `<td class="editcell" data-edit="${field}" data-cert="${c.id}" data-value="${esc(certVal)}">${esc(certVal) || '—'}</td>`
+        : '<td>—</td>'}
     <td>${ic}</td></tr>`;
+  // Icke-redigerbar cert-cell (fält utan editstöd: språk, slagseghet).
+  const plainRow = (label, kravVal, certText, ic) => `
+    <tr><td class="lbl">${label}</td><td>${esc(kravVal) || '—'}</td>
+    <td>${esc(certText) || '—'}</td><td>${ic}</td></tr>`;
   return `
   <table class="cmp">
     <tr><th>Fält</th><th>Krav</th><th>Cert</th><th></th></tr>
-    ${row('Material', l.required_material, 'material', c.effective.material, icon(l.material_ok))}
-    ${row('Cert-typ', l.required_cert, 'cert_type', c.effective.cert_type,
-      l.required_cert && c.effective.cert_type
-        ? icon(l.required_cert.includes(c.effective.cert_type) ? 'ok' : 'unknown') : icon('unknown'))}
-    ${row('Typ', l.required_product_form, 'product_form', c.effective.product_form, icon(l.product_form_ok))}
-    ${row('Mått', '', 'dimensions', c.effective.dimensions, '')}
-    <tr><td class="lbl">Engelska</td><td>Engelska</td><td>${c.is_english ? 'Ja' : 'Nej'}</td>
-    <td>${c.is_english ? '<span class="icon-ok">✓</span>' : '<span class="icon-bad">⚠</span>'}</td></tr>
+    ${editRow('Material', krav(r.req_material, li.required_material), 'material', cEff.material, icon(li.material_ok))}
+    ${editRow('Cert-typ', krav(r.req_cert_type, li.required_cert), 'cert_type', cEff.cert_type, icon(li.cert_type_verdict))}
+    ${editRow('Typ', krav(r.req_product_form, li.required_product_form), 'product_form', cEff.product_form, icon(li.product_form_ok))}
+    ${editRow('Mått', krav(r.req_dimensions, ''), 'dimensions', cEff.dimensions, '')}
+    ${plainRow('Engelska', r.req_english ? 'Ja' : '—', c ? (c.is_english ? 'Ja' : 'Nej') : '—', icon(li.english_verdict))}
+    ${plainRow('Slagseghet', r.req_impact || '—', c ? slagprovText(c) : '—', icon(li.impact_verdict))}
   </table>`;
 }
 
