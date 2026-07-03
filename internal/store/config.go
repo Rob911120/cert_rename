@@ -67,6 +67,12 @@ type Config struct {
 	// på en ny dag.
 	BriefEnabled bool   `json:"brief_enabled"`
 	BriefTime    string `json:"brief_time,omitempty"`
+
+	// V2 (cmd/cert-renamer-v2): certlager (stabila original) respektive utmapp
+	// för sparade cert. Tomma = härleds från InboxDir (<inbox>/v2/store,
+	// <inbox>/v2/out). V1 läser aldrig dessa fält.
+	StoreDirV2  string `json:"v2_store_dir,omitempty"`
+	OutputDirV2 string `json:"v2_output_dir,omitempty"`
 }
 
 // NormalizeUpcoming sätter defaults och avvisar ogiltig UpcomingTime. Anropas
