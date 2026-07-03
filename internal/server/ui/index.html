@@ -39,8 +39,10 @@
     </div>
     <div class="flex items-center gap-3 pb-2">
       <span class="text-xs text-slate-500 dark:text-slate-400" id="queueCount"></span>
-      <input type="search" id="queueFilter" placeholder="Sök charge, B-nummer, material…"
+      <input type="search" id="briefFilter" placeholder="Sök order, leverantör, artikel, material…"
              autocomplete="off" class="input-field !py-1.5 w-72">
+      <input type="search" id="queueFilter" placeholder="Sök charge, B-nummer, material…"
+             autocomplete="off" class="input-field !py-1.5 w-72 hidden">
     </div>
   </div>
 
@@ -977,8 +979,9 @@ function switchTab(name) {
   setActiveTab('.tab-link[data-tab]', 'tab', name);
   document.querySelectorAll('.tab-panel').forEach(p =>
     p.classList.toggle('hidden', p.dataset.panel !== name));
-  // Sök-fältet är bara relevant för kö-vyn.
+  // Kö och Översikt har varsitt sökfält i tablisten — visa det som hör till fliken.
   document.getElementById('queueFilter').classList.toggle('hidden', name !== 'queue');
+  document.getElementById('briefFilter').classList.toggle('hidden', name !== 'today');
   if (name === 'today') loadBrief();
   if (name === 'review') loadReview();
   if (name === 'upcoming') loadUpcoming();
@@ -991,6 +994,8 @@ function switchTab(name) {
 // en anledning som blir en not på raden — så blir de lärdomar.
 // ---------------------------------------------------------------------------
 let briefData = null;
+let briefFilterText = '';   // sökfältet i tablisten (bara synligt på Översikt)
+let briefHiddenKey = '';    // senast sedda hidden_suppliers — se renderUpcoming
 
 async function loadBrief() {
   try {
@@ -1152,6 +1157,9 @@ function briefDismissBtn(key) {
 // flera sektioner.
 const briefOpenOrders = new Set();   // orderkort är stängda som default
 const briefOpenRows = new Set();     // artikelrader är stängda som default
+// Aktiv sökfras (satt av renderBrief) — sektioner och orderkort tvingas öppna
+// medan man söker så träffarna faktiskt syns; sparade lägen rörs inte.
+let briefSearchQ = '';
 
 // briefRowActions: åtgärderna i en utfälld artikelpanel — levererad, utkast
 // för just den positionen, avfärda.
@@ -1176,7 +1184,7 @@ function briefRowActions(r, section) {
 // oavsett sektionens knappuppsättning. Raderna har en tom svanscell i
 // knappkolumnens ställe.
 const briefIconCols = '2.5rem 2.5rem 2.5rem 1.25rem';
-const briefBtnCol = '15.5rem';
+const briefBtnCol = '17.5rem'; // rymmer Utkast + Alla levererade + 🚫 dölj leverantör
 const briefRowGrid = '1rem 7.5rem 4rem minmax(0,1fr) ' + briefIconCols + ' ' + briefBtnCol;
 const briefCertGrid = '1rem 7.5rem 4rem minmax(0,1fr) max-content max-content';
 const briefHeadGrid = '1rem minmax(0,1fr) 3.5rem ' + briefIconCols + ' ' + briefBtnCol;
@@ -1281,7 +1289,7 @@ function briefOrderCard(section, orderNr, g, orderButtons, rowFn) {
   const card = briefEl('div', 'rounded-md border border-slate-200 dark:border-slate-800');
   const cardKey = section + ':' + orderNr;
   card.setAttribute('data-order-card', cardKey);
-  const open = briefOpenOrders.has(cardKey);
+  const open = !!briefSearchQ || briefOpenOrders.has(cardKey);
 
   const head = briefEl('div', 'items-center gap-2 px-3 py-2 bg-slate-50 dark:bg-main cursor-pointer select-none transition-colors duration-100 ' + (open ? 'rounded-t-md' : 'rounded-md'));
   head.style.display = 'grid';
@@ -1308,6 +1316,12 @@ function briefOrderCard(section, orderNr, g, orderButtons, rowFn) {
   for (const b of orderButtons) {
     b.addEventListener('click', e => e.stopPropagation());
     btns.appendChild(b);
+  }
+  if (g.supplier) {
+    const hide = briefBtn('🚫', 'Dölj leverantör "' + g.supplier + '" — alla ordrar döljs i Översikt och Kommande inleveranser',
+      () => briefHideSupplier(g.supplier), 'btn-ghost btn-sm');
+    hide.addEventListener('click', e => e.stopPropagation());
+    btns.appendChild(hide);
   }
   head.appendChild(btns);
   card.appendChild(head);
@@ -1355,7 +1369,7 @@ const briefCollapsed = new Set(briefGroupKeys);
 // medvetet inte.
 function briefSection(title, key) {
   const sec = briefEl('div', 'pt-4');
-  const openNow = !briefCollapsed.has(key);
+  const openNow = !!briefSearchQ || !briefCollapsed.has(key);
   const head = briefEl('div', 'flex items-center gap-2 cursor-pointer select-none pb-2');
   const caret = briefCaret(openNow, 'text-xs text-slate-400 w-4');
   head.appendChild(caret);
@@ -1399,6 +1413,13 @@ function renderBrief(data) {
   body.innerHTML = '';
   const dismissed = new Set(b.dismissed || []);
   let dismissedCount = 0;
+  // Dolda leverantörer (delade med Kommande inleveranser) och fritextsöket
+  // filtrerar alla leveranssektioner. Samma matchfunktion som Kommande
+  // inleveranser — BriefRow bär hela inleveransraden med samma fältnamn.
+  const hiddenSuppliers = new Set(upcomingState.hidden_suppliers || []);
+  briefSearchQ = briefFilterText.trim().toLowerCase();
+  const q = briefSearchQ;
+  const briefRowVisible = r => !hiddenSuppliers.has(r.supplier_name) && upcomingMatches(r, q);
 
   // Rubrik: datum + när stommen byggdes + 🔄.
   const head = briefEl('div', 'flex items-center justify-between gap-2');
@@ -1447,7 +1468,7 @@ function renderBrief(data) {
     const hit = dismissed.has('expected:' + r.delivery_row_id);
     if (hit) dismissedCount++;
     return !hit;
-  });
+  }).filter(briefRowVisible);
   if (expected.length) {
     const expGroups = briefGroupByOrder(expected);
     const sec = briefSection('📦 Väntas idag (' + expected.length + ')', 'expected');
@@ -1468,7 +1489,7 @@ function renderBrief(data) {
     const hit = dismissed.has('overdue:' + r.delivery_row_id);
     if (hit) dismissedCount++;
     return !hit;
-  });
+  }).filter(briefRowVisible);
   if (overdue.length) {
     const odGroups = briefGroupByOrder(overdue);
     const sec = briefSection('⏰ Kom inte (' + overdue.length + ')', 'overdue');
@@ -1493,7 +1514,7 @@ function renderBrief(data) {
     const hit = dismissed.has('cert:' + r.delivery_row_id);
     if (hit) dismissedCount++;
     return !hit;
-  });
+  }).filter(briefRowVisible);
   if (certMissing.length) {
     const cmGroups = briefGroupByOrder(certMissing);
     const sec = briefSection('📄 Cert saknas (' + certMissing.length + ')', 'cert');
@@ -1508,7 +1529,14 @@ function renderBrief(data) {
   }
 
   // 🚚 Delleveranser (order med både levererade och väntande rader).
-  const partial = b.partial_orders || [];
+  // Leverantören hämtas ur kvarvarande rader (upcomingState) — samma källa
+  // som radvisningen nedan använder.
+  const partial = (b.partial_orders || []).filter(orderNr => {
+    const rest = undeliveredRows(orderNr);
+    const supplier = rest.length ? (rest[0].supplier_name || '') : '';
+    if (supplier && hiddenSuppliers.has(supplier)) return false;
+    return !q || (orderNr + ' ' + supplier).toLowerCase().includes(q);
+  });
   if (partial.length) {
     const sec = briefSection('🚚 Delleveranser (' + partial.length + ')', 'partial');
     for (const orderNr of partial) {
@@ -1532,17 +1560,35 @@ function renderBrief(data) {
 
   if (!anyDeliverySection) {
     body.appendChild(briefEl('div', 'text-center italic text-slate-400 py-4',
-      '🎉 Inget som väntar — inga leveranser idag, inga försenade och inga saknade cert.'));
+      q ? 'Inga träffar på "' + briefFilterText.trim() + '" bland dagens leveranspunkter.'
+        : '🎉 Inget som väntar — inga leveranser idag, inga försenade och inga saknade cert.'));
   }
   if (dismissedCount) {
     body.appendChild(briefEl('div', 'text-xs text-slate-400', dismissedCount + ' avfärdade idag — kommer tillbaka imorgon om läget kvarstår.'));
   }
+  // Dolda leverantörer syns inte i sektionerna ovan — en alltid synlig rad gör
+  // valet upptäckbart och ångerbart direkt härifrån.
+  if (hiddenSuppliers.size) {
+    const n = hiddenSuppliers.size;
+    const line = briefEl('div', 'text-xs text-slate-400',
+      '🚫 ' + n + (n > 1 ? ' dolda leverantörer' : ' dold leverantör') + ' — ');
+    const reset = briefEl('button', 'underline decoration-dotted hover:text-accent', 'visa igen');
+    reset.type = 'button';
+    reset.title = 'Visa alla dolda leverantörer igen (går också via ⚙️ Inställningar)';
+    reset.addEventListener('click', resetHiddenSuppliers);
+    line.appendChild(reset);
+    body.appendChild(line);
+  }
 
-  // ✅ Att göra — alltid med, inklusive formulär för nya punkter.
-  const tsec = briefSection('✅ Att göra' + ((b.tasks || []).length ? ' (' + b.tasks.length + ')' : ''), 'tasks');
+  // ✅ Att göra — alltid med, inklusive formulär för nya punkter. Vid aktiv
+  // sökning filtreras punkterna; matchar inget döljs hela sektionen.
+  const tasks = (b.tasks || []).filter(t =>
+    !q || (t.text + ' ' + (t.order_number || '')).toLowerCase().includes(q));
+  if (q && !tasks.length) { briefSyncToggleAll(); return; }
+  const tsec = briefSection('✅ Att göra' + (tasks.length ? ' (' + tasks.length + ')' : ''), 'tasks');
   const tlist = briefEl('div', 'space-y-1');
   const today = upcomingToday();
-  for (const t of (b.tasks || [])) {
+  for (const t of tasks) {
     const line = briefEl('div', 'flex items-center gap-2 rounded-md border border-slate-200 dark:border-slate-800 px-3 py-1.5');
     const cb = document.createElement('input');
     cb.type = 'checkbox';
@@ -1560,7 +1606,7 @@ function renderBrief(data) {
     line.appendChild(briefBtn('x', 'Ta bort utan att bocka av', () => briefTaskMutation('/api/tasks/delete', t.id), 'btn-ghost btn-sm'));
     tlist.appendChild(line);
   }
-  if (!(b.tasks || []).length) tlist.appendChild(briefEl('div', 'text-xs italic text-slate-400', 'Inget på listan'));
+  if (!tasks.length) tlist.appendChild(briefEl('div', 'text-xs italic text-slate-400', 'Inget på listan'));
   tsec.content.appendChild(tlist);
   const form = briefEl('div', 'flex items-center gap-2 pt-1');
   const ti = briefEl('input', 'input-field !py-1.5 flex-1');
@@ -1630,6 +1676,11 @@ function isOverdue(row) {
 function renderUpcoming(data) {
   if (data) upcomingState = data;
   const st = upcomingState;
+  // Dolda leverantörer filtrerar även Översikten — rita om den när listan
+  // ändras (t.ex. när /api/upcoming svarar efter /api/brief vid sidladdning,
+  // eller när en dold leverantör återställs från Inställningar).
+  const hiddenNow = (st.hidden_suppliers || []).join('\n');
+  if (hiddenNow !== briefHiddenKey) { briefHiddenKey = hiddenNow; renderBrief(); }
   const hiddenSuppliers = new Set(st.hidden_suppliers || []);
   const allRows = (st.rows || []).filter(r => !hiddenSuppliers.has(r.supplier_name));
   const hiddenCount = (st.rows || []).length - allRows.length;
@@ -2123,6 +2174,18 @@ async function hideSupplier(supplier, hidden) {
   } catch (e) { console.warn(e); }
 }
 
+// briefHideSupplier: 🚫 på Översiktens orderkort. confirm-gaten finns för att
+// ett feltryck annars tyst gömmer HELA leverantören (samma fälla som gjorde
+// att knappen i Kommande inleveranser lades bakom en toggle). Optimistisk
+// omritning direkt — serverns SSE-broadcast bekräftar strax efter.
+async function briefHideSupplier(supplier) {
+  if (!confirm('Dölj leverantör "' + supplier + '"?\n\nAlla ordrar från leverantören döljs i Översikt och Kommande inleveranser tills du visar dem igen (raden längst ner i Översikten eller ⚙️ Inställningar).')) return;
+  const list = upcomingState.hidden_suppliers = upcomingState.hidden_suppliers || [];
+  if (!list.includes(supplier)) list.push(supplier);
+  renderBrief();
+  await hideSupplier(supplier, true);
+}
+
 function toggleUpcomingHideSupplierBtn() {
   upcomingShowHideSupplierBtn = !upcomingShowHideSupplierBtn;
   renderUpcoming();
@@ -2419,6 +2482,11 @@ document.getElementById('queueFilter').addEventListener('input', e => {
 document.getElementById('upcomingFilter').addEventListener('input', e => {
   upcomingFilter = e.target.value;
   renderUpcoming();
+});
+
+document.getElementById('briefFilter').addEventListener('input', e => {
+  briefFilterText = e.target.value;
+  renderBrief();
 });
 
 function updateSortIndicators() {
