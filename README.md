@@ -157,3 +157,68 @@ testdata/             # testdata
 ```bash
 go test ./...
 ```
+
+---
+
+## V2 (`cmd/cert-renamer-v2`) — parallellt spår
+
+V2 är en omskrivning med omvänd datamodell: **databasen är sanningen**, inte
+filen. Ett cert som kommer in blir en levande rad + en stabil, aldrig omdöpt
+PDF i certlagret. Filnamnet är ett *levande förslag* som räknas om från
+effektiv data (rättelser > rå extraktion, bekräftade B-nummer > extraherade)
+och blir verklighet först när Rob trycker **Spara** — då skrivs den omdöpta
+kopian med inbäddad metadata till utmappen och certet fryses.
+
+Ett enda UI (Översikt) + Sickan-chat. Kö/Granskas/Inleverans finns inte i V2.
+
+### Köra båda binärerna parallellt
+
+V1 och V2 delar `config.json` (API-nyckel, Monitor-uppgifter, inbox) men har
+**separata databaser** (`cert-renamer.db` / `cert-renamer-v2.db`) och separata
+filytor (V2: `<inbox>/v2/store` + `<inbox>/v2/out`, överstyrbara via
+`v2_store_dir`/`v2_output_dir`).
+
+**Viktigt under parallelldrift:** båda binärernas mailintag pollar samma
+inbox. Kör bara EN av dem med intaget på (håll V1-workern "Av" när V2:s
+intag är igång) — annars kapplöper de om samma `.eml`-filer.
+
+Engångsimport av V1:s historik (matchningshistorik — gamla cert fortsätter
+matcha nya orderrader):
+
+```bash
+cert-renamer-v2 -import-v1   # läser approved/ + queue/ via inbäddad metadata; V1:s mappar röres inte
+```
+
+### Arkitekturregler (icke förhandlingsbara)
+
+1. **En enda skrivväg** — all mutation går genom `internal/v2/app`; HTTP,
+   Sickan och bakgrundsjobb är tunna adaptrar.
+2. **Ren domänkärna** — `internal/v2/domain` har noll IO-beroenden;
+   tillståndsmaskin, effective-values och namnbygge är tabelltestade.
+3. **Ports för sidoeffekter** — AI/Monitor/klocka bakom småinterfaces;
+   `go test ./...` kör grönt offline.
+4. **Crash-säker, idempotent Spara** — utfil + inbäddning först, DB-commit
+   sist; om-spar återanvänder utfilen via hash (aldrig `_2`-dubbletter).
+5. **Typade fel, mappade på ett ställe** — `ErrNotFound`→404,
+   `ErrFrozen`/`ErrTransition`→409, valideringsvarningar→422.
+6. **Migrations från dag 1** — `PRAGMA user_version` + numrerad lista.
+7. **Strukturerad logg** — `log/slog`; SSE-loggen matas därifrån.
+8. **CI-grind** — vet/build/test på varje push (`.github/workflows/ci.yml`).
+
+### V2-struktur
+
+```
+cmd/cert-renamer-v2/  # wiring + graceful shutdown; -import-v1
+internal/v2/
+├── domain/           # ren kärna: typer, tillståndsmaskin, effective, levande namn
+├── app/              # ENDA skrivvägen: guards, tx, rättelselogg, Spara
+├── store/            # migrations, dum CRUD, certlager + utmapp
+├── intake/           # eml → levande cert-rader (AI bakom port)
+├── monitorsync/      # daglig Monitor-refresh, matchning, cachad AI-dom
+├── sickan/           # bantad agent (~19 verktyg, tunna app-adaptrar)
+├── importer/         # -import-v1
+└── server/           # tunna handlers, SSE, ES-modul-UI utan byggsteg
+```
+
+Medvetet uteslutet i V2: inleveransregistrering (Monitor-UI-styrning),
+följesedelflödet, morgonbriefen (kan porteras senare vid behov).
