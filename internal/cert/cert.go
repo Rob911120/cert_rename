@@ -20,6 +20,26 @@ type Extraction struct {
 	CountryOfOrigin   string   `json:"country_of_origin"`
 	Confidence        string   `json:"confidence"`
 	Issues            []string `json:"issues"`
+
+	// V2-only-fält (ai.ExtractV2). V1:s ai.Extract saknar dessa i sitt tool-schema
+	// och lämnar dem som zero-values (ofarligt). Pekartyper är medvetna: nil skiljer
+	// "ej angivet på certet" från 0. impact_energy_j är vanlig float64 (0 = ej angivet).
+	IsLegible            bool     `json:"is_legible"`
+	IsUnaltered          bool     `json:"is_unaltered"`
+	NormSystem           string   `json:"norm_system"`
+	ImpactTempC          *float64 `json:"impact_temp_c"`
+	ImpactEnergyJ        float64  `json:"impact_energy_j"`
+	NormEdition          string   `json:"norm_edition"`
+	PedDirective         string   `json:"ped_directive"`
+	Cev                  *float64 `json:"cev"`
+	CarbonPct            *float64 `json:"carbon_pct"`
+	PPct                 *float64 `json:"p_pct"`
+	SPct                 *float64 `json:"s_pct"`
+	HasBendTest          bool     `json:"has_bend_test"`
+	HasIntergranularTest bool     `json:"has_intergranular_test"`
+	HasStampPhoto        bool     `json:"has_stamp_photo"`
+	MinTemperatureC      *float64 `json:"min_temperature_c"`
+	DeliveryCondition    string   `json:"delivery_condition"`
 }
 
 // restrictedOrigins är ursprungsländer materialet aldrig får komma från.
