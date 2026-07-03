@@ -1,0 +1,260 @@
+package monitorsync
+
+import (
+	"context"
+	"encoding/json"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"cert-renamer/internal/ai"
+	"cert-renamer/internal/monitor"
+	v1store "cert-renamer/internal/store"
+	"cert-renamer/internal/v2/app"
+	"cert-renamer/internal/v2/domain"
+	"cert-renamer/internal/v2/store"
+)
+
+// fakeERP serverar ett fast Monitor-fönster.
+type fakeERP struct {
+	rows     []monitor.PurchaseOrderRow
+	orders   map[monitor.ID]*monitor.PurchaseOrder
+	sups     map[monitor.ID]*monitor.Supplier
+	records  map[string][]monitor.ProductRecord // charge → records
+}
+
+func (f *fakeERP) GetUpcomingOrderRows(ctx context.Context, from, to time.Time) ([]monitor.PurchaseOrderRow, monitor.UpcomingFetchStats, error) {
+	return f.rows, monitor.UpcomingFetchStats{Fetched: len(f.rows)}, nil
+}
+func (f *fakeERP) GetPurchaseOrder(ctx context.Context, id monitor.ID) (*monitor.PurchaseOrder, error) {
+	return f.orders[id], nil
+}
+func (f *fakeERP) GetSupplier(ctx context.Context, id monitor.ID) (*monitor.Supplier, error) {
+	return f.sups[id], nil
+}
+func (f *fakeERP) GetPartsByIds(ctx context.Context, ids []monitor.ID) (map[monitor.ID]monitor.Part, error) {
+	return nil, nil
+}
+func (f *fakeERP) FindProductRecords(ctx context.Context, charge string) ([]monitor.ProductRecord, error) {
+	return f.records[charge], nil
+}
+
+// fakeJudge räknar anrop och svarar med fast dom.
+type fakeJudge struct {
+	calls int
+	ok    string
+}
+
+func (f *fakeJudge) ClassifyUpcoming(ctx context.Context, in ai.UpcomingClassifyInput) (*ai.UpcomingClassification, error) {
+	f.calls++
+	return &ai.UpcomingClassification{
+		RequiredMaterial: "S690QL", RequiredCert: "3.1",
+		OurMaterial: in.CertMaterial, MaterialOK: f.ok,
+		RequiredProductForm: "plåt", ProductFormOK: "ok", Notes: "test",
+	}, nil
+}
+
+func part(id monitor.ID, num, extra string) *monitor.Part {
+	p := monitor.Part{PartNumber: num, Description: "PL " + num, ExtraDescription: extra}
+	p.ID = id
+	// RequiresCert styrs av rå-fält vi inte sätter här; CertRequired sätts
+	// via raw i testerna genom att bygga Part med ReceivingInspectionType.
+	return &p
+}
+
+func mkRow(rowID, orderID, partID monitor.ID, p *monitor.Part, date string) monitor.PurchaseOrderRow {
+	r := monitor.PurchaseOrderRow{ParentOrderId: orderID, PartId: partID, Part: p,
+		DeliveryDate: date, RestQuantity: 6, Raw: json.RawMessage(`{}`)}
+	r.ID = rowID
+	return r
+}
+
+func testSync(t *testing.T, erp ERP, judge Judge) *Sync {
+	t.Helper()
+	dir := t.TempDir()
+	db, err := store.Open(filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	cfg := v1store.Config{InboxDir: dir, UpcomingWindowDays: 14, UpcomingBackDays: 365, UpcomingTime: "16:30"}
+	a := app.New(store.NewRepository(db), func() v1store.Config { return cfg },
+		func() time.Time { return time.Date(2026, 7, 3, 12, 0, 0, 0, time.UTC) }, nil)
+	return &Sync{App: a, ERP: erp, Judge: judge, Config: func() v1store.Config { return cfg }}
+}
+
+func seedLivingCert(t *testing.T, a *app.App, charge string, bNums []string) *domain.Cert {
+	t.Helper()
+	c := &domain.Cert{
+		PdfHash: "hash-" + charge, OriginalFilename: "x.pdf", StoredName: "s.pdf",
+		CertType: "3.1", Charge: charge, Material: "S690QL",
+		EnStandardPresent: true, IsEnglish: true, ProductForm: "plåt", Dimensions: "60",
+		BNumbers: bNums, ReceivedAt: "t",
+	}
+	if _, err := a.Repo.InsertCert(context.Background(), c); err != nil {
+		t.Fatal(err)
+	}
+	return c
+}
+
+func TestRefreshUpsertsAndPreservesBookkeeping(t *testing.T) {
+	erp := &fakeERP{
+		rows: []monitor.PurchaseOrderRow{
+			mkRow(101, 1, 11, part(11, "30-101241-001", "Plåt t=60 S690QL EN 10025-6"), "2026-07-10"),
+			mkRow(103, 1, 0, nil, "2026-07-11"), // operationsrad utan artikel — släpps
+		},
+		orders: map[monitor.ID]*monitor.PurchaseOrder{1: {OrderNumber: "B127575", BusinessContactId: 5}},
+		sups:   map[monitor.ID]*monitor.Supplier{5: {Name: "SSAB"}},
+	}
+	s := testSync(t, erp, nil)
+	ctx := context.Background()
+
+	n, err := s.Refresh(ctx)
+	if err != nil || n != 1 {
+		t.Fatalf("Refresh: n=%d err=%v", n, err)
+	}
+	row, err := s.App.Repo.GetOrderRow(ctx, 101)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row.OrderNumber != "B127575" || row.SupplierName != "SSAB" ||
+		row.ExtraDescription != "Plåt t=60 S690QL EN 10025-6" || row.DeliveryDate != "2026-07-10" {
+		t.Errorf("rad: %+v", row)
+	}
+
+	// Lokal bokföring + andra sync-cykeln
+	if err := s.App.MarkDelivered(ctx, []int64{101}, true); err != nil {
+		t.Fatal(err)
+	}
+	first, _ := s.App.Repo.GetOrderRow(ctx, 101)
+
+	if _, err := s.Refresh(ctx); err != nil {
+		t.Fatal(err)
+	}
+	row, _ = s.App.Repo.GetOrderRow(ctx, 101)
+	if !row.Delivered || row.FirstSeen != first.FirstSeen {
+		t.Error("delivered/first_seen ska överleva refresher")
+	}
+
+	// Rad som försvinner ur fönstret: kvar med in_monitor=0
+	erp.rows = nil
+	if _, err := s.Refresh(ctx); err != nil {
+		t.Fatal(err)
+	}
+	row, err = s.App.Repo.GetOrderRow(ctx, 101)
+	if err != nil {
+		t.Fatal("rad utanför fönstret raderades")
+	}
+	if row.InMonitor {
+		t.Error("in_monitor ska vara 0 när raden inte återkom")
+	}
+}
+
+func TestSuggestRefinesByChargeWithoutSilentFallback(t *testing.T) {
+	// Två rader på samma order (olika artiklar). Certets charge pekar via
+	// ProductRecords på artikel 22 → bara den raden föreslås, källa charge_part.
+	pA, pB := part(11, "ART-A", ""), part(22, "ART-B", "")
+	erp := &fakeERP{
+		rows: []monitor.PurchaseOrderRow{
+			mkRow(201, 1, 11, pA, "2026-07-10"),
+			mkRow(202, 1, 22, pB, "2026-07-10"),
+		},
+		orders:  map[monitor.ID]*monitor.PurchaseOrder{1: {OrderNumber: "B128293"}},
+		records: map[string][]monitor.ProductRecord{"43136": {{PartId: 22}}},
+	}
+	s := testSync(t, erp, nil)
+	ctx := context.Background()
+	c := seedLivingCert(t, s.App, "43136", []string{"B128293"})
+
+	if _, err := s.Refresh(ctx); err != nil {
+		t.Fatal(err)
+	}
+	links, _ := s.App.Repo.ListLinksForCert(ctx, c.ID)
+	if len(links) != 1 || links[0].DeliveryRowID != 202 || links[0].MatchSource != "auto_charge_part" {
+		t.Errorf("förfinad matchning: %+v", links)
+	}
+
+	// Utan charge-träff: BÅDA raderna föreslås (ingen tyst första-träffen)
+	c2 := seedLivingCert(t, s.App, "99999", []string{"B128293"})
+	if err := s.SuggestAll(ctx); err != nil {
+		t.Fatal(err)
+	}
+	links2, _ := s.App.Repo.ListLinksForCert(ctx, c2.ID)
+	if len(links2) != 2 {
+		t.Errorf("olöst tvetydighet ska ge alla kandidater: %+v", links2)
+	}
+}
+
+func TestJudgeCachedWithWidenedKey(t *testing.T) {
+	// CertRequired kräver rå-data; bygg raden med part_raw som ger RequiresCert.
+	// Enklast: skriv orderraden direkt med CertRequired=true.
+	s := testSync(t, &fakeERP{}, nil)
+	judge := &fakeJudge{ok: "mismatch"}
+	s.Judge = judge
+	ctx := context.Background()
+
+	if err := s.App.Repo.UpsertOrderRow(ctx, &domain.OrderRow{
+		DeliveryRowID: 301, OrderNumber: "B128293", PartID: 11, PartNumber: "30-101241-001",
+		ExtraDescription: "Plåt t=60 S690QL", CertRequired: true,
+	}, "t"); err != nil {
+		t.Fatal(err)
+	}
+	c := seedLivingCert(t, s.App, "43136", []string{"B128293"})
+	if _, err := s.App.SuggestLink(ctx, c.ID, 301, "B128293", "auto_b_number"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.JudgeAll(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if judge.calls != 1 {
+		t.Fatalf("judge-anrop = %d", judge.calls)
+	}
+	links, _ := s.App.Repo.ListLinksForCert(ctx, c.ID)
+	if links[0].MaterialOK != "mismatch" || links[0].RequiredMaterial != "S690QL" {
+		t.Errorf("dom: %+v", links[0])
+	}
+
+	// Samma data → cache-träff, inga nya anrop
+	if err := s.JudgeAll(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if judge.calls != 1 {
+		t.Errorf("cachen missade: %d anrop", judge.calls)
+	}
+
+	// BREDDAD NYCKEL: dimensionsrättelse ska invalidera cachen (V1-buggen)
+	if _, err := s.App.UpdateCertField(ctx, c.ID, "dimensions", "80", "rob"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.JudgeAll(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if judge.calls != 2 {
+		t.Errorf("dimensionsrättelse invaliderade inte cachen: %d anrop", judge.calls)
+	}
+}
+
+func TestScheduleFunctions(t *testing.T) {
+	tm := func(h, m int) time.Time { return time.Date(2026, 7, 3, h, m, 0, 0, time.UTC) }
+
+	if got := NextRun(tm(10, 0), "16:30"); !got.Equal(tm(16, 30)) {
+		t.Errorf("NextRun före måltid = %v", got)
+	}
+	if got := NextRun(tm(17, 0), "16:30"); !got.Equal(tm(16, 30).AddDate(0, 0, 1)) {
+		t.Errorf("NextRun efter måltid = %v", got)
+	}
+
+	if ShouldCatchUp(time.Time{}, tm(10, 0), "16:30") {
+		t.Error("före måltid: ingen catch-up")
+	}
+	if !ShouldCatchUp(time.Time{}, tm(17, 0), "16:30") {
+		t.Error("aldrig körd + måltid passerad: catch-up")
+	}
+	if ShouldCatchUp(tm(16, 45), tm(17, 0), "16:30") {
+		t.Error("redan körd efter måltid: ingen catch-up")
+	}
+	if !ShouldCatchUp(tm(16, 45).AddDate(0, 0, -1), tm(17, 0), "16:30") {
+		t.Error("senaste körning igår: catch-up")
+	}
+}
