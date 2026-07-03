@@ -372,6 +372,31 @@ function cmpTable(r, l, c) {
   </table>`;
 }
 
+// Filnamnskomponenter (Task 10): exakt de fem fält cert.BuildFilename bygger
+// namnet av, i namnets ordning — charge, produktform, mått, material(kod),
+// B-nr (se internal/v2/domain/name.go + internal/cert/cert.go:BuildFilename).
+// Varje komponent är en egen .editcell → POST /api/cert/update med det
+// befintliga fältnamnet (b_numbers har sin egen redan etablerade väg via
+// samma endpoint). Tom komponent varningsmarkeras (samma warn-ton som
+// .badge.warn) så det syns exakt vad som saknas för ett komplett namn;
+// icke-tomma visas neutralt. Anropas bara från nameLine()s levande gren —
+// frysta cert (status sparad) får varken namnrad eller komponentrad.
+function nameComponentsRow(c) {
+  const comps = [
+    ['Charge', 'charge', c.effective.charge],
+    ['Form', 'product_form', c.effective.product_form],
+    ['Mått', 'dimensions', c.effective.dimensions],
+    ['Material', 'material', c.effective.material],
+    ['B-nr', 'b_numbers', c.effective_b_numbers.join(', ')],
+  ];
+  return `<div class="namecomponents">${comps.map(([label, field, val]) => `
+    <span class="namecomp ${val ? '' : 'namecomp-empty'}">
+      <span class="namecomp-label">${esc(label)}</span>
+      <span class="editcell" data-edit="${field}" data-cert="${c.id}"
+            data-value="${esc(val)}" title="Redigera ${esc(label)}">${esc(val) || '—'}</span>
+    </span>`).join('')}</div>`;
+}
+
 // Levande filnamnsrad + Spara-knapp; fryst rendering efter spar.
 function nameLine(c) {
   if (c.status === 'sparad') {
@@ -380,6 +405,7 @@ function nameLine(c) {
   }
   const overridden = !!c.name_override;
   return `
+  ${nameComponentsRow(c)}
   <div class="nameline">
     <input class="livename ${overridden ? 'override' : ''}" data-namecert="${c.id}"
            data-proposed="${esc(c.proposed_filename)}" value="${esc(c.proposed_filename)}"

@@ -151,6 +151,17 @@ table.cmp { border-collapse: collapse; margin: 8px 0; min-width: 420px; }
 .copyline { font-family: var(--mono); font-size: 12.5px; margin: 4px 0; }
 .copyline .copy { cursor: pointer; padding: 0 4px; border-radius: 4px; }
 .copyline .copy:hover { background: var(--panel); }
+.namecomponents { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.namecomp {
+  display: inline-flex; align-items: center; gap: 5px;
+  border: 1px solid var(--border); border-radius: 999px; padding: 1px 10px; font-size: 12px;
+}
+.namecomp-label {
+  color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .04em;
+}
+.namecomp .editcell { font-family: var(--mono); }
+.namecomp.namecomp-empty { border-color: var(--warn); background: var(--warn-soft); color: var(--warn); }
+.namecomp.namecomp-empty .namecomp-label { color: var(--warn); }
 .nameline { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
 .nameline input.livename {
   flex: 1; min-width: 280px; font-family: var(--mono); font-size: 12.5px;
