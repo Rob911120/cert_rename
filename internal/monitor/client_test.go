@@ -458,6 +458,14 @@ func TestGetPartsByIds_BatchesAndMaps(t *testing.T) {
 			if !strings.Contains(f, "Id eq ") {
 				t.Errorf("$filter saknar 'Id eq': %q", f)
 			}
+			// Parts ska expandera de cert-bärande navigeringarna (stålsort,
+			// kommentarer, hyperlänkar, ritningar).
+			exp := r.URL.Query().Get("$expand")
+			for _, want := range []string{"CurrentAlloy", "ReceivingInstruction", "HyperLinks", "Drawings"} {
+				if !strings.Contains(exp, want) {
+					t.Errorf("Parts $expand %q saknar %q", exp, want)
+				}
+			}
 			var parts []string
 			for _, tok := range strings.Fields(f) {
 				if n, err := strconv.Atoi(tok); err == nil {
@@ -517,6 +525,9 @@ func TestEnumValue_Unmarshal(t *testing.T) {
 }
 
 func TestPart_RequiresCert(t *testing.T) {
+	// Doc-verifierade enum-värden (Inventory.Part.html):
+	// ReceivingInspectionType {None:0, Always:1, VariableInspection:2}
+	// TraceabilityMode {None:0, Batch:1, Individual:2, IndividualOnlyWithdrawal:4}
 	cases := []struct {
 		rit, tm EnumValue
 		want    bool
@@ -524,11 +535,18 @@ func TestPart_RequiresCert(t *testing.T) {
 		{"None", "", false},
 		{"0", "0", false},
 		{"", "", false},
+		{"None", "None", false},
 		{"Always", "", true},
+		{"1", "", true}, // Always som tal
 		{"VariableInspection", "", true},
+		{"2", "None", true}, // VariableInspection som tal
 		{"None", "Batch", true},
-		{"None", "2", true},
-		{"3", "", true},
+		{"None", "1", true}, // Batch som tal
+		{"None", "2", true}, // Individual
+		{"None", "Individual", true},
+		{"None", "IndividualOnlyWithdrawal", true}, // spårbarhet aktiv
+		{"None", "4", true},                        // IndividualOnlyWithdrawal som tal
+		{"3", "", true},                            // okänt framtida RIT-värde ⇒ försiktig ja
 	}
 	for _, tc := range cases {
 		p := Part{ReceivingInspectionType: tc.rit, TraceabilityMode: tc.tm}
@@ -579,6 +597,175 @@ func TestOrderRow_DecodesInlinePartAndCapturesRaw(t *testing.T) {
 	}
 	if len(part.Raw) == 0 || !strings.Contains(string(part.Raw), "ExtraDescription") {
 		t.Errorf("part.Raw inte fångad")
+	}
+}
+
+// Radnivåns nya cert-bärande fält: expanderade Comment-referenser (RawText) plus
+// skalära godsmärke/notering/leverantörsritning + FreeText (OrderRowType=4).
+// Doc: Purchase.PurchaseOrderRow.html + Common.Comment.html.
+func TestOrderRow_DecodesCommentRefsAndRowFields(t *testing.T) {
+	body := []byte(`{
+		"Id": "21",
+		"ParentOrderId": "100",
+		"PartId": "5",
+		"OrderRowType": 4,
+		"RowsGoodsLabel": "MARK-42",
+		"RowNotes": "Ankomstkontroll kravs",
+		"SupplierDrawingNumber": "SD-999",
+		"SupplierRevisionNumber": "B",
+		"FreeText": "Fri text rad",
+		"ReceivingMessage": {"Id": "7", "RawText": "Medskickas: cert 3.1"},
+		"ReceivingInspectionInstruction": {"Id": "8", "RawText": "Kontrollera charge"}
+	}`)
+	var row PurchaseOrderRow
+	if err := json.Unmarshal(body, &row); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if row.RowsGoodsLabel != "MARK-42" || row.RowNotes != "Ankomstkontroll kravs" {
+		t.Errorf("godsmarke/notering fel: %+v", row)
+	}
+	if row.SupplierDrawingNumber != "SD-999" || row.SupplierRevisionNumber != "B" {
+		t.Errorf("leverantorsritning fel: %+v", row)
+	}
+	if row.FreeText != "Fri text rad" {
+		t.Errorf("FreeText = %q", row.FreeText)
+	}
+	if row.ReceivingMessage == nil || row.ReceivingMessage.RawText != "Medskickas: cert 3.1" {
+		t.Errorf("ReceivingMessage fel: %+v", row.ReceivingMessage)
+	}
+	if row.ReceivingInspectionInstruction == nil || row.ReceivingInspectionInstruction.RawText != "Kontrollera charge" {
+		t.Errorf("ReceivingInspectionInstruction fel: %+v", row.ReceivingInspectionInstruction)
+	}
+}
+
+// Artikelns nya fält: CurrentAlloy (stålsort), Comment-referenser, dimensioner
+// (meter/kg), godsslag/kategori, HyperLinks, Drawings, ExtraFields (rått).
+// Doc: Inventory.Part.html + Inventory.Alloy/HyperLink, Manufacturing.Drawing,
+// Common.Comment/ExtraField.
+func TestPart_DecodesAlloyDimensionsLinksDrawings(t *testing.T) {
+	body := []byte(`{
+		"Id": "5",
+		"PartNumber": "PL-S355-10",
+		"Length": 6.0,
+		"Width": 1.5,
+		"Height": 0.01,
+		"WeightPerUnit": 78.5,
+		"GoodsType": "Stalplat",
+		"CategoryString": "RAMATERIAL",
+		"CurrentAlloy": {"Id": "3", "Code": "S355J2", "Description": "Konstruktionsstal"},
+		"ReceivingInstruction": {"Id": "9", "RawText": "Mat tjocklek"},
+		"PurchaseComment": {"Id": "10", "RawText": "Kop bara med cert"},
+		"Comment": {"Id": "11", "RawText": "Allman notis"},
+		"HyperLinks": [
+			{"Id": "1", "Link": "https://ex.se/cert.pdf", "Description": "Cert"},
+			{"Id": "2", "Link": "https://ex.se/ritning", "Description": "Ritning"}
+		],
+		"Drawings": [{"Id": "4", "DrawingNumber": "RIT-1001"}],
+		"ExtraFields": [{"Id": "12", "Identifier": "CERTKRAV", "StringValue": "3.1"}]
+	}`)
+	var p Part
+	if err := json.Unmarshal(body, &p); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if p.CurrentAlloy == nil || p.CurrentAlloy.Code != "S355J2" || p.CurrentAlloy.Description != "Konstruktionsstal" {
+		t.Errorf("CurrentAlloy fel: %+v", p.CurrentAlloy)
+	}
+	if p.Length != 6.0 || p.Width != 1.5 || p.Height != 0.01 || p.WeightPerUnit != 78.5 {
+		t.Errorf("dimensioner fel: L=%v W=%v H=%v vikt=%v", p.Length, p.Width, p.Height, p.WeightPerUnit)
+	}
+	if p.GoodsType != "Stalplat" || p.CategoryString != "RAMATERIAL" {
+		t.Errorf("godsslag/kategori fel: %q / %q", p.GoodsType, p.CategoryString)
+	}
+	if p.ReceivingInstruction == nil || p.ReceivingInstruction.RawText != "Mat tjocklek" {
+		t.Errorf("ReceivingInstruction fel: %+v", p.ReceivingInstruction)
+	}
+	if p.PurchaseComment == nil || p.PurchaseComment.RawText != "Kop bara med cert" {
+		t.Errorf("PurchaseComment fel: %+v", p.PurchaseComment)
+	}
+	if p.Comment == nil || p.Comment.RawText != "Allman notis" {
+		t.Errorf("Comment fel: %+v", p.Comment)
+	}
+	if len(p.HyperLinks) != 2 || p.HyperLinks[0].Link != "https://ex.se/cert.pdf" || p.HyperLinks[0].Description != "Cert" {
+		t.Errorf("HyperLinks fel: %+v", p.HyperLinks)
+	}
+	if len(p.Drawings) != 1 || p.Drawings[0].DrawingNumber != "RIT-1001" {
+		t.Errorf("Drawings fel: %+v", p.Drawings)
+	}
+	// ExtraFields sparas rått — hela arrayen ska finnas kvar för senare inventering.
+	if len(p.ExtraFields) == 0 || !strings.Contains(string(p.ExtraFields), "CERTKRAV") {
+		t.Errorf("ExtraFields inte fangade ratt: %s", p.ExtraFields)
+	}
+	// Raw ska fortfarande fångas (bakåtkompatibilitet).
+	if len(p.Raw) == 0 || !strings.Contains(string(p.Raw), "CurrentAlloy") {
+		t.Errorf("Part.Raw inte fangad")
+	}
+}
+
+// GetUpcomingOrderRows ska expandera radnivåns Comment-referenser samt Part med
+// nästlad expand av dess cert-navigeringar (stålsort, kommentarer, länkar, ritningar).
+func TestGetUpcomingOrderRows_ExpandsCertNavigations(t *testing.T) {
+	var gotExpand string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/001.1/login"):
+			_, _ = w.Write([]byte(`{"SessionId":"s1"}`))
+		case strings.Contains(r.URL.Path, "PurchaseOrderRows"):
+			gotExpand = r.URL.Query().Get("$expand")
+			_, _ = w.Write([]byte(`{"value":[]}`))
+		default:
+			http.Error(w, "unexpected "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL)
+	_ = c.Login(context.Background(), "kalle", "hemligt")
+	from := time.Date(2026, 6, 25, 0, 0, 0, 0, time.UTC)
+	if _, _, err := c.GetUpcomingOrderRows(context.Background(), from, from.AddDate(0, 0, 14)); err != nil {
+		t.Fatalf("GetUpcomingOrderRows: %v", err)
+	}
+	for _, want := range []string{
+		"ReceivingMessage", "ReceivingInspectionInstruction",
+		"Part($expand=", "CurrentAlloy", "HyperLinks", "Drawings",
+		"ReceivingInstruction", "PurchaseComment",
+	} {
+		if !strings.Contains(gotExpand, want) {
+			t.Errorf("$expand %q saknar %q", gotExpand, want)
+		}
+	}
+}
+
+// GetPurchaseOrder ska expandera ExternalComment och avkoda dess RawText samt de
+// nya skalära orderfälten (GoodsLabel, BusinessContactOrderNumber).
+func TestGetPurchaseOrder_ExpandsExternalComment(t *testing.T) {
+	var gotExpand string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/001.1/login"):
+			_, _ = w.Write([]byte(`{"SessionId":"s1"}`))
+		case strings.HasSuffix(r.URL.Path, "/Purchase/PurchaseOrders"):
+			gotExpand = r.URL.Query().Get("$expand")
+			_, _ = w.Write([]byte(`{"value":[{"Id":1,"OrderNumber":"PO-1","GoodsLabel":"GL-7","BusinessContactOrderNumber":"BCN-9","ExternalComment":{"Id":5,"RawText":"Extern notis"}}]}`))
+		default:
+			http.Error(w, "unexpected "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL)
+	_ = c.Login(context.Background(), "kalle", "hemligt")
+	po, err := c.GetPurchaseOrder(context.Background(), 1)
+	if err != nil {
+		t.Fatalf("GetPurchaseOrder: %v", err)
+	}
+	if !strings.Contains(gotExpand, "ExternalComment") {
+		t.Errorf("$expand %q saknar ExternalComment", gotExpand)
+	}
+	if po == nil || po.GoodsLabel != "GL-7" || po.BusinessContactOrderNumber != "BCN-9" {
+		t.Fatalf("order-falt fel: %+v", po)
+	}
+	if po.ExternalComment == nil || po.ExternalComment.RawText != "Extern notis" {
+		t.Errorf("ExternalComment fel: %+v", po.ExternalComment)
 	}
 }
 

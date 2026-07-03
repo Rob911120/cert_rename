@@ -19,6 +19,47 @@ const (
 // upcomingPageSize är $top per sida vid hämtning av kommande inleveranser.
 const upcomingPageSize = 200
 
+// Cert-bärande $expand-segment, doc-verifierade mot html_full/ (Inventory.Part,
+// Purchase.PurchaseOrderRow, Purchase.PurchaseOrder, Common.Comment, Inventory.Alloy,
+// Inventory.HyperLink, Manufacturing.Drawing, Common.ExtraField). Comment-referenser
+// och nästlade samlingar MÅSTE expanderas explicit för att deras innehåll ska följa
+// med i svaret.
+//
+// OBS: hela expand-strängen (särskilt den nästlade Part-expanden i GetUpcomingOrderRows)
+// är ännu INTE verifierad mot en live-Monitor-server. Om servern avvisar den är
+// fallbacken att batch-hämta Comments separat via deras id:n — den är medvetet INTE
+// implementerad (YAGNI). Listorna nedan hålls per entitet så de är lätta att justera.
+var (
+	// partExpandFields — Part-nivåns cert-navigeringar. Används både nästlat under
+	// Part i GetUpcomingOrderRows och direkt i GetPartsByIds.
+	partExpandFields = []string{
+		"CurrentAlloy",         // Alloy: Code + Description (stålsort)
+		"ReceivingInstruction", // Comment: RawText (mottagningsinstruktion)
+		"PurchaseComment",      // Comment: RawText (inköpskommentar)
+		"Comment",              // Comment: RawText (artikelkommentar)
+		"HyperLinks",           // HyperLink: Link + Description
+		"Drawings",             // Drawing: DrawingNumber
+		"ExtraFields",          // rå ExtraFields-array (Expandable i API:t)
+	}
+	// orderRowCommentExpands — radnivåns Comment-referenser.
+	orderRowCommentExpands = []string{
+		"ReceivingMessage",               // Comment: RawText (godsmeddelande)
+		"ReceivingInspectionInstruction", // Comment: RawText (mottagningskontroll)
+	}
+)
+
+// partExpandClause returnerar Part-nivåns $expand-innehåll som en kommaseparerad
+// sträng (för nästling under Part).
+func partExpandClause() string { return strings.Join(partExpandFields, ",") }
+
+// upcomingRowsExpands bygger $expand-segmenten för GetUpcomingOrderRows: radnivåns
+// Comment-referenser samt Part med nästlad expand av dess cert-navigeringar
+// (t.ex. Part($expand=CurrentAlloy,...)).
+func upcomingRowsExpands() []string {
+	segs := append([]string{}, orderRowCommentExpands...)
+	return append(segs, "Part($expand="+partExpandClause()+")")
+}
+
 // partsBatchSize är hur många artikel-ID:n som slås ihop per "Id eq … or …"-anrop.
 const partsBatchSize = 20
 
@@ -47,8 +88,11 @@ func (c *Client) FindPurchaseOrderByNumber(ctx context.Context, orderNumber stri
 }
 
 // GetPurchaseOrder hämtar en inköpsorder via dess Id. nil utan fel om saknas.
+// ExternalComment ($expand) tas med så den externa kommentaren (Comment.RawText)
+// följer med — övriga cert-bärande orderfält (GoodsLabel, BusinessContactOrderNumber)
+// är skalära och kommer ändå.
 func (c *Client) GetPurchaseOrder(ctx context.Context, id ID) (*PurchaseOrder, error) {
-	q := NewQuery().Filter(fmt.Sprintf("Id eq %d", id)).Top(1)
+	q := NewQuery().Filter(fmt.Sprintf("Id eq %d", id)).Expand("ExternalComment").Top(1)
 	orders, err := c.ListPurchaseOrders(ctx, q)
 	if err != nil {
 		return nil, err
@@ -112,8 +156,10 @@ func (c *Client) FindProductRecords(ctx context.Context, charge string) ([]Produ
 // GetUpcomingOrderRows hämtar kommande inleveranser i fönstret [from, to] direkt
 // från PurchaseOrderRows: orderrader som inte är fullt levererade (RestQuantity
 // gt 0) och vars DeliveryDate ligger i intervallet. Artikeln kommer inline via
-// $expand=Part (eliminerar ett GetPart-anrop per rad). Paginerat via getAllPages
-// (loopar tills tom sida / följer @odata.nextLink).
+// $expand=Part (eliminerar ett GetPart-anrop per rad), nu med nästlad expand av
+// artikelns cert-navigeringar plus radnivåns Comment-referenser (se
+// upcomingRowsExpands). Paginerat via getAllPages (loopar tills tom sida / följer
+// @odata.nextLink).
 //
 // Steg-0-dumpen bekräftade valet av endpoint: PurchaseOrderDeliveryRows bar bara
 // REDAN inlevererat gods (tomt DeliveryDate, ArrivedQuantity alltid >0, ingen
@@ -129,7 +175,7 @@ func (c *Client) FindProductRecords(ctx context.Context, charge string) ([]Produ
 func (c *Client) GetUpcomingOrderRows(ctx context.Context, from, to time.Time) ([]PurchaseOrderRow, UpcomingFetchStats, error) {
 	q := NewQuery().
 		Filter("RestQuantity gt 0").
-		Expand("Part").
+		Expand(upcomingRowsExpands()...).
 		OrderBy("DeliveryDate asc")
 	rows, err := getAllPages[PurchaseOrderRow](ctx, c, pathPurchaseOrderRows, q, upcomingPageSize)
 	if err != nil {
@@ -191,7 +237,7 @@ func (c *Client) GetPartsByIds(ctx context.Context, ids []ID) (map[ID]Part, erro
 		for _, id := range chunk {
 			clauses = append(clauses, fmt.Sprintf("Id eq %d", id))
 		}
-		q := NewQuery().Filter(strings.Join(clauses, " or ")).Top(len(chunk))
+		q := NewQuery().Filter(strings.Join(clauses, " or ")).Expand(partExpandFields...).Top(len(chunk))
 		var parts []Part
 		if err := c.getList(ctx, pathParts, q, &parts); err != nil {
 			return out, err
