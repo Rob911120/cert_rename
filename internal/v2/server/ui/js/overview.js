@@ -168,6 +168,8 @@ function artRow(r) {
       ${!r.in_monitor ? '<span class="badge" title="Raden fanns inte i senaste Monitor-hämtningen">utanför fönstret</span>' : ''}
     </div>
     ${r.extra_description ? `<div class="extra-desc">Extra benämning: ${esc(r.extra_description)}</div>` : ''}
+    ${reqTextSection(r)}
+    ${drawingSection(r)}
     ${activeLinks.map((l) => linkBlock(r, l)).join('')}
     ${r.cert_required && !activeLinks.length ? '<div class="hint">Inget cert kopplat ännu.</div>' : ''}
     ${notesBlock('order_row', r.delivery_row_id, r.notes, r.order_number, r.part_number)}
@@ -207,6 +209,62 @@ function linkBlock(r, l) {
     ${l.ai_notes ? `<div class="hint">🤖 ${esc(l.ai_notes)}</div>` : ''}
     ${nameLine(c)}
   </div>`;
+}
+
+// ---------------------------------------------------------------------------
+// Nya order_rows-fält (Task 6): rå kravtext + artikeldata från Monitor.
+// AI-parsning av kravtexterna kommer i en senare task — här visas de bara
+// oförädlade. Kompakt sektion, gömd helt om allt är tomt.
+// ---------------------------------------------------------------------------
+
+function alloyText(r) {
+  if (r.alloy_code && r.alloy_description) return `${r.alloy_code} — ${r.alloy_description}`;
+  return r.alloy_code || r.alloy_description || '';
+}
+
+function reqTextSection(r) {
+  const parts = [
+    ['Godsmeddelande', r.receiving_message],
+    ['Mottagningskontroll (rad)', r.receiving_inspection_instruction],
+    ['Mottagningsinstruktion (artikel)', r.part_receiving_instruction],
+    ['Godsmärke (rad)', r.row_goods_label],
+    ['Godsmärke (order)', r.order_goods_label],
+    ['Radnotering', r.row_notes],
+    ['Fritext', r.free_text],
+    ['Extern kommentar', r.external_comment],
+    ['Legering', alloyText(r)],
+  ].filter(([, v]) => v);
+  if (!parts.length) return '';
+  return `<div class="copyline">${parts.map(([label, v]) => `${label} <span class="muted">${esc(v)}</span>`).join(' · ')}</div>`;
+}
+
+// Ritningslänk: http(s) → klickbar länk (ny flik); file:// eller UNC-sökväg
+// (\\server\share\...) → kopierbar sökväg, eftersom webbläsare blockerar
+// file:// från http-sidor. Ritningsnummer (Monitors + leverantörens) visas
+// som text intill när de finns.
+function drawingSection(r) {
+  const hyperlinks = r.hyperlinks || [];
+  const nums = [];
+  if (r.drawing_numbers) nums.push(r.drawing_numbers);
+  if (r.supplier_drawing_number) {
+    nums.push(r.supplier_drawing_number + (r.supplier_revision_number ? ' rev ' + r.supplier_revision_number : ''));
+  }
+  if (!hyperlinks.length && !nums.length) return '';
+  const bits = [];
+  if (nums.length) bits.push(`Ritningsnr <span class="muted">${esc(nums.join(' · '))}</span>`);
+  bits.push(...hyperlinks.map(drawingLinkItem));
+  return `<div class="copyline">${bits.join(' · ')}</div>`;
+}
+
+function drawingLinkItem(h) {
+  const label = esc(h.description || 'Ritning');
+  const link = h.link || '';
+  if (/^https?:\/\//i.test(link)) {
+    return `<a href="${esc(link)}" target="_blank" rel="noopener">🔗 ${label}</a>`;
+  }
+  // file:// eller UNC — inte klickbar (webbläsaren blockerar den från en
+  // http-sida); span.copy kopierar EXAKT sökvägen (utan ikonen) vid klick.
+  return `${label}: 📋 <span class="copy" data-action="copy" title="Kopiera sökväg">${esc(link)}</span>`;
 }
 
 // ---------------------------------------------------------------------------

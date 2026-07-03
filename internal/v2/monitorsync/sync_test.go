@@ -150,6 +150,95 @@ func TestRefreshUpsertsAndPreservesBookkeeping(t *testing.T) {
 	}
 }
 
+// TestBuildOrderRowMapsCertBearingFields bevisar att Task 6:s cert-bärande
+// fält (radens/orderns/artikelns kravtexter + legering + hyperlinks/ritningar)
+// landar korrekt i domain.OrderRow — nested Comment-pekare, Alloy, HyperLinks
+// och Drawings inkluderade. Ett andra fall bevisar nil-säkerheten när inget
+// av detta är expanderat/satt.
+func TestBuildOrderRowMapsCertBearingFields(t *testing.T) {
+	orders := map[monitor.ID]orderInfo{
+		1: {
+			OrderNumber: "B127575", SupplierName: "SSAB",
+			GoodsLabel: "ordergodsmärke", ExternalComment: "extern kommentar",
+			BusinessContactOrderNumber: "LEV-9",
+		},
+	}
+	p := monitor.Part{
+		PartNumber: "30-101241-001", Description: "PL 060 S690QL",
+		CurrentAlloy:         &monitor.Alloy{Code: "S690QL", Description: "Höghållfast stål"},
+		ReceivingInstruction: &monitor.Comment{RawText: "mottagningsinstruktion"},
+		PurchaseComment:      &monitor.Comment{RawText: "inköpskommentar"},
+		Comment:              &monitor.Comment{RawText: "artikelkommentar"},
+		Length:               6, Width: 2, Height: 0.06, WeightPerUnit: 850,
+		GoodsType: "Plåt", CategoryString: "Stål",
+		HyperLinks:  []monitor.HyperLink{{Link: "file://server/ritning.pdf", Description: "Ritning"}},
+		Drawings:    []monitor.Drawing{{DrawingNumber: "D-100"}, {DrawingNumber: "D-101"}},
+		ExtraFields: json.RawMessage(`[{"Type":1}]`),
+	}
+	p.ID = 11
+	row := monitor.PurchaseOrderRow{
+		ParentOrderId: 1, PartId: 11, Part: &p,
+		DeliveryDate: "2026-07-10", RestQuantity: 6, Raw: json.RawMessage(`{}`),
+		RowsGoodsLabel: "radgodsmärke", RowNotes: "radnotering",
+		SupplierDrawingNumber: "SUP-D1", SupplierRevisionNumber: "A",
+		FreeText:                       "fritext",
+		ReceivingMessage:               &monitor.Comment{RawText: "godsmeddelande"},
+		ReceivingInspectionInstruction: &monitor.Comment{RawText: "mottagningskontroll"},
+	}
+	row.ID = 101
+
+	got := buildOrderRow(row, orders, nil)
+
+	if got.ReceivingMessage != "godsmeddelande" || got.ReceivingInspectionInstruction != "mottagningskontroll" {
+		t.Errorf("radkommentarer: %+v", got)
+	}
+	if got.RowGoodsLabel != "radgodsmärke" || got.RowNotes != "radnotering" ||
+		got.SupplierDrawingNumber != "SUP-D1" || got.SupplierRevisionNumber != "A" || got.FreeText != "fritext" {
+		t.Errorf("radfält: %+v", got)
+	}
+	if got.OrderGoodsLabel != "ordergodsmärke" || got.ExternalComment != "extern kommentar" ||
+		got.BusinessContactOrderNumber != "LEV-9" {
+		t.Errorf("orderfält: %+v", got)
+	}
+	if got.AlloyCode != "S690QL" || got.AlloyDescription != "Höghållfast stål" {
+		t.Errorf("legering: %+v", got)
+	}
+	if got.PartReceivingInstruction != "mottagningsinstruktion" || got.PartPurchaseComment != "inköpskommentar" ||
+		got.PartComment != "artikelkommentar" {
+		t.Errorf("artikelkommentarer: %+v", got)
+	}
+	if got.PartLength != 6 || got.PartWidth != 2 || got.PartHeight != 0.06 || got.WeightPerUnit != 850 {
+		t.Errorf("dimensioner: %+v", got)
+	}
+	if got.GoodsType != "Plåt" || got.CategoryString != "Stål" {
+		t.Errorf("godsslag/kategori: %+v", got)
+	}
+	if got.ExtraFieldsRaw != `[{"Type":1}]` {
+		t.Errorf("ExtraFieldsRaw = %q", got.ExtraFieldsRaw)
+	}
+	if len(got.Hyperlinks) != 1 || got.Hyperlinks[0].Link != "file://server/ritning.pdf" || got.Hyperlinks[0].Description != "Ritning" {
+		t.Errorf("Hyperlinks: %+v", got.Hyperlinks)
+	}
+	if got.DrawingNumbers != "D-100, D-101" {
+		t.Errorf("DrawingNumbers = %q", got.DrawingNumbers)
+	}
+
+	// Nil-säkert: rad utan artikel/kommentarer ska inte panika och lämna
+	// de nya fälten tomma.
+	bare := monitor.PurchaseOrderRow{ParentOrderId: 1, PartId: 0, Raw: json.RawMessage(`{}`)}
+	bare.ID = 102
+	gotBare := buildOrderRow(bare, orders, nil)
+	if gotBare.ReceivingMessage != "" || gotBare.ReceivingInspectionInstruction != "" ||
+		gotBare.AlloyCode != "" || gotBare.PartReceivingInstruction != "" ||
+		len(gotBare.Hyperlinks) != 0 || gotBare.DrawingNumbers != "" {
+		t.Errorf("nil-säkert fall ska lämna cert-bärande fält tomma: %+v", gotBare)
+	}
+	// Orderfälten hämtas oavsett artikel (de kommer från PurchaseOrder).
+	if gotBare.OrderGoodsLabel != "ordergodsmärke" {
+		t.Errorf("orderfält ska sättas även utan artikel: %+v", gotBare)
+	}
+}
+
 func TestSuggestRefinesByChargeWithoutSilentFallback(t *testing.T) {
 	// Två rader på samma order (olika artiklar). Certets charge pekar via
 	// ProductRecords på artikel 22 → bara den raden föreslås, källa charge_part.

@@ -163,6 +163,44 @@ type OrderRow struct {
 	InMonitor        bool
 	FirstSeen        string
 	LastSeen         string
+
+	// Cert-bärande fält (Task 6): rå kravtext + artikeldata hämtade av
+	// internal/monitor (Task 5). AI-parsning av kravtexterna kommer i en
+	// senare task — här bärs de bara oförändrade hela vägen till UI:t.
+	ReceivingMessage               string // radens godsmeddelande (Comment.RawText)
+	ReceivingInspectionInstruction string // radens mottagningskontroll (Comment.RawText)
+	RowGoodsLabel                  string // radens godsmärke
+	RowNotes                       string
+	SupplierDrawingNumber          string
+	SupplierRevisionNumber         string
+	FreeText                       string // fritextradens råtext (OrderRowType=4)
+
+	OrderGoodsLabel            string // inköpsorderns godsmärke
+	ExternalComment            string // inköpsorderns externa kommentar (Comment.RawText)
+	BusinessContactOrderNumber string // leverantörens ordernummer
+
+	AlloyCode                string // artikelns stålsort/legering
+	AlloyDescription         string
+	PartReceivingInstruction string  // artikelns mottagningsinstruktion (Comment.RawText)
+	PartPurchaseComment      string  // artikelns inköpskommentar (Comment.RawText)
+	PartComment              string  // artikelns kommentar (Comment.RawText)
+	PartLength               float64 // meter
+	PartWidth                float64 // meter
+	PartHeight               float64 // meter
+	WeightPerUnit            float64 // kg
+	GoodsType                string
+	CategoryString           string
+	ExtraFieldsRaw           string      // rå ExtraFields-JSON från Monitor ('' om saknas)
+	Hyperlinks               []Hyperlink // artikelns länkar (typiskt ritningar)
+	DrawingNumbers           string      // Drawings[].DrawingNumber, kommaseparerat
+}
+
+// Hyperlink är en artikellänk (typiskt en ritning) från Monitor. Persisteras
+// som JSON-TEXT i store-lagret (marshal/unmarshal bor där, inte här — domain
+// har bara den rena typen, precis som Correction ovan).
+type Hyperlink struct {
+	Link        string `json:"link"`
+	Description string `json:"description"`
 }
 
 // Link är arbetsläget för ett cert↔orderrad-par. DeliveryRowID kan vara 0 när

@@ -72,3 +72,65 @@ func Test_Migrate_AddsCertExtractionFieldsToExistingDB(t *testing.T) {
 		t.Errorf("strängfält ska defaulta till tomt: %+v", got)
 	}
 }
+
+// Test_Migrate_AddsOrderRowCertFieldsToExistingDB speglar en verklig
+// cert-renamer-v2.db skapad före Task 6: order_rows saknar de nya
+// cert-bärande fälten (receiving_message m.fl.) som internal/monitor nu
+// hämtar. migrate() ska lägga till dem med neutrala defaults utan att tappa
+// den befintliga raden. Samma "bygg gammalt schema minus sista steget"-mönster
+// som cert-testet ovan.
+func Test_Migrate_AddsOrderRowCertFieldsToExistingDB(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "old-rows.db")
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer db.Close()
+
+	oldVersion := len(migrations) - 1
+	for i := 0; i < oldVersion; i++ {
+		if _, err := db.Exec(migrations[i]); err != nil {
+			t.Fatalf("gammalt schema, migration %d: %v", i, err)
+		}
+	}
+	if _, err := db.Exec(fmt.Sprintf("PRAGMA user_version = %d", oldVersion)); err != nil {
+		t.Fatalf("stämpla user_version: %v", err)
+	}
+
+	// Befintlig rad, skapad före Task 6 — de nya kolumnerna finns inte än.
+	if _, err := db.Exec(`INSERT INTO order_rows
+		(delivery_row_id, purchase_order_id, order_number, part_id, first_seen, last_seen)
+		VALUES (42, 7, 'B127575', 11, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')`); err != nil {
+		t.Fatalf("insert gammal rad: %v", err)
+	}
+
+	if err := migrate(db); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	if err := migrate(db); err != nil {
+		t.Fatalf("migrate (andra körningen ska vara no-op): %v", err)
+	}
+
+	repo := NewRepository(db)
+	got, err := repo.GetOrderRow(context.Background(), 42)
+	if err != nil {
+		t.Fatalf("GetOrderRow efter migration: %v", err)
+	}
+	if got.OrderNumber != "B127575" || got.PartID != 11 {
+		t.Errorf("befintlig rad tappad: %+v", got)
+	}
+	if got.ReceivingMessage != "" || got.ReceivingInspectionInstruction != "" || got.RowGoodsLabel != "" ||
+		got.RowNotes != "" || got.SupplierDrawingNumber != "" || got.SupplierRevisionNumber != "" ||
+		got.FreeText != "" || got.OrderGoodsLabel != "" || got.ExternalComment != "" ||
+		got.BusinessContactOrderNumber != "" || got.AlloyCode != "" || got.AlloyDescription != "" ||
+		got.PartReceivingInstruction != "" || got.PartPurchaseComment != "" || got.PartComment != "" ||
+		got.GoodsType != "" || got.CategoryString != "" || got.ExtraFieldsRaw != "" || got.DrawingNumbers != "" {
+		t.Errorf("strängfält ska defaulta till tomt: %+v", got)
+	}
+	if got.PartLength != 0 || got.PartWidth != 0 || got.PartHeight != 0 || got.WeightPerUnit != 0 {
+		t.Errorf("talfält ska defaulta till 0: %+v", got)
+	}
+	if len(got.Hyperlinks) != 0 {
+		t.Errorf("hyperlinks ska defaulta till tom lista: %+v", got.Hyperlinks)
+	}
+}

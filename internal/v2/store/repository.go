@@ -84,6 +84,25 @@ func unmarshalCorrectedB(s string) []string {
 	return unmarshalList(s)
 }
 
+// marshalHyperlinks/unmarshalHyperlinks: order_rows.hyperlinks lagras som
+// JSON-TEXT (domain.Hyperlink bär redan json-taggar, se domain.go). Tom/nil
+// lista → '' (inte "[]") — enligt uppdraget, se Task 6-briefen.
+func marshalHyperlinks(v []domain.Hyperlink) string {
+	if len(v) == 0 {
+		return ""
+	}
+	b, _ := json.Marshal(v)
+	return string(b)
+}
+
+func unmarshalHyperlinks(s string) []domain.Hyperlink {
+	var v []domain.Hyperlink
+	if s == "" || json.Unmarshal([]byte(s), &v) != nil {
+		return []domain.Hyperlink{}
+	}
+	return v
+}
+
 func marshalLog(v []domain.Correction) string {
 	if v == nil {
 		v = []domain.Correction{}
@@ -313,14 +332,27 @@ func oneRow(res sql.Result, err error) error {
 
 const orderRowCols = `delivery_row_id, purchase_order_id, order_number, supplier_name,
  part_id, part_number, description, extra_description, planned_qty, delivery_date,
- cert_required, delivery_raw, part_raw, delivered, in_monitor, first_seen, last_seen`
+ cert_required, delivery_raw, part_raw, delivered, in_monitor, first_seen, last_seen,
+ receiving_message, receiving_inspection_instruction, row_goods_label, row_notes,
+ supplier_drawing_number, supplier_revision_number, free_text,
+ order_goods_label, external_comment, business_contact_order_number,
+ alloy_code, alloy_description, part_receiving_instruction, part_purchase_comment,
+ part_comment, part_length, part_width, part_height, weight_per_unit,
+ goods_type, category_string, extra_fields_raw, hyperlinks, drawing_numbers`
 
 func scanOrderRow(sc rowScanner) (*domain.OrderRow, error) {
 	var r domain.OrderRow
 	var certReq, delivered, inMonitor int
+	var hyperlinks string
 	err := sc.Scan(&r.DeliveryRowID, &r.PurchaseOrderID, &r.OrderNumber, &r.SupplierName,
 		&r.PartID, &r.PartNumber, &r.Description, &r.ExtraDescription, &r.PlannedQty, &r.DeliveryDate,
-		&certReq, &r.DeliveryRaw, &r.PartRaw, &delivered, &inMonitor, &r.FirstSeen, &r.LastSeen)
+		&certReq, &r.DeliveryRaw, &r.PartRaw, &delivered, &inMonitor, &r.FirstSeen, &r.LastSeen,
+		&r.ReceivingMessage, &r.ReceivingInspectionInstruction, &r.RowGoodsLabel, &r.RowNotes,
+		&r.SupplierDrawingNumber, &r.SupplierRevisionNumber, &r.FreeText,
+		&r.OrderGoodsLabel, &r.ExternalComment, &r.BusinessContactOrderNumber,
+		&r.AlloyCode, &r.AlloyDescription, &r.PartReceivingInstruction, &r.PartPurchaseComment,
+		&r.PartComment, &r.PartLength, &r.PartWidth, &r.PartHeight, &r.WeightPerUnit,
+		&r.GoodsType, &r.CategoryString, &r.ExtraFieldsRaw, &hyperlinks, &r.DrawingNumbers)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, domain.ErrNotFound
 	}
@@ -330,15 +362,24 @@ func scanOrderRow(sc rowScanner) (*domain.OrderRow, error) {
 	r.CertRequired = certReq == 1
 	r.Delivered = delivered == 1
 	r.InMonitor = inMonitor == 1
+	r.Hyperlinks = unmarshalHyperlinks(hyperlinks)
 	return &r, nil
 }
 
 // UpsertOrderRow skriver/uppdaterar en Monitor-rad. delivered och first_seen
 // bevaras medvetet över refresher — det är lokal bokföring. in_monitor sätts
-// alltid till 1 (raden sågs i denna sync).
+// alltid till 1 (raden sågs i denna sync). De cert-bärande fälten (Task 6) är
+// alla syncade Monitor-värden och skrivs om vid varje refresh, precis som
+// description/part_raw m.fl. — de rör inte länk-/AI-kolumner (de bor i links).
 func (q *Q) UpsertOrderRow(ctx context.Context, r *domain.OrderRow, now string) error {
 	_, err := q.db.ExecContext(ctx, `INSERT INTO order_rows (`+orderRowCols+`)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,?)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,?,
+		        ?,?,?,?,
+		        ?,?,?,
+		        ?,?,?,
+		        ?,?,?,?,
+		        ?,?,?,?,?,
+		        ?,?,?,?,?)
 		ON CONFLICT(delivery_row_id) DO UPDATE SET
 			purchase_order_id=excluded.purchase_order_id,
 			order_number=excluded.order_number,
@@ -353,10 +394,40 @@ func (q *Q) UpsertOrderRow(ctx context.Context, r *domain.OrderRow, now string) 
 			delivery_raw=excluded.delivery_raw,
 			part_raw=excluded.part_raw,
 			in_monitor=1,
-			last_seen=excluded.last_seen`,
+			last_seen=excluded.last_seen,
+			receiving_message=excluded.receiving_message,
+			receiving_inspection_instruction=excluded.receiving_inspection_instruction,
+			row_goods_label=excluded.row_goods_label,
+			row_notes=excluded.row_notes,
+			supplier_drawing_number=excluded.supplier_drawing_number,
+			supplier_revision_number=excluded.supplier_revision_number,
+			free_text=excluded.free_text,
+			order_goods_label=excluded.order_goods_label,
+			external_comment=excluded.external_comment,
+			business_contact_order_number=excluded.business_contact_order_number,
+			alloy_code=excluded.alloy_code,
+			alloy_description=excluded.alloy_description,
+			part_receiving_instruction=excluded.part_receiving_instruction,
+			part_purchase_comment=excluded.part_purchase_comment,
+			part_comment=excluded.part_comment,
+			part_length=excluded.part_length,
+			part_width=excluded.part_width,
+			part_height=excluded.part_height,
+			weight_per_unit=excluded.weight_per_unit,
+			goods_type=excluded.goods_type,
+			category_string=excluded.category_string,
+			extra_fields_raw=excluded.extra_fields_raw,
+			hyperlinks=excluded.hyperlinks,
+			drawing_numbers=excluded.drawing_numbers`,
 		r.DeliveryRowID, r.PurchaseOrderID, r.OrderNumber, r.SupplierName,
 		r.PartID, r.PartNumber, r.Description, r.ExtraDescription, r.PlannedQty, r.DeliveryDate,
-		b2i(r.CertRequired), r.DeliveryRaw, r.PartRaw, b2i(r.Delivered), now, now)
+		b2i(r.CertRequired), r.DeliveryRaw, r.PartRaw, b2i(r.Delivered), now, now,
+		r.ReceivingMessage, r.ReceivingInspectionInstruction, r.RowGoodsLabel, r.RowNotes,
+		r.SupplierDrawingNumber, r.SupplierRevisionNumber, r.FreeText,
+		r.OrderGoodsLabel, r.ExternalComment, r.BusinessContactOrderNumber,
+		r.AlloyCode, r.AlloyDescription, r.PartReceivingInstruction, r.PartPurchaseComment,
+		r.PartComment, r.PartLength, r.PartWidth, r.PartHeight, r.WeightPerUnit,
+		r.GoodsType, r.CategoryString, r.ExtraFieldsRaw, marshalHyperlinks(r.Hyperlinks), r.DrawingNumbers)
 	return err
 }
 

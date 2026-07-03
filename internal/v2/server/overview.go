@@ -108,6 +108,34 @@ type rowJSON struct {
 	Delivered        bool    `json:"delivered"`
 	InMonitor        bool    `json:"in_monitor"`
 
+	// Cert-bärande fält (Task 6): rå kravtext + artikeldata från Monitor.
+	// AI-parsning kommer i en senare task — här bärs texterna bara oförädlade
+	// till UI:t. Tomma strängar utelämnas inte här; JS filtrerar vid render.
+	ReceivingMessage               string             `json:"receiving_message"`
+	ReceivingInspectionInstruction string             `json:"receiving_inspection_instruction"`
+	RowGoodsLabel                  string             `json:"row_goods_label"`
+	RowNotes                       string             `json:"row_notes"`
+	SupplierDrawingNumber          string             `json:"supplier_drawing_number"`
+	SupplierRevisionNumber         string             `json:"supplier_revision_number"`
+	FreeText                       string             `json:"free_text"`
+	OrderGoodsLabel                string             `json:"order_goods_label"`
+	ExternalComment                string             `json:"external_comment"`
+	BusinessContactOrderNumber     string             `json:"business_contact_order_number"`
+	AlloyCode                      string             `json:"alloy_code"`
+	AlloyDescription               string             `json:"alloy_description"`
+	PartReceivingInstruction       string             `json:"part_receiving_instruction"`
+	PartPurchaseComment            string             `json:"part_purchase_comment"`
+	PartComment                    string             `json:"part_comment"`
+	PartLength                     float64            `json:"part_length"`
+	PartWidth                      float64            `json:"part_width"`
+	PartHeight                     float64            `json:"part_height"`
+	WeightPerUnit                  float64            `json:"weight_per_unit"`
+	GoodsType                      string             `json:"goods_type"`
+	CategoryString                 string             `json:"category_string"`
+	ExtraFieldsRaw                 string             `json:"extra_fields_raw"`
+	Hyperlinks                     []domain.Hyperlink `json:"hyperlinks"`
+	DrawingNumbers                 string             `json:"drawing_numbers"`
+
 	Links []linkJSON      `json:"links"`
 	Notes []*v2store.Note `json:"notes"`
 }
@@ -215,6 +243,13 @@ func orEmptyLog(v []domain.Correction) []domain.Correction {
 	return v
 }
 
+func orEmptyHyperlinks(v []domain.Hyperlink) []domain.Hyperlink {
+	if v == nil {
+		return []domain.Hyperlink{}
+	}
+	return v
+}
+
 func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	resp := overviewJSON{
@@ -252,7 +287,22 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 			Description: row.Description, ExtraDescription: row.ExtraDescription,
 			PlannedQty: row.PlannedQty, DeliveryDate: row.DeliveryDate,
 			CertRequired: row.CertRequired, Delivered: row.Delivered, InMonitor: row.InMonitor,
-			Links: []linkJSON{},
+			ReceivingMessage: row.ReceivingMessage, ReceivingInspectionInstruction: row.ReceivingInspectionInstruction,
+			RowGoodsLabel: row.RowGoodsLabel, RowNotes: row.RowNotes,
+			SupplierDrawingNumber: row.SupplierDrawingNumber, SupplierRevisionNumber: row.SupplierRevisionNumber,
+			FreeText:        row.FreeText,
+			OrderGoodsLabel: row.OrderGoodsLabel, ExternalComment: row.ExternalComment,
+			BusinessContactOrderNumber: row.BusinessContactOrderNumber,
+			AlloyCode:                  row.AlloyCode, AlloyDescription: row.AlloyDescription,
+			PartReceivingInstruction: row.PartReceivingInstruction, PartPurchaseComment: row.PartPurchaseComment,
+			PartComment: row.PartComment,
+			PartLength:  row.PartLength, PartWidth: row.PartWidth, PartHeight: row.PartHeight,
+			WeightPerUnit: row.WeightPerUnit,
+			GoodsType:     row.GoodsType, CategoryString: row.CategoryString,
+			ExtraFieldsRaw: row.ExtraFieldsRaw,
+			Hyperlinks:     orEmptyHyperlinks(row.Hyperlinks),
+			DrawingNumbers: row.DrawingNumbers,
+			Links:          []linkJSON{},
 		}
 		if notes, _ := s.Repo.ListNotes(ctx, "order_row", row.DeliveryRowID); notes != nil {
 			rj.Notes = notes

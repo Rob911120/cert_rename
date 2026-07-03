@@ -270,6 +270,82 @@ func TestCertJSONExtractionFields(t *testing.T) {
 	}
 }
 
+// TestOverviewOrderRowCertBearingFields täcker Task 6:s nya order_rows-fält i
+// orderrads-JSON:en (rå kravtext + artikeldata från Monitor, inkl. hyperlinks
+// som lista av {link, description}) — bron mellan store och den utfällda
+// artikeln i overview.js.
+func TestOverviewOrderRowCertBearingFields(t *testing.T) {
+	s, mux, _ := testServer(t)
+	ctx := context.Background()
+
+	if err := s.Repo.UpsertOrderRow(ctx, &domain.OrderRow{
+		DeliveryRowID: 77, OrderNumber: "B128293", PartNumber: "ART-1",
+		ReceivingMessage: "godsmeddelande", ReceivingInspectionInstruction: "mottagningskontroll",
+		RowGoodsLabel: "radgodsmärke", RowNotes: "radnotering",
+		SupplierDrawingNumber: "SUP-D1", SupplierRevisionNumber: "A", FreeText: "fritext",
+		OrderGoodsLabel: "ordergodsmärke", ExternalComment: "extern kommentar",
+		BusinessContactOrderNumber: "LEV-9",
+		AlloyCode:                  "S690QL", AlloyDescription: "Höghållfast stål",
+		PartReceivingInstruction: "mottagningsinstruktion", PartPurchaseComment: "inköpskommentar",
+		PartComment: "artikelkommentar",
+		PartLength:  6, PartWidth: 2, PartHeight: 0.06, WeightPerUnit: 850,
+		GoodsType: "Plåt", CategoryString: "Stål",
+		ExtraFieldsRaw: `[{"Type":1}]`,
+		Hyperlinks: []domain.Hyperlink{
+			{Link: "https://example.com/ritning.pdf", Description: "Ritning A"},
+		},
+		DrawingNumbers: "D-100, D-101",
+	}, "t"); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := doJSON(t, mux, "GET", "/api/overview", nil)
+	if rec.Code != 200 {
+		t.Fatalf("overview: %d %s", rec.Code, rec.Body)
+	}
+	var ov overviewJSON
+	if err := json.Unmarshal(rec.Body.Bytes(), &ov); err != nil {
+		t.Fatal(err)
+	}
+	if len(ov.Orders) != 1 || len(ov.Orders[0].Rows) != 1 {
+		t.Fatalf("orders: %+v", ov.Orders)
+	}
+	rj := ov.Orders[0].Rows[0]
+	if rj.ReceivingMessage != "godsmeddelande" || rj.ReceivingInspectionInstruction != "mottagningskontroll" {
+		t.Errorf("radkommentarer: %+v", rj)
+	}
+	if rj.RowGoodsLabel != "radgodsmärke" || rj.RowNotes != "radnotering" ||
+		rj.SupplierDrawingNumber != "SUP-D1" || rj.SupplierRevisionNumber != "A" || rj.FreeText != "fritext" {
+		t.Errorf("radfält: %+v", rj)
+	}
+	if rj.OrderGoodsLabel != "ordergodsmärke" || rj.ExternalComment != "extern kommentar" ||
+		rj.BusinessContactOrderNumber != "LEV-9" {
+		t.Errorf("orderfält: %+v", rj)
+	}
+	if rj.AlloyCode != "S690QL" || rj.AlloyDescription != "Höghållfast stål" {
+		t.Errorf("legering: %+v", rj)
+	}
+	if rj.PartReceivingInstruction != "mottagningsinstruktion" || rj.PartPurchaseComment != "inköpskommentar" ||
+		rj.PartComment != "artikelkommentar" {
+		t.Errorf("artikelkommentarer: %+v", rj)
+	}
+	if rj.PartLength != 6 || rj.PartWidth != 2 || rj.PartHeight != 0.06 || rj.WeightPerUnit != 850 {
+		t.Errorf("dimensioner: %+v", rj)
+	}
+	if rj.GoodsType != "Plåt" || rj.CategoryString != "Stål" {
+		t.Errorf("godsslag/kategori: %+v", rj)
+	}
+	if rj.ExtraFieldsRaw != `[{"Type":1}]` {
+		t.Errorf("ExtraFieldsRaw = %q", rj.ExtraFieldsRaw)
+	}
+	if len(rj.Hyperlinks) != 1 || rj.Hyperlinks[0].Link != "https://example.com/ritning.pdf" || rj.Hyperlinks[0].Description != "Ritning A" {
+		t.Errorf("Hyperlinks: %+v", rj.Hyperlinks)
+	}
+	if rj.DrawingNumbers != "D-100, D-101" {
+		t.Errorf("DrawingNumbers = %q", rj.DrawingNumbers)
+	}
+}
+
 func TestOverviewShape(t *testing.T) {
 	s, mux, cfg := testServer(t)
 	c := seedCert(t, s, cfg)

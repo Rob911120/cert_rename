@@ -231,6 +231,100 @@ func TestOrderRowUpsertPreservesLocalBookkeeping(t *testing.T) {
 	}
 }
 
+// TestOrderRowCertFieldsRoundtrip täcker Task 6:s nya order_rows-fält (rå
+// kravtext + artikeldata från Monitor, inkl. hyperlinks-listan) i detalj: ett
+// satt-fall (alla fält ifyllda) och ett tomt-hyperlinks-fall (tom lista ska
+// lagras som '' i DB och läsas tillbaka som tom lista, inte nil).
+func TestOrderRowCertFieldsRoundtrip(t *testing.T) {
+	repo := testRepo(t)
+	ctx := context.Background()
+
+	links := []domain.Hyperlink{
+		{Link: "https://example.com/ritning.pdf", Description: "Ritning A"},
+		{Link: `\\fileserver\share\ritning-b.pdf`, Description: "Ritning B (UNC)"},
+	}
+	row := &domain.OrderRow{
+		DeliveryRowID: 50, PurchaseOrderID: 8, OrderNumber: "B128293",
+		PartID: 22, PartNumber: "30-101241-002",
+		ReceivingMessage: "godsmeddelande", ReceivingInspectionInstruction: "mottagningskontroll",
+		RowGoodsLabel: "radgodsmärke", RowNotes: "radnotering",
+		SupplierDrawingNumber: "SUP-D1", SupplierRevisionNumber: "A", FreeText: "fritext",
+		OrderGoodsLabel: "ordergodsmärke", ExternalComment: "extern kommentar",
+		BusinessContactOrderNumber: "LEV-9",
+		AlloyCode:                  "S690QL", AlloyDescription: "Höghållfast stål",
+		PartReceivingInstruction: "mottagningsinstruktion", PartPurchaseComment: "inköpskommentar",
+		PartComment: "artikelkommentar",
+		PartLength:  6, PartWidth: 2, PartHeight: 0.06, WeightPerUnit: 850,
+		GoodsType: "Plåt", CategoryString: "Stål",
+		ExtraFieldsRaw: `[{"Type":1}]`,
+		Hyperlinks:     links,
+		DrawingNumbers: "D-100, D-101",
+	}
+	if err := repo.UpsertOrderRow(ctx, row, "2026-07-03T00:00:00Z"); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := repo.GetOrderRow(ctx, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ReceivingMessage != row.ReceivingMessage || got.ReceivingInspectionInstruction != row.ReceivingInspectionInstruction {
+		t.Errorf("radkommentarer tappade: %+v", got)
+	}
+	if got.RowGoodsLabel != row.RowGoodsLabel || got.RowNotes != row.RowNotes ||
+		got.SupplierDrawingNumber != row.SupplierDrawingNumber || got.SupplierRevisionNumber != row.SupplierRevisionNumber ||
+		got.FreeText != row.FreeText {
+		t.Errorf("radfält tappade: %+v", got)
+	}
+	if got.OrderGoodsLabel != row.OrderGoodsLabel || got.ExternalComment != row.ExternalComment ||
+		got.BusinessContactOrderNumber != row.BusinessContactOrderNumber {
+		t.Errorf("orderfält tappade: %+v", got)
+	}
+	if got.AlloyCode != row.AlloyCode || got.AlloyDescription != row.AlloyDescription {
+		t.Errorf("legering tappad: %+v", got)
+	}
+	if got.PartReceivingInstruction != row.PartReceivingInstruction || got.PartPurchaseComment != row.PartPurchaseComment ||
+		got.PartComment != row.PartComment {
+		t.Errorf("artikelkommentarer tappade: %+v", got)
+	}
+	if got.PartLength != row.PartLength || got.PartWidth != row.PartWidth || got.PartHeight != row.PartHeight ||
+		got.WeightPerUnit != row.WeightPerUnit {
+		t.Errorf("dimensioner tappade: %+v", got)
+	}
+	if got.GoodsType != row.GoodsType || got.CategoryString != row.CategoryString {
+		t.Errorf("godsslag/kategori tappade: %+v", got)
+	}
+	if got.ExtraFieldsRaw != row.ExtraFieldsRaw {
+		t.Errorf("ExtraFieldsRaw = %q, vill ha %q", got.ExtraFieldsRaw, row.ExtraFieldsRaw)
+	}
+	if !reflect.DeepEqual(got.Hyperlinks, links) {
+		t.Errorf("Hyperlinks roundtrip = %+v, vill ha %+v", got.Hyperlinks, links)
+	}
+	if got.DrawingNumbers != row.DrawingNumbers {
+		t.Errorf("DrawingNumbers = %q, vill ha %q", got.DrawingNumbers, row.DrawingNumbers)
+	}
+
+	// Tom hyperlinks-lista: lagras som '' i DB, läses tillbaka som tom (icke-nil) lista.
+	empty := &domain.OrderRow{DeliveryRowID: 51, OrderNumber: "B1", Hyperlinks: []domain.Hyperlink{}}
+	if err := repo.UpsertOrderRow(ctx, empty, "t"); err != nil {
+		t.Fatal(err)
+	}
+	var raw string
+	if err := repo.sqldb.QueryRow(`SELECT hyperlinks FROM order_rows WHERE delivery_row_id = ?`, 51).Scan(&raw); err != nil {
+		t.Fatal(err)
+	}
+	if raw != "" {
+		t.Errorf("tom hyperlinks-lista ska lagras som '', fick %q", raw)
+	}
+	gotEmpty, err := repo.GetOrderRow(ctx, 51)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(gotEmpty.Hyperlinks) != 0 {
+		t.Errorf("tom hyperlinks-lista ska läsas tillbaka som tom, fick %+v", gotEmpty.Hyperlinks)
+	}
+}
+
 func TestLinksAndConfirmedOrderNumbers(t *testing.T) {
 	repo := testRepo(t)
 	ctx := context.Background()

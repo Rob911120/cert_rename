@@ -215,6 +215,36 @@ ALTER TABLE certs ADD COLUMN has_stamp_photo INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE certs ADD COLUMN min_temperature_c REAL;
 ALTER TABLE certs ADD COLUMN delivery_condition TEXT NOT NULL DEFAULT '';
 `,
+	// 003 — Task 6 (B0b): cert-bärande fält som internal/monitor nu hämtar
+	// (Task 5) på order_rows — rå kravtext + artikeldata. AI-parsning av
+	// kravtexterna kommer i en senare task; hyperlinks lagras som JSON-TEXT
+	// (marshal/unmarshal i store-lagret, tom lista → '').
+	`
+ALTER TABLE order_rows ADD COLUMN receiving_message TEXT NOT NULL DEFAULT '';
+ALTER TABLE order_rows ADD COLUMN receiving_inspection_instruction TEXT NOT NULL DEFAULT '';
+ALTER TABLE order_rows ADD COLUMN row_goods_label TEXT NOT NULL DEFAULT '';
+ALTER TABLE order_rows ADD COLUMN row_notes TEXT NOT NULL DEFAULT '';
+ALTER TABLE order_rows ADD COLUMN supplier_drawing_number TEXT NOT NULL DEFAULT '';
+ALTER TABLE order_rows ADD COLUMN supplier_revision_number TEXT NOT NULL DEFAULT '';
+ALTER TABLE order_rows ADD COLUMN free_text TEXT NOT NULL DEFAULT '';
+ALTER TABLE order_rows ADD COLUMN order_goods_label TEXT NOT NULL DEFAULT '';
+ALTER TABLE order_rows ADD COLUMN external_comment TEXT NOT NULL DEFAULT '';
+ALTER TABLE order_rows ADD COLUMN business_contact_order_number TEXT NOT NULL DEFAULT '';
+ALTER TABLE order_rows ADD COLUMN alloy_code TEXT NOT NULL DEFAULT '';
+ALTER TABLE order_rows ADD COLUMN alloy_description TEXT NOT NULL DEFAULT '';
+ALTER TABLE order_rows ADD COLUMN part_receiving_instruction TEXT NOT NULL DEFAULT '';
+ALTER TABLE order_rows ADD COLUMN part_purchase_comment TEXT NOT NULL DEFAULT '';
+ALTER TABLE order_rows ADD COLUMN part_comment TEXT NOT NULL DEFAULT '';
+ALTER TABLE order_rows ADD COLUMN part_length REAL NOT NULL DEFAULT 0;
+ALTER TABLE order_rows ADD COLUMN part_width REAL NOT NULL DEFAULT 0;
+ALTER TABLE order_rows ADD COLUMN part_height REAL NOT NULL DEFAULT 0;
+ALTER TABLE order_rows ADD COLUMN weight_per_unit REAL NOT NULL DEFAULT 0;
+ALTER TABLE order_rows ADD COLUMN goods_type TEXT NOT NULL DEFAULT '';
+ALTER TABLE order_rows ADD COLUMN category_string TEXT NOT NULL DEFAULT '';
+ALTER TABLE order_rows ADD COLUMN extra_fields_raw TEXT NOT NULL DEFAULT '';
+ALTER TABLE order_rows ADD COLUMN hyperlinks TEXT NOT NULL DEFAULT '';
+ALTER TABLE order_rows ADD COLUMN drawing_numbers TEXT NOT NULL DEFAULT '';
+`,
 }
 
 // Open öppnar (eller skapar) V2-databasen och applicerar väntande migrationer.

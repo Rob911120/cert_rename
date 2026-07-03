@@ -94,6 +94,11 @@ func (s *Sync) Refresh(ctx context.Context) (int, error) {
 type orderInfo struct {
 	OrderNumber  string
 	SupplierName string
+
+	// Cert-bärande orderfält (Task 6) — se buildOrderRow.
+	GoodsLabel                 string
+	ExternalComment            string
+	BusinessContactOrderNumber string
 }
 
 // resolveOrders hämtar ordernummer + leverantör per unik order (en gång).
@@ -116,6 +121,9 @@ func (s *Sync) resolveOrders(ctx context.Context, rows []monitor.PurchaseOrderRo
 			s.App.Notify.Logf("⚠️  kunde inte hämta order %d: %v", id, err)
 		} else if po != nil {
 			info.OrderNumber = po.OrderNumber
+			info.GoodsLabel = po.GoodsLabel
+			info.BusinessContactOrderNumber = po.BusinessContactOrderNumber
+			info.ExternalComment = commentText(po.ExternalComment)
 			if po.BusinessContactId != 0 {
 				if sup, serr := s.ERP.GetSupplier(ctx, po.BusinessContactId); serr == nil && sup != nil {
 					info.SupplierName = supplierDisplay(sup)
@@ -158,6 +166,22 @@ func buildOrderRow(row monitor.PurchaseOrderRow, orders map[monitor.ID]orderInfo
 		PlannedQty:      row.RestQuantity, // kvarvarande ej levererat
 		DeliveryDate:    normalizeDate(row.DeliveryDate),
 		DeliveryRaw:     string(row.Raw),
+
+		// Cert-bärande radfält (Task 6): rå kravtext, nil-säker för
+		// Comment-pekarna. Skalära fält kommer utan $expand.
+		ReceivingMessage:               commentText(row.ReceivingMessage),
+		ReceivingInspectionInstruction: commentText(row.ReceivingInspectionInstruction),
+		RowGoodsLabel:                  row.RowsGoodsLabel,
+		RowNotes:                       row.RowNotes,
+		SupplierDrawingNumber:          row.SupplierDrawingNumber,
+		SupplierRevisionNumber:         row.SupplierRevisionNumber,
+		FreeText:                       row.FreeText,
+
+		// Cert-bärande orderfält (Task 6), redan uppslagna en gång per
+		// order i resolveOrders.
+		OrderGoodsLabel:            info.GoodsLabel,
+		ExternalComment:            info.ExternalComment,
+		BusinessContactOrderNumber: info.BusinessContactOrderNumber,
 	}
 	part := row.Part
 	if part == nil && row.PartId != 0 {
@@ -171,8 +195,62 @@ func buildOrderRow(row monitor.PurchaseOrderRow, orders map[monitor.ID]orderInfo
 		r.ExtraDescription = part.ExtraDescription // RÅ extra benämning, persisteras
 		r.PartRaw = string(part.Raw)
 		r.CertRequired = part.RequiresCert()
+
+		// Cert-bärande artikelfält (Task 6). PartCode finns inte i
+		// monitor.Part — medvetet utelämnad, se Task 6-briefen.
+		if part.CurrentAlloy != nil {
+			r.AlloyCode = part.CurrentAlloy.Code
+			r.AlloyDescription = part.CurrentAlloy.Description
+		}
+		r.PartReceivingInstruction = commentText(part.ReceivingInstruction)
+		r.PartPurchaseComment = commentText(part.PurchaseComment)
+		r.PartComment = commentText(part.Comment)
+		r.PartLength = part.Length
+		r.PartWidth = part.Width
+		r.PartHeight = part.Height
+		r.WeightPerUnit = part.WeightPerUnit
+		r.GoodsType = part.GoodsType
+		r.CategoryString = part.CategoryString
+		if part.ExtraFields != nil {
+			r.ExtraFieldsRaw = string(part.ExtraFields)
+		}
+		r.Hyperlinks = buildHyperlinks(part.HyperLinks)
+		r.DrawingNumbers = joinDrawingNumbers(part.Drawings)
 	}
 	return r
+}
+
+// commentText läser RawText nil-säkert — Comment-referenser (godsmeddelande,
+// mottagningsinstruktion m.fl.) kommer bara med om $expand:ades.
+func commentText(c *monitor.Comment) string {
+	if c == nil {
+		return ""
+	}
+	return c.RawText
+}
+
+func buildHyperlinks(links []monitor.HyperLink) []domain.Hyperlink {
+	if len(links) == 0 {
+		return nil
+	}
+	out := make([]domain.Hyperlink, len(links))
+	for i, l := range links {
+		out[i] = domain.Hyperlink{Link: l.Link, Description: l.Description}
+	}
+	return out
+}
+
+// joinDrawingNumbers slår ihop artikelns ritningsnummer, kommaseparerat
+// (visas som text intill ritningslänken i UI:t).
+func joinDrawingNumbers(drawings []monitor.Drawing) string {
+	if len(drawings) == 0 {
+		return ""
+	}
+	nums := make([]string, 0, len(drawings))
+	for _, d := range drawings {
+		nums = append(nums, d.DrawingNumber)
+	}
+	return strings.Join(nums, ", ")
 }
 
 func supplierDisplay(s *monitor.Supplier) string {
