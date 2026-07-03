@@ -18,6 +18,7 @@ import (
 	"cert-renamer/internal/eml"
 	v1store "cert-renamer/internal/store"
 	"cert-renamer/internal/v2/app"
+	"cert-renamer/internal/v2/domain"
 )
 
 const PollInterval = 30 * time.Second
@@ -174,6 +175,41 @@ func (in *Intake) ProcessEml(ctx context.Context, emlPath string) {
 	}
 	in.App.EmailFinished(ctx, emailID, "completed", "")
 	_ = os.Remove(emlPath)
+}
+
+// IngestPDF tar in en direktuppladdad PDF (drag-drop) — samma väg som en
+// mailbilaga men utan mailkontext. B-nummer plockas ur filnamnet.
+func (in *Intake) IngestPDF(ctx context.Context, filename string, data []byte) (int64, bool, error) {
+	res, err := in.AI.Extract(ctx, data, "", "", filename)
+	if err != nil {
+		in.App.RecordAICall(ctx, 0, "extract", ai.ModelExtract, 0, 0, 0, false, err.Error())
+		return 0, false, err
+	}
+	c, dup, err := in.App.IngestCert(ctx, app.IngestInput{
+		OriginalFilename: filename,
+		Data:             data,
+		Extraction:       res.Extraction,
+		BNumbers:         eml.ExtractBNumbers(filename),
+		Model:            res.Model,
+		TokensIn:         res.TokensIn,
+		TokensOut:        res.TokensOut,
+		ProcessingMS:     res.DurationMS,
+	})
+	if err != nil || dup {
+		return certID(c), dup, err
+	}
+	in.App.RecordAICall(ctx, c.ID, "extract", res.Model, res.TokensIn, res.TokensOut, res.DurationMS, true, "")
+	if _, err := in.App.SuggestLinksByBNumber(ctx, c.ID); err != nil {
+		in.App.Notify.Logf("   ⚠️  förslagspass: %v", err)
+	}
+	return c.ID, false, nil
+}
+
+func certID(c *domain.Cert) int64 {
+	if c == nil {
+		return 0
+	}
+	return c.ID
 }
 
 // ingestAttachment extraherar och tar in EN PDF-bilaga. Ingen valideringsgrind:

@@ -67,6 +67,9 @@ func run(logger *slog.Logger, noBrowser bool) error {
 	httpSrv := &http.Server{Handler: mux}
 	g, ctx := errgroup.WithContext(ctx)
 
+	g.Go(func() error { srv.RunSyncScheduler(ctx); return nil })
+	go srv.Autostart()
+
 	g.Go(func() error {
 		if err := httpSrv.Serve(ln); !errors.Is(err, http.ErrServerClosed) {
 			return err

@@ -1,7 +1,6 @@
 package monitorsync
 
 import (
-	"context"
 	"time"
 
 	v1store "cert-renamer/internal/store"
@@ -41,40 +40,6 @@ func parseHHMM(s string) (int, int) {
 	return t.Hour(), t.Minute()
 }
 
-const schedulePoll = 5 * time.Minute
-
-// RunScheduled kör refresh-jobbet på schema tills ctx avbryts: 5-minuters-
-// poller mot ShouldCatchUp (gated på UpcomingEnabled), plus kick-kanal för
-// manuell "Uppdatera" (kör alltid, oavsett gate — knappen är explicit).
-// Senaste körning läses/skrivs i app_state ("last_sync") så catch-up
-// överlever omstarter.
-func (s *Sync) RunScheduled(ctx context.Context, kick <-chan struct{}) {
-	ticker := time.NewTicker(schedulePoll)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-kick:
-			s.runOnce(ctx, "manuell")
-		case <-ticker.C:
-			cfg := s.Config()
-			if !cfg.UpcomingEnabled {
-				continue
-			}
-			lastRun, _ := time.Parse(time.RFC3339, s.App.State(ctx, "last_sync"))
-			if ShouldCatchUp(lastRun, time.Now(), cfg.UpcomingTime) {
-				s.runOnce(ctx, "schemalagd")
-			}
-		}
-	}
-}
-
-func (s *Sync) runOnce(ctx context.Context, why string) {
-	n, err := s.App.Notify, error(nil)
-	n.Logf("🔄 Monitor-sync (%s) startar…", why)
-	_, err = s.Refresh(ctx)
-	if err != nil {
-		n.Logf("❌ Monitor-sync: %v", err)
-	}
-}
+// SchedulePoll är hur ofta drift-loopen (server.RunSyncScheduler) pollar
+// ShouldCatchUp. Loopen bor i servern — den äger config och kick-kanalen.
+const SchedulePoll = 5 * time.Minute
