@@ -25,8 +25,8 @@ type PdfMeta struct {
 	// märkningsdata. Fanns inte i V1:s PdfMeta — gamla sidecars/inbäddningar
 	// utan dessa nycklar läses tillbaka som zero-values (ofarligt, "ej
 	// angivet"). Nullable-tal är *float64 (nil = ej angivet i certet).
-	IsLegible            bool     `json:"is_legible"`
-	IsUnaltered          bool     `json:"is_unaltered"`
+	IsLegible            bool     `json:"is_legible,omitempty"`
+	IsUnaltered          bool     `json:"is_unaltered,omitempty"`
 	NormSystem           string   `json:"norm_system,omitempty"`
 	ImpactTempC          *float64 `json:"impact_temp_c,omitempty"`
 	ImpactEnergyJ        float64  `json:"impact_energy_j,omitempty"`
@@ -36,9 +36,9 @@ type PdfMeta struct {
 	CarbonPct            *float64 `json:"carbon_pct,omitempty"`
 	PPct                 *float64 `json:"p_pct,omitempty"`
 	SPct                 *float64 `json:"s_pct,omitempty"`
-	HasBendTest          bool     `json:"has_bend_test"`
-	HasIntergranularTest bool     `json:"has_intergranular_test"`
-	HasStampPhoto        bool     `json:"has_stamp_photo"`
+	HasBendTest          bool     `json:"has_bend_test,omitempty"`
+	HasIntergranularTest bool     `json:"has_intergranular_test,omitempty"`
+	HasStampPhoto        bool     `json:"has_stamp_photo,omitempty"`
 	MinTemperatureC      *float64 `json:"min_temperature_c,omitempty"`
 	DeliveryCondition    string   `json:"delivery_condition,omitempty"`
 
