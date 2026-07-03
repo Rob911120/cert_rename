@@ -346,6 +346,82 @@ func TestOverviewOrderRowCertBearingFields(t *testing.T) {
 	}
 }
 
+// FIX 11: de regelrätta domarna (engelska/cert-typ/slagseghet) ska trådas rätt i
+// overview.go — en rad med parsade krav + ett länkat cert ska via GET /api/overview
+// ge english_verdict=mismatch, cert_type_verdict=ok, impact_verdict=ok, och raden
+// ska exponera req_*-fälten. Skyddar mot argumentväxling i overview.go:347-349.
+func TestOverviewVerdictWiring(t *testing.T) {
+	s, mux, cfg := testServer(t)
+	ctx := context.Background()
+
+	// Cert: engelska EJ uppfyllt, cert-typ 3.1, slagseghet 27J vid -20°C.
+	data := []byte("%PDF-1.4 verdict\n")
+	hash := v2store.HashPDF(data)
+	stored := v2store.StoredName(hash, "verdict.pdf")
+	if _, err := v2store.WriteStoreFile(cfg, stored, data); err != nil {
+		t.Fatal(err)
+	}
+	temp := -20.0
+	certID, err := s.Repo.InsertCert(ctx, &domain.Cert{
+		PdfHash: hash, OriginalFilename: "verdict.pdf", StoredName: stored,
+		CertType: "3.1", Charge: "43136", Material: "S690QL",
+		EnStandardPresent: true, IsEnglish: false, ProductForm: "plåt", Dimensions: "60",
+		ImpactEnergyJ: 27, ImpactTempC: &temp,
+		BNumbers: []string{"B128293"}, Confidence: "high", ReceivedAt: "2026-07-01T08:00:00Z",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Rad + parsade krav: kräver engelska, cert-typ 3.1 och slag 27J/-20°C.
+	if err := s.Repo.UpsertOrderRow(ctx, &domain.OrderRow{
+		DeliveryRowID: 55, OrderNumber: "B128293", PartNumber: "ART-1",
+		CertRequired: true, DeliveryDate: "2026-07-10",
+	}, "t"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.App.SetRowRequirements(ctx, 55, domain.RowRequirements{
+		CertType: "3.1", English: true, Impact: "27J/-20°C",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Länka certet till raden (bekräftad) så domarna beräknas vid rendering.
+	if _, err := s.App.ConfirmLink(ctx, certID, 55, "B128293", "test"); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := doJSON(t, mux, "GET", "/api/overview", nil)
+	if rec.Code != 200 {
+		t.Fatalf("overview: %d %s", rec.Code, rec.Body)
+	}
+	var ov overviewJSON
+	if err := json.Unmarshal(rec.Body.Bytes(), &ov); err != nil {
+		t.Fatal(err)
+	}
+	if len(ov.Orders) != 1 || len(ov.Orders[0].Rows) != 1 {
+		t.Fatalf("orders: %+v", ov.Orders)
+	}
+	rj := ov.Orders[0].Rows[0]
+	if !rj.ReqEnglish || rj.ReqCertType != "3.1" || rj.ReqImpact != "27J/-20°C" {
+		t.Errorf("req_*-fält saknas på raden: english=%v cert=%q impact=%q",
+			rj.ReqEnglish, rj.ReqCertType, rj.ReqImpact)
+	}
+	if len(rj.Links) != 1 || rj.Links[0].Cert == nil {
+		t.Fatalf("länkat cert saknas på raden: %+v", rj.Links)
+	}
+	lj := rj.Links[0]
+	if lj.EnglishVerdict != "mismatch" {
+		t.Errorf("english_verdict = %q, vill ha mismatch", lj.EnglishVerdict)
+	}
+	if lj.CertTypeVerdict != "ok" {
+		t.Errorf("cert_type_verdict = %q, vill ha ok", lj.CertTypeVerdict)
+	}
+	if lj.ImpactVerdict != "ok" {
+		t.Errorf("impact_verdict = %q, vill ha ok", lj.ImpactVerdict)
+	}
+}
+
 func TestOverviewShape(t *testing.T) {
 	s, mux, cfg := testServer(t)
 	c := seedCert(t, s, cfg)

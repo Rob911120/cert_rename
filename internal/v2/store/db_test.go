@@ -12,6 +12,18 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+// Migrationstesterna pinnas till EXAKT den schemaversion de speglar. Med
+// len(migrations)-1 gled alla tre till samma sista steg (t.ex. 3→4) och de
+// tidiga migrationerna testades aldrig. migrations[0]=initialt schema (v1),
+// [1]=Task 2:s cert-fält (v2), [2]=Task 6:s rad-fält (v3), [3]=Task 8:s
+// kravfält (v4) — så varje test bygger schemat t.o.m. sin PreVersion och låter
+// migrate() lägga till resten.
+const (
+	certExtractionPreVersion  = 1 // certs saknar Task 2:s extraktionsfält
+	orderRowCertPreVersion    = 2 // order_rows saknar Task 6:s cert-fält
+	orderRowRequirePreVersion = 3 // order_rows saknar Task 8:s kravfält
+)
+
 // Test_Migrate_AddsCertExtractionFieldsToExistingDB speglar en verklig
 // cert-renamer-v2.db skapad före Task 2: certs-tabellen saknar de nya
 // kolumnkalibrerade extraktionsfälten (is_legible m.fl.). migrate() ska lägga
@@ -26,7 +38,7 @@ func Test_Migrate_AddsCertExtractionFieldsToExistingDB(t *testing.T) {
 	}
 	defer db.Close()
 
-	oldVersion := len(migrations) - 1
+	oldVersion := certExtractionPreVersion
 	for i := 0; i < oldVersion; i++ {
 		if _, err := db.Exec(migrations[i]); err != nil {
 			t.Fatalf("gammalt schema, migration %d: %v", i, err)
@@ -89,7 +101,7 @@ func Test_Migrate_AddsOrderRowCertFieldsToExistingDB(t *testing.T) {
 	}
 	defer db.Close()
 
-	oldVersion := len(migrations) - 1
+	oldVersion := orderRowCertPreVersion
 	for i := 0; i < oldVersion; i++ {
 		if _, err := db.Exec(migrations[i]); err != nil {
 			t.Fatalf("gammalt schema, migration %d: %v", i, err)
@@ -150,7 +162,7 @@ func Test_Migrate_AddsOrderRowRequirementFieldsToExistingDB(t *testing.T) {
 	}
 	defer db.Close()
 
-	oldVersion := len(migrations) - 1
+	oldVersion := orderRowRequirePreVersion
 	for i := 0; i < oldVersion; i++ {
 		if _, err := db.Exec(migrations[i]); err != nil {
 			t.Fatalf("gammalt schema, migration %d: %v", i, err)

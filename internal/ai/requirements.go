@@ -18,6 +18,8 @@ type RequirementsInput struct {
 	ReceivingMessage         string // godsmeddelandet (rad)
 	RowInspectionInstruction string // mottagnings-/kontrollinstruktion (rad)
 	PartReceivingInstruction string // mottagningsinstruktion (artikel)
+	PartPurchaseComment      string // inköpskommentar (artikel)
+	PartComment              string // artikelkommentar (artikel)
 	RowGoodsLabel            string // godsmärke (rad)
 	OrderGoodsLabel          string // godsmärke (order)
 	RowNotes                 string
@@ -102,6 +104,8 @@ func buildRequirementsUserText(in RequirementsInput) string {
 	section("GODSMEDDELANDE (RAD)", in.ReceivingMessage)
 	section("KONTROLLINSTRUKTION (RAD)", in.RowInspectionInstruction)
 	section("MOTTAGNINGSINSTRUKTION (ARTIKEL)", in.PartReceivingInstruction)
+	section("INKÖPSKOMMENTAR (ARTIKEL)", in.PartPurchaseComment)
+	section("ARTIKELKOMMENTAR (ARTIKEL)", in.PartComment)
 	section("GODSMÄRKE (RAD)", in.RowGoodsLabel)
 	section("GODSMÄRKE (ORDER)", in.OrderGoodsLabel)
 	section("ANTECKNINGAR (RAD)", in.RowNotes)

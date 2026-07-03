@@ -344,8 +344,15 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 				// Task 9: regelrätta domar beräknas FÄRSKT här ur radens krav
 				// + certets kolumner — aldrig cachade/persisterade.
 				cert := view.Cert
+				// FIX 3a: Krav-cellen i UI:t fallbackar cert-typ till AI-domens
+				// required_cert (lj.RequiredCert) när radens parsade cert-typ är tom
+				// — döm med SAMMA källa, annars kan ✓/⚠ glida isär mot det som visas.
+				reqCertType := row.Req.CertType
+				if reqCertType == "" {
+					reqCertType = lj.RequiredCert
+				}
 				lj.EnglishVerdict = domain.EnglishVerdict(row.Req.English, cert.IsEnglish)
-				lj.CertTypeVerdict = domain.CertTypeVerdict(row.Req.CertType, cert.EffectiveCertType())
+				lj.CertTypeVerdict = domain.CertTypeVerdict(reqCertType, cert.EffectiveCertType())
 				lj.ImpactVerdict = domain.ImpactVerdict(row.Req.Impact, cert.ImpactEnergyJ, cert.ImpactTempC)
 			}
 			rj.Links = append(rj.Links, lj)

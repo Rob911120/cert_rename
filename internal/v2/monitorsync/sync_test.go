@@ -505,6 +505,58 @@ func TestRefreshParsesRequirementsWithCache(t *testing.T) {
 	}
 }
 
+// FIX 9(c): en förhandsseeadad cache-post (raden saknar krav) ska appliceras på
+// raden UTAN AI-anrop — bevisar apply-on-diff-grenen vid cache-träff.
+func TestParseAllRequirementsAppliesCacheHitWithoutAI(t *testing.T) {
+	erp := &fakeERP{}
+	judge := &fakeJudge{}
+	s := testSync(t, erp, judge)
+	ctx := context.Background()
+
+	// Synka in en kravkandidat-rad (kravtext i ExtraDescription) utan att köra
+	// kravtolkningen — raden får inga krav ännu.
+	seed := &domain.OrderRow{
+		DeliveryRowID: 601, PurchaseOrderID: 6, OrderNumber: "B600", SupplierName: "SSAB",
+		PartID: 66, PartNumber: "60-606-001", Description: "PL 60-606-001",
+		ExtraDescription: "Plåt S355 cert 3.1", DeliveryDate: "2026-07-10",
+	}
+	if err := s.App.SyncOrderRows(ctx, []*domain.OrderRow{seed}); err != nil {
+		t.Fatal(err)
+	}
+
+	row, err := s.App.Repo.GetOrderRow(ctx, 601)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !requirementsCandidate(row) {
+		t.Fatal("raden borde vara kravkandidat (bär ExtraDescription)")
+	}
+	// Räkna ut den exakta cachenyckeln för raden och seeda cachen.
+	key := requirementsCacheKey(row.PartID, buildRequirementsInput(row))
+	cachedReq := domain.RowRequirements{
+		Material: "S355J2+N", EnNorm: "EN 10025-2", CertType: "3.1",
+		English: true, ProductForm: "plåt", Dimensions: "10",
+	}
+	if err := s.App.PutRequirementsCache(ctx, key, &cachedReq); err != nil {
+		t.Fatal(err)
+	}
+
+	// Kravtolkningen: cache-träff → applicera utan att röra AI-porten.
+	if err := s.ParseAllRequirements(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if judge.parseCalls != 0 {
+		t.Errorf("cache-träff ska inte anropa AI:n, fick %d ParseRequirements-anrop", judge.parseCalls)
+	}
+	row, _ = s.App.Repo.GetOrderRow(ctx, 601)
+	if row.Req != cachedReq {
+		t.Errorf("cachad krav applicerades inte på raden: %+v (vill ha %+v)", row.Req, cachedReq)
+	}
+	if row.ReqParsedAt.IsZero() {
+		t.Error("ReqParsedAt ska stämplas när kraven appliceras från cache")
+	}
+}
+
 // TestRequirementsResyncPreservesAndReparses täcker scenario (c): sync-upserten
 // nollställer ALDRIG kraven, och en ändrad ExtraDescription ger ny nyckel → ny
 // tolkning (nytt AI-anrop + uppdaterade krav).

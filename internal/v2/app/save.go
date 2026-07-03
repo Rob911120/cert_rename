@@ -163,5 +163,16 @@ func (a *App) buildMeta(c *domain.Cert, bNums []string) v1store.PdfMeta {
 		Hash:              c.PdfHash,
 		Schema:            6,
 		Status:            "saved",
+
+		// Kolumnkalibrerad extraktion (Task 1-2) — samma explicita lista som
+		// intake.go:s sidecar-bygge, satt från certets lagrade fält (c) så den
+		// V2-sparade utfilens metadata bär dem också.
+		IsLegible: c.IsLegible, IsUnaltered: c.IsUnaltered,
+		NormSystem: c.NormSystem, ImpactTempC: c.ImpactTempC, ImpactEnergyJ: c.ImpactEnergyJ,
+		NormEdition: c.NormEdition, PedDirective: c.PedDirective,
+		Cev: c.Cev, CarbonPct: c.CarbonPct, PPct: c.PPct, SPct: c.SPct,
+		HasBendTest: c.HasBendTest, HasIntergranularTest: c.HasIntergranularTest,
+		HasStampPhoto: c.HasStampPhoto, MinTemperatureC: c.MinTemperatureC,
+		DeliveryCondition: c.DeliveryCondition,
 	}
 }

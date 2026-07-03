@@ -187,6 +187,45 @@ func TestSaveCertCrashRecovery(t *testing.T) {
 	}
 }
 
+// FIX 5: den V2-sparade utfilens PdfMeta ska bära alla 16 kolumnkalibrerade
+// extraktionsfält (Task 1-2) från certet — annars tappas de vid spar (buildMeta
+// satte tidigare bara V1-fälten).
+func TestBuildMetaCarriesExtractionFields(t *testing.T) {
+	a, _, _ := testApp(t)
+	temp, cev, cpct := -40.0, 0.45, 0.18
+	c := &domain.Cert{
+		PdfHash: "h", OriginalFilename: "x.pdf", ReceivedAt: "2026-07-01T00:00:00Z",
+		Charge: "43136", Material: "S690QL",
+		IsLegible: false, IsUnaltered: false, // ska bäras rakt av, inte tvingas till true
+		NormSystem: "Charpy", NormEdition: "2019", PedDirective: "2014/68/EU",
+		ImpactTempC: &temp, ImpactEnergyJ: 27,
+		Cev: &cev, CarbonPct: &cpct,
+		HasBendTest: true, HasIntergranularTest: true, HasStampPhoto: true,
+		DeliveryCondition: "+N",
+	}
+
+	m := a.buildMeta(c, []string{"B128293"})
+
+	if m.IsLegible != false || m.IsUnaltered != false {
+		t.Errorf("IsLegible/IsUnaltered ska bäras rakt av: %+v", m)
+	}
+	if m.NormSystem != "Charpy" || m.NormEdition != "2019" || m.PedDirective != "2014/68/EU" {
+		t.Errorf("norm/ped-fält tappade: %+v", m)
+	}
+	if m.ImpactTempC == nil || *m.ImpactTempC != -40 || m.ImpactEnergyJ != 27 {
+		t.Errorf("slagseghet tappad: temp=%v energy=%v", m.ImpactTempC, m.ImpactEnergyJ)
+	}
+	if m.Cev == nil || *m.Cev != 0.45 || m.CarbonPct == nil || *m.CarbonPct != 0.18 {
+		t.Errorf("kemi-tal tappade: %+v", m)
+	}
+	if !m.HasBendTest || !m.HasIntergranularTest || !m.HasStampPhoto {
+		t.Errorf("test-booleans tappade: %+v", m)
+	}
+	if m.DeliveryCondition != "+N" {
+		t.Errorf("DeliveryCondition = %q, vill ha \"+N\"", m.DeliveryCondition)
+	}
+}
+
 func TestSaveCertWarningsRequireConfirm(t *testing.T) {
 	a, _, cfg := testApp(t)
 	// Ofullständigt cert: saknar charge + dimensioner

@@ -229,6 +229,8 @@ function reqTextSection(r) {
     ['Godsmeddelande', r.receiving_message],
     ['Mottagningskontroll (rad)', r.receiving_inspection_instruction],
     ['Mottagningsinstruktion (artikel)', r.part_receiving_instruction],
+    ['Inköpskommentar', r.part_purchase_comment],
+    ['Artikelkommentar', r.part_comment],
     ['Godsmärke (rad)', r.row_goods_label],
     ['Godsmärke (order)', r.order_goods_label],
     ['Radnotering', r.row_notes],
@@ -350,6 +352,16 @@ function cmpTable(r, l, c) {
   const icon = (ok) => ok === 'ok' ? '<span class="icon-ok">✓</span>'
     : ok === 'mismatch' ? '<span class="icon-bad">⚠</span>' : '<span class="icon-unk">—</span>';
   const krav = (reqVal, aiVal) => reqVal || aiVal || '';
+  // FIX 3b: när radens parsade krav och AI-domens värde BÅDA finns men skiljer sig
+  // dömde AI:n mot ett ANNAT värde än Krav-cellen visar — synliggör det i ikonens
+  // title (skevheten självläker vid nästa refresh via cache-nyckeln).
+  const iconSkew = (ok, reqVal, aiVal) =>
+    reqVal && aiVal && reqVal !== aiVal
+      ? icon(ok).replace('<span ', `<span title="AI-dom mot: ${esc(aiVal)}" `)
+      : icon(ok);
+  // FIX 10: EN-normen visas i Material-kravcellen — annars kan en rad vars enda
+  // parsade krav är req_en_norm ge en helt tom kravtabell trots rowHasReq().
+  const reqMaterial = [r.req_material, r.req_en_norm].filter(Boolean).join(' ');
   // Redigerbar cert-cell (bara när ett cert finns); annars ren "—"-cell.
   const editRow = (label, kravVal, field, certVal, ic) => `
     <tr><td class="lbl">${label}</td><td>${esc(kravVal) || '—'}</td>
@@ -363,9 +375,9 @@ function cmpTable(r, l, c) {
   return `
   <table class="cmp">
     <tr><th>Fält</th><th>Krav</th><th>Cert</th><th></th></tr>
-    ${editRow('Material', krav(r.req_material, li.required_material), 'material', cEff.material, icon(li.material_ok))}
+    ${editRow('Material', krav(reqMaterial, li.required_material), 'material', cEff.material, iconSkew(li.material_ok, r.req_material, li.required_material))}
     ${editRow('Cert-typ', krav(r.req_cert_type, li.required_cert), 'cert_type', cEff.cert_type, icon(li.cert_type_verdict))}
-    ${editRow('Typ', krav(r.req_product_form, li.required_product_form), 'product_form', cEff.product_form, icon(li.product_form_ok))}
+    ${editRow('Typ', krav(r.req_product_form, li.required_product_form), 'product_form', cEff.product_form, iconSkew(li.product_form_ok, r.req_product_form, li.required_product_form))}
     ${editRow('Mått', krav(r.req_dimensions, ''), 'dimensions', cEff.dimensions, '')}
     ${plainRow('Engelska', r.req_english ? 'Ja' : '—', c ? (c.is_english ? 'Ja' : 'Nej') : '—', icon(li.english_verdict))}
     ${plainRow('Slagseghet', r.req_impact || '—', c ? slagprovText(c) : '—', icon(li.impact_verdict))}
@@ -389,12 +401,18 @@ function nameComponentsRow(c) {
     ['Material', 'material', c.effective.material],
     ['B-nr', 'b_numbers', c.effective_b_numbers.join(', ')],
   ];
-  return `<div class="namecomponents">${comps.map(([label, field, val]) => `
-    <span class="namecomp ${val ? '' : 'namecomp-empty'}">
+  return `<div class="namecomponents">${comps.map(([label, field, val]) => {
+    // FIX 13: BuildFilename utelämnar produktformen när den är tom ELLER "okänt";
+    // behandla därför "okänt" (skiftlägesokänsligt) som tomt i form-chippen så
+    // det ofullständiga namnet varningsmarkeras i stället för att se giltigt ut.
+    const empty = !val || (field === 'product_form' && /^okänt$/i.test(val));
+    return `
+    <span class="namecomp ${empty ? 'namecomp-empty' : ''}">
       <span class="namecomp-label">${esc(label)}</span>
       <span class="editcell" data-edit="${field}" data-cert="${c.id}"
             data-value="${esc(val)}" title="Redigera ${esc(label)}">${esc(val) || '—'}</span>
-    </span>`).join('')}</div>`;
+    </span>`;
+  }).join('')}</div>`;
 }
 
 // Levande filnamnsrad + Spara-knapp; fryst rendering efter spar.

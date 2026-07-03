@@ -90,6 +90,13 @@ func (a *App) SetRowRequirements(ctx context.Context, rowID int64, r domain.RowR
 	return nil
 }
 
+// PutRequirementsCache skriver en kravtolkning i cachen och stämplar tiden via
+// klock-porten (a.ts) — enda vägen från sync-lagret, så time.Now aldrig läcker in
+// där. Rör INTE match-cachen (PutMatchCache) som har sin egen pre-existerande väg.
+func (a *App) PutRequirementsCache(ctx context.Context, key string, r *domain.RowRequirements) error {
+	return a.Repo.PutRequirementsCache(ctx, key, r, a.ts())
+}
+
 // State/SetState är tunna genomstick till app_state (last_sync m.m.).
 func (a *App) State(ctx context.Context, key string) string {
 	v, err := a.Repo.GetState(ctx, key)

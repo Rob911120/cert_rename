@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"strconv"
 	"strings"
 	"time"
@@ -404,9 +405,6 @@ func (s *Sync) judgeWithCache(ctx context.Context, row *domain.OrderRow, c *doma
 
 		CertNormSystem:        c.NormSystem,
 		CertNormEdition:       c.NormEdition,
-		CertImpactTempC:       c.ImpactTempC,
-		CertImpactEnergyJ:     c.ImpactEnergyJ,
-		CertIsEnglish:         c.IsEnglish,
 		CertDeliveryCondition: c.DeliveryCondition,
 	})
 	if err != nil {
@@ -429,35 +427,36 @@ func (s *Sync) judgeWithCache(ctx context.Context, row *domain.OrderRow, c *doma
 
 // matchCacheKey är BREDDAD mot V1: alla effektiva certfält som påverkar domen
 // ingår, så varje rättelse (material, dimensioner, form, cert-typ) ger en ny
-// nyckel och en färsk dom. Task 9: MÅSTE täcka ALLA nya AI-inputfält (parsade
-// krav + certets nya kolumner) — annars serveras stale verdicts när kraven
-// eller certkolumnerna ändras.
+// nyckel och en färsk dom. Task 9: täcker alla AI-inputfält (parsade krav +
+// certets kolumner). FIX 6: Description/PartNumber (som ingår i AI-prompten) täcks
+// nu också, och alla fält längdprefixas före hashning (se hashKey) så ingen
+// fältgräns kan förväxlas. FIX 8: certets slagseghet/engelska ingår INTE — de
+// renderas aldrig i prompten (ägs av de regelrätta domarna i domain.compare).
 func matchCacheKey(row *domain.OrderRow, c *domain.Cert) string {
-	raw := fmt.Sprintf("part:%d|%s|cert:%d|%s|%s|%s|%s|%t"+
-		"|req:%s|%s|%s|%s|%s|%s"+
-		"|certcol:%s|%s|%s|%s|%s|%t",
-		row.PartID, row.ExtraDescription,
-		c.ID, c.EffectiveMaterial(), c.EffectiveDimensions(), c.EffectiveProductForm(),
-		c.EffectiveCertType(), row.CertRequired,
+	return hashKey("match",
+		strconv.FormatInt(row.PartID, 10),
+		row.PartNumber,
+		row.Description,
+		row.ExtraDescription,
+		strconv.FormatInt(c.ID, 10),
+		c.EffectiveMaterial(), c.EffectiveDimensions(), c.EffectiveProductForm(),
+		c.EffectiveCertType(),
+		strconv.FormatBool(row.CertRequired),
 		row.Req.Material, row.Req.EnNorm, row.Req.CertType,
 		row.Req.ProductForm, row.Req.Dimensions, row.Req.Impact,
-		c.NormSystem, c.NormEdition, fmtPtr(c.ImpactTempC),
-		fmtFloat(c.ImpactEnergyJ), c.DeliveryCondition, c.IsEnglish)
-	sum := sha256.Sum256([]byte(raw))
-	return hex.EncodeToString(sum[:])
+		c.NormSystem, c.NormEdition, c.DeliveryCondition)
 }
 
-// fmtPtr serialiserar ett *float64 stabilt för cachenyckeln: "nil" när ej satt,
-// annars talet (så nil skiljs från 0).
-func fmtPtr(f *float64) string {
-	if f == nil {
-		return "nil"
+// hashKey hashar prefix + längdprefixade fält till en stabil hex-nyckel. Genom
+// att skriva "%d:%s" per fält kan ingen fältgräns förväxlas: "A|B"+"C" ger en
+// annan nyckel än "A"+"B|C" (FIX 6).
+func hashKey(prefix string, fields ...string) string {
+	h := sha256.New()
+	io.WriteString(h, prefix)
+	for _, f := range fields {
+		fmt.Fprintf(h, "|%d:%s", len(f), f)
 	}
-	return fmtFloat(*f)
-}
-
-func fmtFloat(f float64) string {
-	return strconv.FormatFloat(f, 'g', -1, 64)
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 // ---------------------------------------------------------------------------
@@ -484,15 +483,22 @@ func (s *Sync) ParseAllRequirements(ctx context.Context) error {
 		in := buildRequirementsInput(row)
 		key := requirementsCacheKey(row.PartID, in)
 
-		// Cache-träff: applicera bara vid diff (raden saknar kraven eller de
-		// skiljer sig) — undvik onödiga skrivningar. INGET AI-anrop.
-		if cached, err := s.App.Repo.GetRequirementsCache(ctx, key); err == nil {
+		// Cache-läsning: bara ErrNotFound är en äkta miss (→ AI-vägen). Andra fel
+		// (t.ex. trasig cache-rad) loggas och faller igenom till AI i stället för
+		// att tyst maskeras som miss.
+		cached, err := s.App.Repo.GetRequirementsCache(ctx, key)
+		switch {
+		case err == nil:
+			// Cache-träff: applicera bara vid diff (raden saknar kraven eller de
+			// skiljer sig) — undvik onödiga skrivningar. INGET AI-anrop.
 			if row.Req != *cached {
 				if err := s.App.SetRowRequirements(ctx, row.DeliveryRowID, *cached); err != nil {
 					return err
 				}
 			}
 			continue
+		case err != domain.ErrNotFound:
+			s.App.Notify.Logf("⚠️  krav-cache-läsning %s: %v", row.PartNumber, err)
 		}
 
 		// Cache-miss: kräver AI-porten. Utan nyckel fylls kraven i när den finns.
@@ -508,7 +514,7 @@ func (s *Sync) ParseAllRequirements(ctx context.Context) error {
 		if err := s.App.SetRowRequirements(ctx, row.DeliveryRowID, req); err != nil {
 			return err
 		}
-		if err := s.App.Repo.PutRequirementsCache(ctx, key, &req, time.Now().UTC().Format(time.RFC3339)); err != nil {
+		if err := s.App.PutRequirementsCache(ctx, key, &req); err != nil {
 			s.App.Notify.Logf("⚠️  krav-cache-skrivning: %v", err)
 		}
 	}
@@ -516,7 +522,10 @@ func (s *Sync) ParseAllRequirements(ctx context.Context) error {
 }
 
 // requirementsCandidate: raden behöver tolkas om den kräver cert eller bär
-// någon kravtext (annars finns inget att tolka).
+// någon kravtext (annars finns inget att tolka). FIX 7 + FIX 2: gaten MÅSTE täcka
+// samma texter som buildRequirementsInput skickar till AI:n — annars hoppas rader
+// vars enda kravtext ligger i ett av de fält som inte gatades (godsmärke, notering,
+// legering, artikel-/inköpskommentar) över och får aldrig sina krav tolkade.
 func requirementsCandidate(r *domain.OrderRow) bool {
 	if r.CertRequired {
 		return true
@@ -525,6 +534,13 @@ func requirementsCandidate(r *domain.OrderRow) bool {
 		strings.TrimSpace(r.ReceivingMessage) != "" ||
 		strings.TrimSpace(r.ReceivingInspectionInstruction) != "" ||
 		strings.TrimSpace(r.PartReceivingInstruction) != "" ||
+		strings.TrimSpace(r.PartPurchaseComment) != "" ||
+		strings.TrimSpace(r.PartComment) != "" ||
+		strings.TrimSpace(r.RowGoodsLabel) != "" ||
+		strings.TrimSpace(r.OrderGoodsLabel) != "" ||
+		strings.TrimSpace(r.RowNotes) != "" ||
+		strings.TrimSpace(r.AlloyCode) != "" ||
+		strings.TrimSpace(r.AlloyDescription) != "" ||
 		strings.TrimSpace(r.ExternalComment) != "" ||
 		strings.TrimSpace(r.FreeText) != ""
 }
@@ -538,6 +554,8 @@ func buildRequirementsInput(r *domain.OrderRow) ai.RequirementsInput {
 		ReceivingMessage:         r.ReceivingMessage,
 		RowInspectionInstruction: r.ReceivingInspectionInstruction,
 		PartReceivingInstruction: r.PartReceivingInstruction,
+		PartPurchaseComment:      r.PartPurchaseComment,
+		PartComment:              r.PartComment,
 		RowGoodsLabel:            r.RowGoodsLabel,
 		OrderGoodsLabel:          r.OrderGoodsLabel,
 		RowNotes:                 r.RowNotes,
@@ -554,14 +572,19 @@ func buildRequirementsInput(r *domain.OrderRow) ai.RequirementsInput {
 // requirementsCacheKey hashar artikeln + ALLA fält som skickas till AI:n (i
 // samma ordning som buildRequirementsInput bygger). Ändras någon text/mått →
 // ny nyckel → färsk tolkning (aldrig stale krav från en gammal beställningstext).
+// FIX 6: strängfälten längdprefixas via hashKey så ingen fältgräns kan förväxlas;
+// måtten läggs sist som separata fält. FIX 2: artikel-/inköpskommentaren ingår.
 func requirementsCacheKey(partID int64, in ai.RequirementsInput) string {
-	raw := fmt.Sprintf("requirements|part:%d|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%g|%g|%g",
-		partID, in.Description, in.ExtraDescription, in.ReceivingMessage,
-		in.RowInspectionInstruction, in.PartReceivingInstruction, in.RowGoodsLabel,
-		in.OrderGoodsLabel, in.RowNotes, in.FreeText, in.ExternalComment,
-		in.AlloyCode, in.AlloyDescription, in.PartLength, in.PartWidth, in.PartHeight)
-	sum := sha256.Sum256([]byte(raw))
-	return hex.EncodeToString(sum[:])
+	return hashKey("requirements",
+		strconv.FormatInt(partID, 10),
+		in.Description, in.ExtraDescription, in.ReceivingMessage,
+		in.RowInspectionInstruction, in.PartReceivingInstruction,
+		in.PartPurchaseComment, in.PartComment,
+		in.RowGoodsLabel, in.OrderGoodsLabel, in.RowNotes, in.FreeText,
+		in.ExternalComment, in.AlloyCode, in.AlloyDescription,
+		strconv.FormatFloat(in.PartLength, 'g', -1, 64),
+		strconv.FormatFloat(in.PartWidth, 'g', -1, 64),
+		strconv.FormatFloat(in.PartHeight, 'g', -1, 64))
 }
 
 // requirementsFromAI mappar AI-svaret till domänens rena krav-struct.

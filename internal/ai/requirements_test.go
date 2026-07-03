@@ -2,6 +2,7 @@ package ai
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -19,9 +20,15 @@ func TestParseRequirements_FullResponse(t *testing.T) {
 	var sawTool string
 	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
-		if strings.Contains(string(body), "submit_requirements") {
-			sawTool = "submit_requirements"
+		// Avkoda requesten och läs tool_choice.name — en enkel Contains träffar
+		// även verktygsdefinitionen/prompttexten och kan därför aldrig faila.
+		var req struct {
+			ToolChoice struct {
+				Name string `json:"name"`
+			} `json:"tool_choice"`
 		}
+		_ = json.Unmarshal(body, &req)
+		sawTool = req.ToolChoice.Name
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
 			"id": "msg_test",

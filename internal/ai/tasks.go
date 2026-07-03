@@ -245,12 +245,11 @@ type UpcomingClassifyInput struct {
 	ReqImpact      string
 
 	// Certets nya strukturerade kolumner (Task 1-3). Också additiva: V1 lämnar
-	// dem tomma/noll. Ren kontext åt materialdomen (t.ex. leveranstillstånd).
+	// dem tomma. Ren kontext åt materialdomen (t.ex. leveranstillstånd).
+	// OBS: slagseghet, engelska och cert-typ ägs av de regelrätta domarna
+	// (domain.compare) och renderas därför INTE i prompten — inga sådana fält här.
 	CertNormSystem        string
 	CertNormEdition       string
-	CertImpactTempC       *float64
-	CertImpactEnergyJ     float64
-	CertIsEnglish         bool
 	CertDeliveryCondition string
 }
 

@@ -124,14 +124,12 @@ func stubUpcoming(t *testing.T, capture *string) *anthropic.Client {
 func TestClassifyUpcoming_NewInputFieldsReachRequest(t *testing.T) {
 	var body string
 	client := stubUpcoming(t, &body)
-	temp := -20.0
 	in := UpcomingClassifyInput{
 		PartNumber: "PL-10", Description: "Plåt 10mm", CertRequired: true,
 		CertMaterial: "S355J2", CertType: "3.1",
 		ReqMaterial: "S355J2+N", ReqEnNorm: "EN 10025-2", ReqCertType: "3.1",
 		ReqProductForm: "plåt", ReqDimensions: "10", ReqImpact: "27J/-20°C",
 		CertNormSystem: "EN", CertNormEdition: "2019", CertDeliveryCondition: "+N",
-		CertImpactTempC: &temp, CertImpactEnergyJ: 32, CertIsEnglish: true,
 	}
 	if _, err := ClassifyUpcoming(context.Background(), nopLogger{}, client, in); err != nil {
 		t.Fatalf("ClassifyUpcoming: %v", err)
