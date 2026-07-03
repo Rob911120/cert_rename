@@ -505,6 +505,18 @@ func (q *Q) UpdateEmailStatus(ctx context.Context, id int64, status, errMsg stri
 	return oneRow(res, err)
 }
 
+// LatestEmailStatus returnerar senaste status för ett .eml-filnamn ('' om
+// aldrig sett) — intagets skip-nyckel för filer som slutat i fel.
+func (q *Q) LatestEmailStatus(ctx context.Context, filename string) (string, error) {
+	var s string
+	err := q.db.QueryRowContext(ctx,
+		`SELECT status FROM emails WHERE filename = ? ORDER BY id DESC LIMIT 1`, filename).Scan(&s)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return s, err
+}
+
 // ListEmailErrors returnerar intagsfel för UI-bannern.
 func (q *Q) ListEmailErrors(ctx context.Context) ([]string, error) {
 	rows, err := q.db.QueryContext(ctx,
