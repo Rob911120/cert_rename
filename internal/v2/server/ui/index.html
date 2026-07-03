@@ -1,14 +1,113 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="sv">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Cert Renamer V2</title>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cert Renamer V2</title>
+<link rel="stylesheet" href="app.css">
 </head>
-<body style="font-family: system-ui, sans-serif; display: grid; place-items: center; min-height: 100vh; margin: 0; background: #0f172a; color: #e2e8f0;">
-  <main style="text-align: center;">
-    <h1 style="font-weight: 600;">Cert Renamer V2</h1>
-    <p>Skelett igång — Översikts-UI:t byggs i milstolpe 7.</p>
-  </main>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-title">Cert Renamer <span class="v2-badge">V2</span></span>
+    <span id="todayLabel" class="muted"></span>
+  </div>
+  <div class="topbar-actions">
+    <span id="lastSync" class="muted small" title="Senaste Monitor-sync"></span>
+    <button id="refreshBtn" class="btn" title="Kör Monitor-sync nu">🔄 Uppdatera</button>
+    <button id="workerBtn" class="btn" title="Starta/stoppa mailintaget">
+      <span id="workerDot" class="dot dot-off"></span><span id="workerLabel">Starta</span>
+    </button>
+    <span id="costsBadge" class="muted small" title="AI-kostnad totalt"></span>
+    <button id="settingsBtn" class="btn btn-icon" title="Inställningar">⚙️</button>
+  </div>
+</header>
+
+<div id="banner" class="banner hidden"></div>
+
+<main>
+  <section id="unlinkedSection" class="hidden">
+    <h2>📄 Okopplade cert <span id="unlinkedCount" class="count"></span></h2>
+    <p class="hint">Cert som väntar på ett B-nummer. Koppla via förslag eller skriv in ordernumret.</p>
+    <div id="unlinkedList" class="cardlist"></div>
+  </section>
+
+  <section id="ordersSection">
+    <h2>📦 Inleveranser</h2>
+    <div id="ordersList"></div>
+    <p id="ordersEmpty" class="hint hidden">Inga orderrader ännu — kör 🔄 Uppdatera för att hämta från Monitor.</p>
+  </section>
+
+  <section id="tasksSection">
+    <h2>✅ Att göra</h2>
+    <ul id="taskList" class="tasklist"></ul>
+    <form id="taskForm" class="inline-form">
+      <input id="taskInput" type="text" placeholder="Ny uppgift…" autocomplete="off">
+      <button class="btn" type="submit">Lägg till</button>
+    </form>
+  </section>
+
+  <section id="savedSection" class="hidden">
+    <h2>💾 Senast sparade</h2>
+    <div id="savedList" class="cardlist"></div>
+  </section>
+</main>
+
+<footer id="logPanel" class="logpanel collapsed">
+  <button id="logToggle" class="log-toggle">📜 Logg</button>
+  <pre id="logLines" class="loglines"></pre>
+</footer>
+
+<div id="dropOverlay" class="drop-overlay hidden">
+  <div class="drop-inner">
+    <div class="drop-title">Släpp filer här</div>
+    <div class="muted">.pdf körs genom AI · .eml hamnar i inkorgen</div>
+  </div>
+</div>
+
+<dialog id="settingsDialog">
+  <form id="settingsForm" method="dialog">
+    <h3>⚙️ Inställningar</h3>
+    <label>Inkorgsmapp (.eml)<input name="inbox_dir"></label>
+    <label>Anthropic API-nyckel<input name="api_key" type="password" autocomplete="off"></label>
+    <label class="check"><input name="autostart" type="checkbox"> Starta mailintaget vid appstart</label>
+    <fieldset>
+      <legend>Monitor</legend>
+      <label>URL<input name="monitor_url" placeholder="https://…:8001/sv/001.1"></label>
+      <label>Användare<input name="monitor_user"></label>
+      <label>Lösenord<input name="monitor_password" type="password" autocomplete="off"></label>
+      <label class="check"><input name="upcoming_enabled" type="checkbox"> Daglig sync</label>
+      <div class="grid3">
+        <label>Tid<input name="upcoming_time" placeholder="16:30"></label>
+        <label>Dagar framåt<input name="upcoming_window_days" type="number"></label>
+        <label>Dagar bakåt<input name="upcoming_back_days" type="number"></label>
+      </div>
+    </fieldset>
+    <fieldset>
+      <legend>V2-mappar (tomt = under inkorgen)</legend>
+      <label>Certlager<input name="v2_store_dir" placeholder="&lt;inbox&gt;/v2/store"></label>
+      <label>Utmapp (sparade cert)<input name="v2_output_dir" placeholder="&lt;inbox&gt;/v2/out"></label>
+    </fieldset>
+    <label>Avvikelsemail till<input name="report_email" type="email" placeholder="daniel@…"></label>
+    <div class="dialog-actions">
+      <button type="button" class="btn" id="settingsCancel">Avbryt</button>
+      <button type="submit" class="btn btn-primary">Spara</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="confirmDialog">
+  <h3 id="confirmTitle"></h3>
+  <ul id="confirmList"></ul>
+  <div class="dialog-actions">
+    <button class="btn" id="confirmNo">Avbryt</button>
+    <button class="btn btn-warn" id="confirmYes">Spara ändå</button>
+  </div>
+</dialog>
+
+<div id="toasts" class="toasts"></div>
+
+<script type="module" src="js/overview.js"></script>
 </body>
 </html>
