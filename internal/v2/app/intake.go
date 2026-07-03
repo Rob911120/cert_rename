@@ -25,6 +25,12 @@ type IngestInput struct {
 	TokensIn         int64
 	TokensOut        int64
 	ProcessingMS     int64
+
+	// HashOverride används BARA av V1-importen: V1 bäddade in metadata i
+	// PDF:erna, så filbytes ≠ ursprungliga bilagebytes. Dedupe-nyckeln måste
+	// vara den URSPRUNGLIGA hashen (PdfMeta.Hash) för att framtida ominläsning
+	// av samma mail ska träffa rätt. Tom = hasha Data.
+	HashOverride string
 }
 
 // IngestCert tar emot ett extraherat cert: skriver PDF:en EN gång till
@@ -37,7 +43,10 @@ type IngestInput struct {
 // återanvänds lagerfilen vid nästa försök (hash-jämförelse) i stället för att
 // dubbleras.
 func (a *App) IngestCert(ctx context.Context, in IngestInput) (*domain.Cert, bool, error) {
-	hash := store.HashPDF(in.Data)
+	hash := in.HashOverride
+	if hash == "" {
+		hash = store.HashPDF(in.Data)
+	}
 	if existing, err := a.Repo.GetCertByHash(ctx, hash); err == nil {
 		return existing, true, nil
 	} else if err != domain.ErrNotFound {

@@ -100,6 +100,25 @@ func (a *App) SaveCert(ctx context.Context, certID int64, confirm bool) (*SaveRe
 	return &SaveResult{FinalFilename: finalName, OutputPath: outPath}, nil
 }
 
+// MarkImportedSaved stämplar ett nyimporterat V1-cert som redan sparat: filen
+// ligger kvar där V1 lämnade den (outputPath pekar dit, ingen kopia görs).
+// Används ENBART av V1-importen.
+func (a *App) MarkImportedSaved(ctx context.Context, certID int64, finalFilename, outputPath, savedAt string) error {
+	if savedAt == "" {
+		savedAt = a.ts()
+	}
+	return a.Repo.Tx(ctx, func(q *store.Q) error {
+		c, err := q.GetCert(ctx, certID)
+		if err != nil {
+			return err
+		}
+		if !domain.CertCanTransition(c.Status, domain.CertSparad) {
+			return domain.ErrTransition
+		}
+		return q.UpdateCertSaved(ctx, certID, finalFilename, outputPath, savedAt)
+	})
+}
+
 // placeOutputFile lägger certbytes i utmappen under önskat namn.
 // Kraschåterhämtning: finns målet redan och tillhör SAMMA cert (via inbäddad
 // metadata-hash eller rå byteshash) återanvänds det; annars får

@@ -23,23 +23,58 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	v1store "cert-renamer/internal/store"
+	"cert-renamer/internal/v2/app"
+	"cert-renamer/internal/v2/importer"
 	"cert-renamer/internal/v2/server"
 	v2store "cert-renamer/internal/v2/store"
 )
 
 func main() {
 	noBrowser := flag.Bool("no-browser", false, "starta utan att öppna webbläsaren")
+	importV1 := flag.Bool("import-v1", false, "engångsimport av V1:s approved/ + queue/ till V2, avsluta sedan")
 	flag.Parse()
 
 	logger, closeLog := newLogger()
 	defer closeLog()
 	slog.SetDefault(logger)
 
+	if *importV1 {
+		if err := runImport(logger); err != nil {
+			logger.Error("V1-import misslyckades", "err", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	if err := run(logger, *noBrowser); err != nil {
 		logger.Error("avslutas med fel", "err", err)
 		os.Exit(1)
 	}
 }
+
+// runImport kör engångs-bootstrappen -import-v1 och avslutar.
+func runImport(logger *slog.Logger) error {
+	cfg := v1store.LoadConfig()
+	db, err := v2store.Open(v2store.DBPath())
+	if err != nil {
+		return fmt.Errorf("öppna databas: %w", err)
+	}
+	defer db.Close()
+	if err := v2store.EnsureDirs(cfg); err != nil {
+		return err
+	}
+	a := app.New(v2store.NewRepository(db), func() v1store.Config { return cfg }, nil, slogNotifier{logger})
+	stats, err := importer.ImportV1(context.Background(), a, cfg)
+	logger.Info("V1-import", "importerade", stats.Imported, "dubbletter", stats.Skipped,
+		"utan_metadata", stats.NoMeta, "fel", stats.Errors)
+	return err
+}
+
+// slogNotifier uppfyller app.Notifier för CLI-läget (ingen SSE att pinga).
+type slogNotifier struct{ log *slog.Logger }
+
+func (n slogNotifier) Logf(format string, args ...any) { n.log.Info(fmt.Sprintf(format, args...)) }
+func (n slogNotifier) OverviewChanged()                {}
 
 func run(logger *slog.Logger, noBrowser bool) error {
 	cfg := v1store.LoadConfig()
