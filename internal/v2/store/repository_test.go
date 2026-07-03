@@ -86,6 +86,86 @@ func TestCertRoundtrip(t *testing.T) {
 	}
 }
 
+// TestCertExtractionFieldsRoundtrip verifierar de kolumnkalibrerade
+// extraktionsfälten från Task 1 (is_legible m.fl.): satta pekarvärden
+// överlever en roundtrip, och nil-pekare förblir nil (inte 0).
+func TestCertExtractionFieldsRoundtrip(t *testing.T) {
+	repo := testRepo(t)
+	ctx := context.Background()
+
+	impactTemp, cev, carbon, p, s, minTemp := -20.0, 0.43, 0.18, 0.012, 0.004, -40.0
+
+	c := &domain.Cert{
+		PdfHash: "ext-1", OriginalFilename: "cert.pdf", StoredName: "ext-1__cert.pdf",
+		ReceivedAt: "2026-07-03T08:00:00Z",
+		IsLegible:  false, IsUnaltered: false, NormSystem: "EN 10025-2",
+		ImpactTempC: &impactTemp, ImpactEnergyJ: 27,
+		NormEdition: "2019", PedDirective: "2014/68/EU",
+		Cev: &cev, CarbonPct: &carbon, PPct: &p, SPct: &s,
+		HasBendTest: true, HasIntergranularTest: true, HasStampPhoto: true,
+		MinTemperatureC: &minTemp, DeliveryCondition: "N",
+	}
+	id, err := repo.InsertCert(ctx, c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := repo.GetCert(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.IsLegible || got.IsUnaltered {
+		t.Errorf("IsLegible/IsUnaltered tappade: %+v", got)
+	}
+	if got.NormSystem != "EN 10025-2" || got.NormEdition != "2019" ||
+		got.PedDirective != "2014/68/EU" || got.DeliveryCondition != "N" {
+		t.Errorf("strängfält tappade: %+v", got)
+	}
+	if got.ImpactEnergyJ != 27 {
+		t.Errorf("ImpactEnergyJ = %v, vill ha 27", got.ImpactEnergyJ)
+	}
+	if !got.HasBendTest || !got.HasIntergranularTest || !got.HasStampPhoto {
+		t.Errorf("booleans tappade: %+v", got)
+	}
+	floatChecks := []struct {
+		name      string
+		want, got *float64
+	}{
+		{"ImpactTempC", &impactTemp, got.ImpactTempC},
+		{"Cev", &cev, got.Cev},
+		{"CarbonPct", &carbon, got.CarbonPct},
+		{"PPct", &p, got.PPct},
+		{"SPct", &s, got.SPct},
+		{"MinTemperatureC", &minTemp, got.MinTemperatureC},
+	}
+	for _, fc := range floatChecks {
+		if fc.got == nil {
+			t.Errorf("%s = nil, vill ha %v", fc.name, *fc.want)
+			continue
+		}
+		if *fc.got != *fc.want {
+			t.Errorf("%s = %v, vill ha %v", fc.name, *fc.got, *fc.want)
+		}
+	}
+
+	// Nil-pekare (fält aldrig satta) ska förbli nil efter roundtrip, inte 0.
+	c2 := &domain.Cert{
+		PdfHash: "ext-2", OriginalFilename: "cert2.pdf", StoredName: "ext-2__cert2.pdf",
+		ReceivedAt: "2026-07-03T08:00:00Z",
+	}
+	id2, err := repo.InsertCert(ctx, c2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got2, err := repo.GetCert(ctx, id2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got2.ImpactTempC != nil || got2.Cev != nil || got2.CarbonPct != nil ||
+		got2.PPct != nil || got2.SPct != nil || got2.MinTemperatureC != nil {
+		t.Errorf("nil-pekare ska förbli nil, inte 0: %+v", got2)
+	}
+}
+
 func TestOrderRowUpsertPreservesLocalBookkeeping(t *testing.T) {
 	repo := testRepo(t)
 	ctx := context.Background()

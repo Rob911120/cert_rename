@@ -193,6 +193,28 @@ CREATE TABLE app_state (
     value TEXT NOT NULL
 );
 `,
+	// 002 — kolumnkalibrerade extraktionsfält (Task 1, cert.Extraction):
+	// slag-, kemi- och märkningsdata. is_legible/is_unaltered defaultar till 1
+	// ("inget problem upptäckt") för befintliga rader; övriga booleans till 0.
+	// Nullable-tal (impact_temp_c m.fl.) får ingen default — NULL kvarstår.
+	`
+ALTER TABLE certs ADD COLUMN is_legible INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE certs ADD COLUMN is_unaltered INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE certs ADD COLUMN norm_system TEXT NOT NULL DEFAULT '';
+ALTER TABLE certs ADD COLUMN impact_temp_c REAL;
+ALTER TABLE certs ADD COLUMN impact_energy_j REAL NOT NULL DEFAULT 0;
+ALTER TABLE certs ADD COLUMN norm_edition TEXT NOT NULL DEFAULT '';
+ALTER TABLE certs ADD COLUMN ped_directive TEXT NOT NULL DEFAULT '';
+ALTER TABLE certs ADD COLUMN cev REAL;
+ALTER TABLE certs ADD COLUMN carbon_pct REAL;
+ALTER TABLE certs ADD COLUMN p_pct REAL;
+ALTER TABLE certs ADD COLUMN s_pct REAL;
+ALTER TABLE certs ADD COLUMN has_bend_test INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE certs ADD COLUMN has_intergranular_test INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE certs ADD COLUMN has_stamp_photo INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE certs ADD COLUMN min_temperature_c REAL;
+ALTER TABLE certs ADD COLUMN delivery_condition TEXT NOT NULL DEFAULT '';
+`,
 }
 
 // Open öppnar (eller skapar) V2-databasen och applicerar väntande migrationer.

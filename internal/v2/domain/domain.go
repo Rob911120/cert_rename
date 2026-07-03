@@ -101,6 +101,26 @@ type Cert struct {
 	TokensOutput      int64
 	ProcessingMS      int64
 
+	// Kolumnkalibrerad extraktion (Task 1): slag-, kemi- och märkningsdata.
+	// Nullable-tal är *float64 (nil = ej angivet/ej tillämpligt i certet).
+	// Ingen Corrected*-variant ännu — bara rå extraktion.
+	IsLegible            bool
+	IsUnaltered          bool
+	NormSystem           string
+	ImpactTempC          *float64
+	ImpactEnergyJ        float64
+	NormEdition          string
+	PedDirective         string
+	Cev                  *float64
+	CarbonPct            *float64
+	PPct                 *float64
+	SPct                 *float64
+	HasBendTest          bool
+	HasIntergranularTest bool
+	HasStampPhoto        bool
+	MinTemperatureC      *float64
+	DeliveryCondition    string
+
 	// Rättelser (effective-value-mönstret)
 	CorrectedCharge      string
 	CorrectedMaterial    string

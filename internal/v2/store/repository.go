@@ -107,6 +107,24 @@ func b2i(b bool) int {
 	return 0
 }
 
+// ptrToNullFloat/nullFloatToPtr: nullable-tal (impact_temp_c m.fl.) mappas
+// till/från *float64 via sql.NullFloat64 explicit — inget existerande
+// prejudikat i V2 för NULL-bara tal.
+func ptrToNullFloat(p *float64) sql.NullFloat64 {
+	if p == nil {
+		return sql.NullFloat64{}
+	}
+	return sql.NullFloat64{Float64: *p, Valid: true}
+}
+
+func nullFloatToPtr(n sql.NullFloat64) *float64 {
+	if !n.Valid {
+		return nil
+	}
+	v := n.Float64
+	return &v
+}
+
 // ---------------------------------------------------------------------------
 // Certs
 // ---------------------------------------------------------------------------
@@ -116,6 +134,10 @@ const certCols = `id, pdf_hash, original_filename, stored_name,
  cert_type, charge, material, en_standard_present, is_english, product_form,
  dimensions, country_of_origin, b_numbers, confidence, issues, model_used,
  tokens_input, tokens_output, processing_ms,
+ is_legible, is_unaltered, norm_system, impact_temp_c, impact_energy_j,
+ norm_edition, ped_directive, cev, carbon_pct, p_pct, s_pct,
+ has_bend_test, has_intergranular_test, has_stamp_photo, min_temperature_c,
+ delivery_condition,
  corrected_charge, corrected_material, corrected_product_form,
  corrected_dimensions, corrected_cert_type, corrected_b_numbers,
  correction_log, name_override, status, final_filename, output_path,
@@ -127,11 +149,17 @@ func scanCert(sc rowScanner) (*domain.Cert, error) {
 	var c domain.Cert
 	var enStd, isEng int
 	var bNums, issues, corrB, corrLog, status string
+	var isLegible, isUnaltered, hasBend, hasIntergranular, hasStampPhoto int
+	var impactTempC, cev, carbonPct, pPct, sPct, minTemperatureC sql.NullFloat64
 	err := sc.Scan(&c.ID, &c.PdfHash, &c.OriginalFilename, &c.StoredName,
 		&c.EmailSubject, &c.EmailFrom, &c.EmailDate,
 		&c.CertType, &c.Charge, &c.Material, &enStd, &isEng, &c.ProductForm,
 		&c.Dimensions, &c.CountryOfOrigin, &bNums, &c.Confidence, &issues, &c.ModelUsed,
 		&c.TokensInput, &c.TokensOutput, &c.ProcessingMS,
+		&isLegible, &isUnaltered, &c.NormSystem, &impactTempC, &c.ImpactEnergyJ,
+		&c.NormEdition, &c.PedDirective, &cev, &carbonPct, &pPct, &sPct,
+		&hasBend, &hasIntergranular, &hasStampPhoto, &minTemperatureC,
+		&c.DeliveryCondition,
 		&c.CorrectedCharge, &c.CorrectedMaterial, &c.CorrectedProductForm,
 		&c.CorrectedDimensions, &c.CorrectedCertType, &corrB,
 		&corrLog, &c.NameOverride, &status, &c.FinalFilename, &c.OutputPath,
@@ -144,6 +172,17 @@ func scanCert(sc rowScanner) (*domain.Cert, error) {
 	}
 	c.EnStandardPresent = enStd == 1
 	c.IsEnglish = isEng == 1
+	c.IsLegible = isLegible == 1
+	c.IsUnaltered = isUnaltered == 1
+	c.HasBendTest = hasBend == 1
+	c.HasIntergranularTest = hasIntergranular == 1
+	c.HasStampPhoto = hasStampPhoto == 1
+	c.ImpactTempC = nullFloatToPtr(impactTempC)
+	c.Cev = nullFloatToPtr(cev)
+	c.CarbonPct = nullFloatToPtr(carbonPct)
+	c.PPct = nullFloatToPtr(pPct)
+	c.SPct = nullFloatToPtr(sPct)
+	c.MinTemperatureC = nullFloatToPtr(minTemperatureC)
 	c.BNumbers = unmarshalList(bNums)
 	c.Issues = unmarshalList(issues)
 	c.CorrectedBNumbers = unmarshalCorrectedB(corrB)
@@ -159,13 +198,21 @@ func (q *Q) InsertCert(ctx context.Context, c *domain.Cert) (int64, error) {
 		 cert_type, charge, material, en_standard_present, is_english, product_form,
 		 dimensions, country_of_origin, b_numbers, confidence, issues, model_used,
 		 tokens_input, tokens_output, processing_ms,
+		 is_legible, is_unaltered, norm_system, impact_temp_c, impact_energy_j,
+		 norm_edition, ped_directive, cev, carbon_pct, p_pct, s_pct,
+		 has_bend_test, has_intergranular_test, has_stamp_photo, min_temperature_c,
+		 delivery_condition,
 		 corrected_b_numbers, correction_log, name_override, status, received_at)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		c.PdfHash, c.OriginalFilename, c.StoredName,
 		c.EmailSubject, c.EmailFrom, c.EmailDate,
 		c.CertType, c.Charge, c.Material, b2i(c.EnStandardPresent), b2i(c.IsEnglish), c.ProductForm,
 		c.Dimensions, c.CountryOfOrigin, marshalList(c.BNumbers), c.Confidence, marshalList(c.Issues), c.ModelUsed,
 		c.TokensInput, c.TokensOutput, c.ProcessingMS,
+		b2i(c.IsLegible), b2i(c.IsUnaltered), c.NormSystem, ptrToNullFloat(c.ImpactTempC), c.ImpactEnergyJ,
+		c.NormEdition, c.PedDirective, ptrToNullFloat(c.Cev), ptrToNullFloat(c.CarbonPct), ptrToNullFloat(c.PPct), ptrToNullFloat(c.SPct),
+		b2i(c.HasBendTest), b2i(c.HasIntergranularTest), b2i(c.HasStampPhoto), ptrToNullFloat(c.MinTemperatureC),
+		c.DeliveryCondition,
 		marshalCorrectedB(c.CorrectedBNumbers), marshalLog(c.CorrectionLog), c.NameOverride,
 		string(statusOrDefault(c.Status)), c.ReceivedAt)
 	if err != nil {
