@@ -21,6 +21,27 @@ type PdfMeta struct {
 	Confidence        string   `json:"confidence"`
 	Issues            []string `json:"issues"`
 
+	// Kolumnkalibrerad extraktion (V2, Task 1+2): slag-, kemi- och
+	// märkningsdata. Fanns inte i V1:s PdfMeta — gamla sidecars/inbäddningar
+	// utan dessa nycklar läses tillbaka som zero-values (ofarligt, "ej
+	// angivet"). Nullable-tal är *float64 (nil = ej angivet i certet).
+	IsLegible            bool     `json:"is_legible,omitempty"`
+	IsUnaltered          bool     `json:"is_unaltered,omitempty"`
+	NormSystem           string   `json:"norm_system,omitempty"`
+	ImpactTempC          *float64 `json:"impact_temp_c,omitempty"`
+	ImpactEnergyJ        float64  `json:"impact_energy_j,omitempty"`
+	NormEdition          string   `json:"norm_edition,omitempty"`
+	PedDirective         string   `json:"ped_directive,omitempty"`
+	Cev                  *float64 `json:"cev,omitempty"`
+	CarbonPct            *float64 `json:"carbon_pct,omitempty"`
+	PPct                 *float64 `json:"p_pct,omitempty"`
+	SPct                 *float64 `json:"s_pct,omitempty"`
+	HasBendTest          bool     `json:"has_bend_test,omitempty"`
+	HasIntergranularTest bool     `json:"has_intergranular_test,omitempty"`
+	HasStampPhoto        bool     `json:"has_stamp_photo,omitempty"`
+	MinTemperatureC      *float64 `json:"min_temperature_c,omitempty"`
+	DeliveryCondition    string   `json:"delivery_condition,omitempty"`
+
 	// Email-kontext (separata fält)
 	EmailSubject string `json:"email_subject"`
 	EmailFrom    string `json:"email_from"`

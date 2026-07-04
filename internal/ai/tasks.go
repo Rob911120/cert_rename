@@ -232,6 +232,25 @@ type UpcomingClassifyInput struct {
 	CertType         string // matchat certs CertType (t.ex. "3.1")
 	CertDimensions   string // matchat certs Dimensions
 	CertProductForm  string // matchat certs ProductForm (t.ex. "rundstång")
+
+	// Parsade krav (Task 8) — den BESTÄLLDA sanningen. ADDITIVA (Task 9): V2
+	// fyller dem från row.Req; V1 lämnar dem tomma och prompten ignorerar dem
+	// då. När de är ifyllda ekar AI:n dem i required_*-fälten i stället för att
+	// omtolka fritexten.
+	ReqMaterial    string
+	ReqEnNorm      string
+	ReqCertType    string
+	ReqProductForm string
+	ReqDimensions  string
+	ReqImpact      string
+
+	// Certets nya strukturerade kolumner (Task 1-3). Också additiva: V1 lämnar
+	// dem tomma. Ren kontext åt materialdomen (t.ex. leveranstillstånd).
+	// OBS: slagseghet, engelska och cert-typ ägs av de regelrätta domarna
+	// (domain.compare) och renderas därför INTE i prompten — inga sådana fält här.
+	CertNormSystem        string
+	CertNormEdition       string
+	CertDeliveryCondition string
 }
 
 // UpcomingClassification är AI-domen för en rad. material_ok/product_form_ok ∈ {ok,mismatch,unknown}.
@@ -250,21 +269,7 @@ type UpcomingClassification struct {
 // Sonnet, thinking avstängt för stabila/snabba svar. Anropas bara när ett cert har matchats —
 // underlaget bygger på den lagrade cert.Material, inte en ny PDF-extraktion.
 func ClassifyUpcoming(ctx context.Context, log Logger, client *anthropic.Client, in UpcomingClassifyInput) (*UpcomingClassification, error) {
-	userText := fmt.Sprintf(`Bedöm om materialet vi har cert för matchar det som är beställt för artikeln.
-
-ARTIKEL
-- Artikelnummer: %s
-- Beskrivning: %s
-- Extra beskrivning (bär ofta stålsort + ev. cert-krav): %s
-- Kräver materialcert enligt artikelinställning: %t
-
-CERT VI HAR (redan extraherat vid intag — extrahera inte om)
-- Material: %s
-- Cert-typ: %s
-- Dimension: %s
-- Produktform: %s`,
-		dash(in.PartNumber), dash(in.Description), dash(in.ExtraDescription), in.CertRequired,
-		dash(in.CertMaterial), dash(in.CertType), dash(in.CertDimensions), dash(in.CertProductForm))
+	userText := buildUpcomingUserText(in)
 
 	return logAICall(log, "sonnet ClassifyUpcoming("+in.PartNumber+")",
 		func() (*UpcomingClassification, anthropic.Usage, error) {
@@ -291,6 +296,71 @@ CERT VI HAR (redan extraherat vid intag — extrahera inte om)
 			return fmt.Sprintf("krav=%s vårt=%s → %s", uc.RequiredMaterial, uc.OurMaterial, uc.MaterialOK)
 		},
 	)
+}
+
+// buildUpcomingUserText bygger user-meddelandet. ARTIKEL + CERT VI HAR är
+// oförändrade (V1-kompatibelt). Avsnitten PARSADE KRAV och CERTETS KOLUMNER
+// tas bara med när minst ett av de additiva fälten är ifyllt — V1 skickar dem
+// tomma och får då exakt det gamla meddelandet.
+func buildUpcomingUserText(in UpcomingClassifyInput) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, `Bedöm om materialet vi har cert för matchar det som är beställt för artikeln.
+
+ARTIKEL
+- Artikelnummer: %s
+- Beskrivning: %s
+- Extra beskrivning (bär ofta stålsort + ev. cert-krav): %s
+- Kräver materialcert enligt artikelinställning: %t`,
+		dash(in.PartNumber), dash(in.Description), dash(in.ExtraDescription), in.CertRequired)
+
+	// PARSADE KRAV: den beställda sanningen (Task 8), om ifylld.
+	reqLines := labeledLines([][2]string{
+		{"Material", in.ReqMaterial},
+		{"EN-norm", in.ReqEnNorm},
+		{"Cert-typ", in.ReqCertType},
+		{"Produktform", in.ReqProductForm},
+		{"Dimension", in.ReqDimensions},
+		{"Slagseghet", in.ReqImpact},
+	})
+	if reqLines != "" {
+		b.WriteString("\n\nPARSADE KRAV (beställd sanning — eka dem i required_*-fälten, omtolka inte)")
+		b.WriteString(reqLines)
+	}
+
+	fmt.Fprintf(&b, `
+
+CERT VI HAR (redan extraherat vid intag — extrahera inte om)
+- Material: %s
+- Cert-typ: %s
+- Dimension: %s
+- Produktform: %s`,
+		dash(in.CertMaterial), dash(in.CertType), dash(in.CertDimensions), dash(in.CertProductForm))
+
+	// CERTETS KOLUMNER: nya strukturerade fält (Task 1-3), om ifyllda.
+	certExtra := labeledLines([][2]string{
+		{"Normsystem", in.CertNormSystem},
+		{"Normutgåva", in.CertNormEdition},
+		{"Leveranstillstånd", in.CertDeliveryCondition},
+	})
+	if certExtra != "" {
+		b.WriteString("\n\nCERTETS KOLUMNER (certets sanning)")
+		b.WriteString(certExtra)
+	}
+
+	return b.String()
+}
+
+// labeledLines returnerar "\n- Etikett: värde" för varje icke-tomt värde, eller
+// "" om alla är tomma (så anropssidan kan hoppa hela rubriken).
+func labeledLines(pairs [][2]string) string {
+	var b strings.Builder
+	for _, p := range pairs {
+		if strings.TrimSpace(p[1]) == "" {
+			continue
+		}
+		fmt.Fprintf(&b, "\n- %s: %s", p[0], p[1])
+	}
+	return b.String()
 }
 
 // dash returnerar "—" för tom sträng (gör prompten läsbar utan tomma rader).

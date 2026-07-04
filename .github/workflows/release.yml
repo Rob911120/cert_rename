@@ -34,6 +34,13 @@ jobs:
             go build -ldflags="-s -w -H windowsgui" -o cert-renamer.exe ./cmd/cert-renamer
           ls -lh cert-renamer.exe
 
+      - name: Bygg cert-renamer-v2.exe (parallellt V2-spår)
+        run: |
+          # Samma mönster som V1: GUI-subsystem, CGO-fritt, fristående binär.
+          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 \
+            go build -ldflags="-s -w -H windowsgui" -o cert-renamer-v2.exe ./cmd/cert-renamer-v2
+          ls -lh cert-renamer-v2.exe
+
       - name: Bygg diagnostikverktyget monitor-probe.exe (konsol, för felsökning av djuplänkar)
         run: |
           # Inget -H windowsgui: probe-verktyget ska ha konsol (skriver ut resultat).
@@ -45,6 +52,7 @@ jobs:
         run: |
           mkdir -p pkg
           cp cert-renamer.exe pkg/
+          cp cert-renamer-v2.exe pkg/
           cp monitor-probe.exe pkg/
           cat > "pkg/LÄS-MIG.txt" <<'TXT'
           Cert Renamer — portabel (Windows x64)
@@ -61,6 +69,20 @@ jobs:
           Appen kör utan eget fönster (bara webbläsarfliken syns). För att
           avsluta: Aktivitetshanteraren -> hitta "cert-renamer.exe" -> Avsluta
           aktivitet. (Servern fortsätter annars köra i bakgrunden.)
+
+          --- V2 (cert-renamer-v2.exe) ---
+
+          V2 ar det nya parallella sparet: databasen ar sanningen och certet
+          dops om forst nar du trycker Spara. Kors sida vid sida med V1: delar
+          config.json (API-nyckel, Monitor, inbox) men har EGEN databas
+          (cert-renamer-v2.db) och egna mappar (<inbox>\v2\store certlager,
+          <inbox>\v2\out sparade cert).
+
+          OBS: kor bara EN binars mailintag at gangen (bada pollar samma
+          inbox) — hall V1-workern "Av" nar V2:s intag ar pa.
+
+          Engangsimport av V1-historiken (kor i en kommandotolk):
+              cert-renamer-v2.exe -import-v1
           TXT
           cd pkg
           zip -r ../cert-renamer-windows-amd64.zip .
@@ -92,6 +114,6 @@ jobs:
           if [ "${{ steps.meta.outputs.prerelease }}" = "true" ]; then
             ARGS+=(--prerelease)
           fi
-          gh release create "$TAG" cert-renamer-windows-amd64.zip cert-renamer.exe monitor-probe.exe "${ARGS[@]}"
+          gh release create "$TAG" cert-renamer-windows-amd64.zip cert-renamer.exe cert-renamer-v2.exe monitor-probe.exe "${ARGS[@]}"
           echo "Release-URL:"
           gh release view "$TAG" --json url -q .url

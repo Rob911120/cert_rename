@@ -113,7 +113,9 @@ Returnera ALLTID via verktyget judge_material:
 - product_form_ok: "ok" om certets produktform (Produktform ovan) motsvarar den beställda formen (normalisera synonymer, t.ex. "rond"≈"rundstång"), "mismatch" om de tydligt skiljer sig, "unknown" om beställd form inte framgår eller underlaget inte räcker.
 - notes: kort motivering på svenska — peka på det som avgjorde domen.
 
-Var konservativ: hellre "unknown" än en gissad "ok". Likvärdiga beteckningar (S355J2 vs S355J2+N) kan vara ok; faktiska avvikelser i stålsort/-klass eller produktform är mismatch.`
+Var konservativ: hellre "unknown" än en gissad "ok". Likvärdiga beteckningar (S355J2 vs S355J2+N) kan vara ok; faktiska avvikelser i stålsort/-klass eller produktform är mismatch.
+
+När avsnittet PARSADE KRAV finns med nedan är DE den beställda sanningen — låt required_material, required_cert och required_product_form eka dem i stället för att omtolka fritexten. Saknas avsnittet, härled kraven ur beskrivningarna precis som förut. Certets strukturerade kolumner (om ifyllda) är certets sanning; är de tomma, ignorera dem. Din dom gäller BARA det tolkningsbara: materiallikvärdighet (material_ok) och produktform (product_form_ok) — engelska, certtyp och slagseghet jämförs regelrätt på annat håll och ska inte vägas in här.`
 
 var extractionTool = anthropic.ToolParam{
 	Name:        "submit_extraction",
