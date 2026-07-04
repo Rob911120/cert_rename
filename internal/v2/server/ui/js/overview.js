@@ -107,12 +107,15 @@ function renderOrders() {
     if (cat) byCat[cat].push(g);
   }
   let html = '';
+  let shown = 0;
   for (const [key, label] of CATS) {
     if (!byCat[key].length) continue;
+    shown += byCat[key].length;
     html += `<div class="cat-head">${label}</div>`;
     html += byCat[key].map(orderCard).join('');
   }
   $('ordersList').innerHTML = html;
+  $('ordersCount').textContent = shown ? `(${shown})` : '';
   $('ordersEmpty').classList.toggle('hidden', ov.orders.length > 0);
 }
 
@@ -396,16 +399,16 @@ function cmpTable(r, l, c) {
 function nameComponentsRow(c) {
   const comps = [
     ['Charge', 'charge', c.effective.charge],
-    ['Form', 'product_form', c.effective.product_form],
+    ['Kod', 'product_code', c.effective.product_code],
     ['Mått', 'dimensions', c.effective.dimensions],
     ['Material', 'material', c.effective.material],
     ['B-nr', 'b_numbers', c.effective_b_numbers.join(', ')],
   ];
   return `<div class="namecomponents">${comps.map(([label, field, val]) => {
-    // FIX 13: BuildFilename utelämnar produktformen när den är tom ELLER "okänt";
-    // behandla därför "okänt" (skiftlägesokänsligt) som tomt i form-chippen så
-    // det ofullständiga namnet varningsmarkeras i stället för att se giltigt ut.
-    const empty = !val || (field === 'product_form' && /^okänt$/i.test(val));
+    // FIX 13: BuildFilename utelämnar formsegmentet när det är tomt ELLER "okänt".
+    // Segmentets källa är nu product_code (förkortningen) — markera tomt/"okänt"
+    // som varning så det ofullständiga namnet syns i stället för att se giltigt ut.
+    const empty = !val || (field === 'product_code' && /^okänt$/i.test(val));
     return `
     <span class="namecomp ${empty ? 'namecomp-empty' : ''}">
       <span class="namecomp-label">${esc(label)}</span>
@@ -456,6 +459,7 @@ function notesBlock(kind, refId, notes, orderNumber = '', partNumber = '') {
 function renderSaved() {
   const list = ov.saved_recent;
   $('savedSection').classList.toggle('hidden', !list.length);
+  $('savedCount').textContent = list.length ? `(${list.length})` : '';
   $('savedList').innerHTML = list.map((c) => `
     <div class="card">
       <span class="mono">💾 ${esc(c.final_filename)}</span>
@@ -465,6 +469,7 @@ function renderSaved() {
 }
 
 function renderTasks() {
+  $('taskCount').textContent = ov.tasks.length ? `(${ov.tasks.length})` : '';
   $('taskList').innerHTML = ov.tasks.map((t) => `
     <li><span>${esc(t.text)}</span>
       ${t.order_number ? `<span class="meta">${esc(t.order_number)}</span>` : ''}

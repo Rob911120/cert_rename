@@ -42,6 +42,8 @@ func ApplyCorrection(c *Cert, field, value, who, ts string) error {
 		old, c.CorrectedMaterial = c.EffectiveMaterial(), value
 	case "product_form":
 		old, c.CorrectedProductForm = c.EffectiveProductForm(), value
+	case "product_code":
+		old, c.ProductCode = c.ProductCode, value // direktredigering — ingen corrected-tvilling
 	case "dimensions":
 		old, c.CorrectedDimensions = c.EffectiveDimensions(), value
 	case "cert_type":

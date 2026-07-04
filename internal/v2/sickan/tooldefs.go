@@ -45,11 +45,11 @@ var getCertTool = anthropic.ToolParam{
 
 var updateCertTool = anthropic.ToolParam{
 	Name:        "update_cert",
-	Description: anthropic.String("Sätter en rättelse på ett LEVANDE cert. Fält: charge, material, product_form, dimensions, cert_type, b_numbers (kommaseparerad lista). Rättelsen loggas och det levande namnet räknas om. Kräver Robs ja om det inte var exakt det Rob bad om."),
+	Description: anthropic.String("Sätter en rättelse på ett LEVANDE cert. Fält: charge, material, product_form, product_code, dimensions, cert_type, b_numbers (kommaseparerad lista). Rättelsen loggas och det levande namnet räknas om. Kräver Robs ja om det inte var exakt det Rob bad om."),
 	InputSchema: anthropic.ToolInputSchemaParam{
 		Properties: map[string]any{
 			"cert_id": integer("Certets id."),
-			"field":   str("Ett av: charge, material, product_form, dimensions, cert_type, b_numbers."),
+			"field":   str("Ett av: charge, material, product_form, product_code, dimensions, cert_type, b_numbers."),
 			"value":   str("Nya värdet ('' rensar rättelsen tillbaka till rå extraktion)."),
 		},
 		Required: []string{"cert_id", "field", "value"},

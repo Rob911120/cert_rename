@@ -16,6 +16,7 @@ type Extraction struct {
 	EnStandardPresent bool     `json:"en_standard_present"`
 	IsEnglish         bool     `json:"is_english"`
 	ProductForm       string   `json:"product_form"`
+	ProductCode       string   `json:"product_code"`
 	Dimensions        string   `json:"dimensions"`
 	CountryOfOrigin   string   `json:"country_of_origin"`
 	Confidence        string   `json:"confidence"`
@@ -121,14 +122,19 @@ func Validate(ext *Extraction, bNums []string) []string {
 // BuildFilename bygger PDF-filnamn enligt mönstret
 // <charge>-[form]-<dimensions>-<material>-<bNums>.pdf, vilket motsvarar
 // CH-TYP-Storlek-Kvalitet-Beställningsnummer enligt "Att spara certifikat".
-// Form-segmentet utelämnas om ProductForm är tomt eller "okänt", och
-// ASCII-foldas annars för Windows/Outlook/Jeeves-kompatibilitet.
+// Formsegmentet är ProductCode (förkortningen, t.ex. "RS"/"PL"/"HEB") när den
+// finns, annars den råa ProductForm-texten (bakåtkompat för cert utan kod).
+// Segmentet utelämnas om värdet är tomt eller "okänt", och ASCII-foldas annars
+// för Windows/Outlook/Jeeves-kompatibilitet (RÄ→RA, ÄR→AR, ÖS→OS).
 // Dimensions kan vara "16" (platta) eller "20x2"/"30x30x3" (rör/profil) —
 // whitespace tas bort och X normaliseras till lowercase x.
 func BuildFilename(ext *Extraction, bNums []string) string {
 	dims := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(ext.Dimensions), " ", ""))
 	parts := []string{ext.Charge}
-	form := strings.TrimSpace(ext.ProductForm)
+	form := strings.TrimSpace(ext.ProductCode)
+	if form == "" {
+		form = strings.TrimSpace(ext.ProductForm)
+	}
 	if form != "" && !strings.EqualFold(form, "okänt") {
 		parts = append(parts, asciiFold.Replace(form))
 	}

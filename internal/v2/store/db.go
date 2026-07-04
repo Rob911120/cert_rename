@@ -269,6 +269,12 @@ CREATE TABLE ai_requirements_cache (
     created_at   TEXT NOT NULL
 );
 `,
+	// 005 — product_code: cert-typens förkortning (RS, PL, HEB, 4R, ÖS …) som
+	// AI:n fyller vid extraktion enligt kodtabellen i extractV2SystemPrompt.
+	// Används i filnamnets formsegment i stället för den råa product_form-texten
+	// (faller tillbaka på product_form när koden är tom). Redigerbar direkt via
+	// ApplyCorrection — medvetet ingen corrected_-tvilling (jfr name_override).
+	`ALTER TABLE certs ADD COLUMN product_code TEXT NOT NULL DEFAULT '';`,
 }
 
 // Open öppnar (eller skapar) V2-databasen och applicerar väntande migrationer.

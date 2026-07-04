@@ -32,6 +32,7 @@ type certJSON struct {
 	EnStandardPresent bool     `json:"en_standard_present"`
 	IsEnglish         bool     `json:"is_english"`
 	ProductForm       string   `json:"product_form"`
+	ProductCode       string   `json:"product_code"`
 	Dimensions        string   `json:"dimensions"`
 	CountryOfOrigin   string   `json:"country_of_origin"`
 	BNumbers          []string `json:"b_numbers"`
@@ -220,7 +221,7 @@ func (s *Server) certJSON(ctx context.Context, view *app.CertView) certJSON {
 		EmailSubject: c.EmailSubject, EmailFrom: c.EmailFrom, EmailDate: c.EmailDate,
 		CertType: c.CertType, Charge: c.Charge, Material: c.Material,
 		EnStandardPresent: c.EnStandardPresent, IsEnglish: c.IsEnglish,
-		ProductForm: c.ProductForm, Dimensions: c.Dimensions, CountryOfOrigin: c.CountryOfOrigin,
+		ProductForm: c.ProductForm, ProductCode: c.ProductCode, Dimensions: c.Dimensions, CountryOfOrigin: c.CountryOfOrigin,
 		BNumbers: orEmpty(c.BNumbers), Confidence: c.Confidence, Issues: orEmpty(c.Issues),
 		IsLegible: c.IsLegible, IsUnaltered: c.IsUnaltered,
 		NormSystem: c.NormSystem, ImpactTempC: c.ImpactTempC, ImpactEnergyJ: c.ImpactEnergyJ,
@@ -235,8 +236,8 @@ func (s *Server) certJSON(ctx context.Context, view *app.CertView) certJSON {
 		},
 		Effective: map[string]string{
 			"charge": c.EffectiveCharge(), "material": c.EffectiveMaterial(),
-			"product_form": c.EffectiveProductForm(), "dimensions": c.EffectiveDimensions(),
-			"cert_type": c.EffectiveCertType(),
+			"product_form": c.EffectiveProductForm(), "product_code": c.EffectiveProductCode(),
+			"dimensions": c.EffectiveDimensions(), "cert_type": c.EffectiveCertType(),
 		},
 		EffectiveBNumbers: orEmpty(c.EffectiveBNumbers()),
 		CorrectionLog:     orEmptyLog(c.CorrectionLog),

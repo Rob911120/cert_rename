@@ -40,31 +40,31 @@
 <div id="banner" class="banner hidden"></div>
 
 <main>
-  <section id="unlinkedSection" class="hidden">
-    <h2>📄 Okopplade cert <span id="unlinkedCount" class="count"></span></h2>
-    <p class="hint">Cert som väntar på ett B-nummer. Koppla via förslag eller skriv in ordernumret.</p>
-    <div id="unlinkedList" class="cardlist"></div>
-  </section>
-
-  <section id="ordersSection">
-    <h2>📦 Inleveranser</h2>
+  <details id="ordersSection" class="fold">
+    <summary>📦 Inleveranser <span id="ordersCount" class="count"></span></summary>
     <div id="ordersList"></div>
     <p id="ordersEmpty" class="hint hidden">Inga orderrader ännu — kör 🔄 Uppdatera för att hämta från Monitor.</p>
-  </section>
+  </details>
 
-  <section id="tasksSection">
-    <h2>✅ Att göra</h2>
+  <details id="tasksSection" class="fold">
+    <summary>✅ Att göra <span id="taskCount" class="count"></span></summary>
     <ul id="taskList" class="tasklist"></ul>
     <form id="taskForm" class="inline-form">
       <input id="taskInput" type="text" placeholder="Ny uppgift…" autocomplete="off">
       <button class="btn" type="submit">Lägg till</button>
     </form>
-  </section>
+  </details>
 
-  <section id="savedSection" class="hidden">
-    <h2>💾 Senast sparade</h2>
+  <details id="savedSection" class="fold hidden">
+    <summary>💾 Senast sparade <span id="savedCount" class="count"></span></summary>
     <div id="savedList" class="cardlist"></div>
-  </section>
+  </details>
+
+  <details id="unlinkedSection" class="fold hidden">
+    <summary>📄 Okopplade cert <span id="unlinkedCount" class="count"></span></summary>
+    <p class="hint">Cert som väntar på ett B-nummer. Koppla via förslag eller skriv in ordernumret.</p>
+    <div id="unlinkedList" class="cardlist"></div>
+  </details>
 </main>
 
 <footer id="logPanel" class="logpanel collapsed">

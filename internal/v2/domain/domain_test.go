@@ -130,6 +130,17 @@ func TestProposedFilenamePrecedence(t *testing.T) {
 			t.Errorf("got %q, want %q", got, want)
 		}
 	})
+
+	t.Run("product_code bygger formsegmentet", func(t *testing.T) {
+		c := base()
+		c.ProductForm = "rundstång"
+		c.ProductCode = "RS"
+		got := ProposedFilename(c, nil)
+		want := "70703-RS-16-S690QL-B127562.pdf"
+		if got != want {
+			t.Errorf("got %q, want %q", got, want)
+		}
+	})
 }
 
 func TestApplyCorrection(t *testing.T) {
@@ -163,6 +174,19 @@ func TestApplyCorrection(t *testing.T) {
 	}
 	if !reflect.DeepEqual(c.CorrectedBNumbers, []string{"B111111", "B222222"}) {
 		t.Errorf("CorrectedBNumbers = %v", c.CorrectedBNumbers)
+	}
+
+	// product_code redigeras direkt (ingen corrected-tvilling) men loggas ändå
+	c.ProductCode = "RS"
+	if err := ApplyCorrection(c, "product_code", "PL", "rob", "t2"); err != nil {
+		t.Fatal(err)
+	}
+	if c.ProductCode != "PL" {
+		t.Errorf("ProductCode = %q, vill ha PL", c.ProductCode)
+	}
+	last := c.CorrectionLog[len(c.CorrectionLog)-1]
+	if last.Field != "product_code" || last.Old != "RS" || last.New != "PL" {
+		t.Errorf("product_code-loggpost = %+v", last)
 	}
 
 	// Okänt fält avvisas

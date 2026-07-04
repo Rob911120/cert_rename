@@ -48,6 +48,7 @@ func TestExtractV2_FullResponse(t *testing.T) {
 					"is_legible": false,
 					"is_unaltered": true,
 					"product_form": "plåt",
+					"product_code": "PL",
 					"dimensions": "20",
 					"country_of_origin": "Sweden",
 					"norm_system": "ASME",
@@ -95,8 +96,8 @@ func TestExtractV2_FullResponse(t *testing.T) {
 	if !ext.EnStandardPresent || !ext.IsEnglish {
 		t.Errorf("en_standard_present/is_english fel: %+v", ext)
 	}
-	if ext.ProductForm != "plåt" || ext.Dimensions != "20" || ext.CountryOfOrigin != "Sweden" || ext.Confidence != "high" {
-		t.Errorf("form/dim/land/conf fel: %+v", ext)
+	if ext.ProductForm != "plåt" || ext.ProductCode != "PL" || ext.Dimensions != "20" || ext.CountryOfOrigin != "Sweden" || ext.Confidence != "high" {
+		t.Errorf("form/kod/dim/land/conf fel: %+v", ext)
 	}
 	if len(ext.Issues) != 1 || ext.Issues[0] != "OBS: avskuret parti" {
 		t.Errorf("issues fel: %v", ext.Issues)

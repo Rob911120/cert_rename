@@ -30,6 +30,18 @@ Kolumnregler:
 - is_legible: false bara om partier är avskurna/oläsliga; annars true.
 - is_unaltered: false bara om information verkar maskerad/borttagen/redigerad; annars true.
 - product_form: produktens form (lowercase svenska), t.ex. "rundstång", "fyrkantsstång", "plattjärn", "plåt", "fyrkantsrör", "rundrör", "vinkel", "balk". Använd "okänt" om det inte framgår.
+- product_code: produktformens FÖRKORTNING enligt kodtabellen nedan — väljs utifrån product_form OCH den faktiska beteckningen på certifikatet. Detta är koden som används i det sparade filnamnet. Lämna tom sträng om du är osäker (gissa aldrig).
+  Kodtabell:
+    Stång:        4S=4-kantsstång  6S=6-kantsstång  LS=vinkelstång  PS=plattstång/plattjärn
+                  RS=rundstång  TS=T-stång  US=U-stång  ZS=Z-stång
+    Balk/Räls:    använd balkens EGEN beteckning som kod: HEA, HEB, IPE, UNP, UPE, USP
+                  RÄ=räls
+    Profiler (kallformade):  CP=C-profil  LP=L-profil  TP=T-profil  UP=U-profil
+    Rör:          RR=runt rör (rundrör)  4R=4-kantsrör (fyrkantsrör)  ÄR=ämnesrör
+    Plåt:         PL=plåt
+    Bult/övrigt:  HGS=helgängad stång; för bult: använd bultens beteckning (m = mm gänga, t.ex. MP6SS = P6SS)
+    Plast:        sätt (P) framför övrig beteckning
+    Övrigt:       ÖP=övrig profil  ÖPL=övrig plåt  ÖR=övrig rör  ÖS=övrig stång
 - dimensions: produktens dimensioner från certifikatets aktuella rad, som sträng.
   Format: "<grovlek>" för platta produkter (t.ex. "16" för 16 mm plattjärn),
   "<ytterdiameter>x<vägg>" för rör (t.ex. "20x2"),
@@ -92,6 +104,7 @@ var extractionToolV2 = anthropic.ToolParam{
 			"is_legible":             map[string]any{"type": "boolean"},
 			"is_unaltered":           map[string]any{"type": "boolean"},
 			"product_form":           map[string]any{"type": "string"},
+			"product_code":           map[string]any{"type": "string"},
 			"dimensions":             map[string]any{"type": "string"},
 			"country_of_origin":      map[string]any{"type": "string"},
 			"norm_system":            map[string]any{"type": "string"},
@@ -114,7 +127,7 @@ var extractionToolV2 = anthropic.ToolParam{
 		Required: []string{
 			// V1:s befintliga required-lista
 			"is_en10204_3_1", "cert_type", "charge", "material", "en_standard_present",
-			"is_english", "product_form", "dimensions", "country_of_origin", "confidence", "issues",
+			"is_english", "product_form", "product_code", "dimensions", "country_of_origin", "confidence", "issues",
 			// nya boolean- och strängfält (talfälten är avsiktligt utelämnade)
 			"is_legible", "is_unaltered", "has_bend_test", "has_intergranular_test", "has_stamp_photo",
 			"norm_system", "norm_edition", "ped_directive", "delivery_condition",

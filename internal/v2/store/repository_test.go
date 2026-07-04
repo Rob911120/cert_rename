@@ -28,7 +28,7 @@ func TestCertRoundtrip(t *testing.T) {
 		EmailSubject: "Cert", EmailFrom: "mill@ssab.com", EmailDate: "2026-07-01",
 		CertType: "3.1", Charge: "43136", Material: "S355J2+N",
 		EnStandardPresent: true, IsEnglish: true,
-		ProductForm: "plåt", Dimensions: "60", CountryOfOrigin: "Sverige",
+		ProductForm: "plåt", ProductCode: "PL", Dimensions: "60", CountryOfOrigin: "Sverige",
 		BNumbers: []string{"B128293"}, Confidence: "high", Issues: []string{},
 		ModelUsed: "claude-sonnet", TokensInput: 1000, TokensOutput: 200, ProcessingMS: 1500,
 		ReceivedAt: "2026-07-01T08:00:00Z",
@@ -48,6 +48,9 @@ func TestCertRoundtrip(t *testing.T) {
 	if got.Material != "S355J2+N" || got.Charge != "43136" || !got.EnStandardPresent {
 		t.Errorf("råfält tappade: %+v", got)
 	}
+	if got.ProductCode != "PL" {
+		t.Errorf("ProductCode tappades vid insert→scan: %q", got.ProductCode)
+	}
 	if !reflect.DeepEqual(got.BNumbers, []string{"B128293"}) {
 		t.Errorf("BNumbers = %v", got.BNumbers)
 	}
@@ -60,6 +63,7 @@ func TestCertRoundtrip(t *testing.T) {
 	got.CorrectedBNumbers = []string{}
 	got.CorrectionLog = []domain.Correction{{TS: "t", Who: "rob", Field: "material", Old: "S355J2+N", New: "S690QL"}}
 	got.NameOverride = "eget-namn.pdf"
+	got.ProductCode = "RS" // direktredigerad kod persisteras via UpdateCertWork
 	if err := repo.UpdateCertWork(ctx, got); err != nil {
 		t.Fatal(err)
 	}
@@ -69,6 +73,9 @@ func TestCertRoundtrip(t *testing.T) {
 	}
 	if again.CorrectedMaterial != "S690QL" || again.NameOverride != "eget-namn.pdf" {
 		t.Errorf("arbetsfält tappade: %+v", again)
+	}
+	if again.ProductCode != "RS" {
+		t.Errorf("redigerad ProductCode persisterade inte: %q", again.ProductCode)
 	}
 	if again.CorrectedBNumbers == nil || len(again.CorrectedBNumbers) != 0 {
 		t.Errorf("rättad-till-inga ska vara tom icke-nil slice, är %#v", again.CorrectedBNumbers)

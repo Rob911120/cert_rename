@@ -92,6 +92,7 @@ type Cert struct {
 	EnStandardPresent bool
 	IsEnglish         bool
 	ProductForm       string
+	ProductCode       string
 	Dimensions        string
 	CountryOfOrigin   string
 	BNumbers          []string
@@ -265,6 +266,7 @@ func effective(corrected, raw string) string {
 func (c *Cert) EffectiveCharge() string      { return effective(c.CorrectedCharge, c.Charge) }
 func (c *Cert) EffectiveMaterial() string    { return effective(c.CorrectedMaterial, c.Material) }
 func (c *Cert) EffectiveProductForm() string { return effective(c.CorrectedProductForm, c.ProductForm) }
+func (c *Cert) EffectiveProductCode() string { return c.ProductCode } // ingen corrected-tvilling — redigeras direkt
 func (c *Cert) EffectiveDimensions() string  { return effective(c.CorrectedDimensions, c.Dimensions) }
 func (c *Cert) EffectiveCertType() string    { return effective(c.CorrectedCertType, c.CertType) }
 
@@ -289,6 +291,7 @@ func (c *Cert) EffectiveExtraction() *cert.Extraction {
 		EnStandardPresent: c.EnStandardPresent,
 		IsEnglish:         c.IsEnglish,
 		ProductForm:       c.EffectiveProductForm(),
+		ProductCode:       c.EffectiveProductCode(),
 		Dimensions:        c.EffectiveDimensions(),
 		CountryOfOrigin:   c.CountryOfOrigin,
 		Confidence:        c.Confidence,

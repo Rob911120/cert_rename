@@ -152,7 +152,7 @@ func nullFloatToPtr(n sql.NullFloat64) *float64 {
 const certCols = `id, pdf_hash, original_filename, stored_name,
  email_subject, email_from, email_date,
  cert_type, charge, material, en_standard_present, is_english, product_form,
- dimensions, country_of_origin, b_numbers, confidence, issues, model_used,
+ product_code, dimensions, country_of_origin, b_numbers, confidence, issues, model_used,
  tokens_input, tokens_output, processing_ms,
  is_legible, is_unaltered, norm_system, impact_temp_c, impact_energy_j,
  norm_edition, ped_directive, cev, carbon_pct, p_pct, s_pct,
@@ -174,7 +174,7 @@ func scanCert(sc rowScanner) (*domain.Cert, error) {
 	err := sc.Scan(&c.ID, &c.PdfHash, &c.OriginalFilename, &c.StoredName,
 		&c.EmailSubject, &c.EmailFrom, &c.EmailDate,
 		&c.CertType, &c.Charge, &c.Material, &enStd, &isEng, &c.ProductForm,
-		&c.Dimensions, &c.CountryOfOrigin, &bNums, &c.Confidence, &issues, &c.ModelUsed,
+		&c.ProductCode, &c.Dimensions, &c.CountryOfOrigin, &bNums, &c.Confidence, &issues, &c.ModelUsed,
 		&c.TokensInput, &c.TokensOutput, &c.ProcessingMS,
 		&isLegible, &isUnaltered, &c.NormSystem, &impactTempC, &c.ImpactEnergyJ,
 		&c.NormEdition, &c.PedDirective, &cev, &carbonPct, &pPct, &sPct,
@@ -216,18 +216,18 @@ func (q *Q) InsertCert(ctx context.Context, c *domain.Cert) (int64, error) {
 		(pdf_hash, original_filename, stored_name,
 		 email_subject, email_from, email_date,
 		 cert_type, charge, material, en_standard_present, is_english, product_form,
-		 dimensions, country_of_origin, b_numbers, confidence, issues, model_used,
+		 product_code, dimensions, country_of_origin, b_numbers, confidence, issues, model_used,
 		 tokens_input, tokens_output, processing_ms,
 		 is_legible, is_unaltered, norm_system, impact_temp_c, impact_energy_j,
 		 norm_edition, ped_directive, cev, carbon_pct, p_pct, s_pct,
 		 has_bend_test, has_intergranular_test, has_stamp_photo, min_temperature_c,
 		 delivery_condition,
 		 corrected_b_numbers, correction_log, name_override, status, received_at)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		c.PdfHash, c.OriginalFilename, c.StoredName,
 		c.EmailSubject, c.EmailFrom, c.EmailDate,
 		c.CertType, c.Charge, c.Material, b2i(c.EnStandardPresent), b2i(c.IsEnglish), c.ProductForm,
-		c.Dimensions, c.CountryOfOrigin, marshalList(c.BNumbers), c.Confidence, marshalList(c.Issues), c.ModelUsed,
+		c.ProductCode, c.Dimensions, c.CountryOfOrigin, marshalList(c.BNumbers), c.Confidence, marshalList(c.Issues), c.ModelUsed,
 		c.TokensInput, c.TokensOutput, c.ProcessingMS,
 		b2i(c.IsLegible), b2i(c.IsUnaltered), c.NormSystem, ptrToNullFloat(c.ImpactTempC), c.ImpactEnergyJ,
 		c.NormEdition, c.PedDirective, ptrToNullFloat(c.Cev), ptrToNullFloat(c.CarbonPct), ptrToNullFloat(c.PPct), ptrToNullFloat(c.SPct),
@@ -285,16 +285,17 @@ func (q *Q) ListCerts(ctx context.Context, status domain.CertStatus) ([]*domain.
 }
 
 // UpdateCertWork skriver certets ARBETSFÄLT (rättelser, logg, namn-override).
-// Råextraktionen och livscykelfälten röres aldrig här.
+// Råextraktionen och livscykelfälten röres aldrig här — undantag: product_code
+// saknar corrected-tvilling och redigeras direkt (jfr name_override).
 func (q *Q) UpdateCertWork(ctx context.Context, c *domain.Cert) error {
 	res, err := q.db.ExecContext(ctx, `UPDATE certs SET
 		corrected_charge=?, corrected_material=?, corrected_product_form=?,
 		corrected_dimensions=?, corrected_cert_type=?, corrected_b_numbers=?,
-		correction_log=?, name_override=?
+		product_code=?, correction_log=?, name_override=?
 		WHERE id = ?`,
 		c.CorrectedCharge, c.CorrectedMaterial, c.CorrectedProductForm,
 		c.CorrectedDimensions, c.CorrectedCertType, marshalCorrectedB(c.CorrectedBNumbers),
-		marshalLog(c.CorrectionLog), c.NameOverride, c.ID)
+		c.ProductCode, marshalLog(c.CorrectionLog), c.NameOverride, c.ID)
 	return oneRow(res, err)
 }
 
