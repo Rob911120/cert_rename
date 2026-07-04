@@ -10,9 +10,8 @@ import (
 	"strconv"
 	"strings"
 
-	v1store "cert-renamer/internal/store"
 	"cert-renamer/internal/v2/domain"
-	v2store "cert-renamer/internal/v2/store"
+	"cert-renamer/internal/v2/store"
 )
 
 // ---------------------------------------------------------------------------
@@ -265,7 +264,7 @@ func (s *Server) handleTaskAdd(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "tom task", http.StatusBadRequest)
 		return
 	}
-	t := &v2store.Task{Text: req.Text, DueDate: req.DueDate, OrderNumber: req.OrderNumber,
+	t := &store.Task{Text: req.Text, DueDate: req.DueDate, OrderNumber: req.OrderNumber,
 		Source: "rob", CreatedAt: nowRFC3339()}
 	if _, err := s.Repo.AddTask(r.Context(), t); err != nil {
 		writeError(w, err)
@@ -320,7 +319,7 @@ func (s *Server) handlePDF(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	path := v2store.StorePath(s.Config(), c.StoredName)
+	path := store.StorePath(s.Config(), c.StoredName)
 	w.Header().Set("Content-Type", "application/pdf")
 	w.Header().Set("Content-Disposition", `inline; filename="`+c.OriginalFilename+`"`)
 	http.ServeFile(w, r, path)
@@ -348,7 +347,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	for _, fhs := range r.MultipartForm.File {
 		for _, fh := range fhs {
 			name := filepath.Base(fh.Filename)
-			if !v1store.SafeName(name) {
+			if !store.SafeName(name) {
 				http.Error(w, "otillåtet filnamn: "+name, http.StatusBadRequest)
 				return
 			}
@@ -365,7 +364,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 			}
 			switch strings.ToLower(filepath.Ext(name)) {
 			case ".eml":
-				if _, err := v1store.WriteUniqueFile(s.Config().InboxDir, name, data); err != nil {
+				if _, err := store.WriteUniqueFile(s.Config().InboxDir, name, data); err != nil {
 					writeError(w, err)
 					return
 				}
@@ -411,12 +410,12 @@ func (s *Server) handleConfigGet(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleConfigPost(w http.ResponseWriter, r *http.Request) {
-	var cfg v1store.Config
+	var cfg store.Config
 	if !decode(w, r, &cfg) {
 		return
 	}
 	cfg.NormalizeUpcoming()
-	if err := v1store.SaveConfig(cfg); err != nil {
+	if err := store.SaveConfig(cfg); err != nil {
 		writeError(w, err)
 		return
 	}
@@ -431,9 +430,9 @@ func (s *Server) handleCosts(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, s.costs)
 }
 
-func orEmptyTasks(t []*v2store.Task) []*v2store.Task {
+func orEmptyTasks(t []*store.Task) []*store.Task {
 	if t == nil {
-		return []*v2store.Task{}
+		return []*store.Task{}
 	}
 	return t
 }

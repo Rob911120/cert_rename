@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"cert-renamer/internal/cert"
+	"cert-renamer/internal/v2/cert"
 )
 
 // ---------------------------------------------------------------------------
@@ -73,7 +73,7 @@ type Correction struct {
 }
 
 // Cert är ett mottaget certifikat. Råfälten (från AI-extraktionen) skrivs
-// aldrig över; rättelser bor i Corrected* ('' = ej rättad) och det effektiva
+// aldrig över; rättelser bor i Corrected* (” = ej rättad) och det effektiva
 // värdet läses via Effective*-metoderna.
 type Cert struct {
 	ID               int64

@@ -12,30 +12,29 @@ import (
 	"path/filepath"
 	"testing"
 
-	v1store "cert-renamer/internal/store"
 	"cert-renamer/internal/v2/domain"
-	v2store "cert-renamer/internal/v2/store"
+	"cert-renamer/internal/v2/store"
 )
 
-func testServer(t *testing.T) (*Server, *http.ServeMux, v1store.Config) {
+func testServer(t *testing.T) (*Server, *http.ServeMux, store.Config) {
 	t.Helper()
 	dir := t.TempDir()
-	db, err := v2store.Open(filepath.Join(dir, "test.db"))
+	db, err := store.Open(filepath.Join(dir, "test.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
-	cfg := v1store.Config{InboxDir: dir}
+	cfg := store.Config{InboxDir: dir}
 	s := New(cfg, db, slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError})))
 	return s, NewMux(s), cfg
 }
 
-func seedCert(t *testing.T, s *Server, cfg v1store.Config) *domain.Cert {
+func seedCert(t *testing.T, s *Server, cfg store.Config) *domain.Cert {
 	t.Helper()
 	data := []byte("%PDF-1.4 test\n")
-	hash := v2store.HashPDF(data)
-	stored := v2store.StoredName(hash, "orig.pdf")
-	if _, err := v2store.WriteStoreFile(cfg, stored, data); err != nil {
+	hash := store.HashPDF(data)
+	stored := store.StoredName(hash, "orig.pdf")
+	if _, err := store.WriteStoreFile(cfg, stored, data); err != nil {
 		t.Fatal(err)
 	}
 	c := &domain.Cert{
@@ -98,9 +97,9 @@ func TestSaveValidationWarnings422(t *testing.T) {
 	s, mux, cfg := testServer(t)
 	// Ofullständigt cert (saknar charge/dimensioner)
 	data := []byte("%PDF-1.4 ofullstandig\n")
-	hash := v2store.HashPDF(data)
-	stored := v2store.StoredName(hash, "x.pdf")
-	if _, err := v2store.WriteStoreFile(cfg, stored, data); err != nil {
+	hash := store.HashPDF(data)
+	stored := store.StoredName(hash, "x.pdf")
+	if _, err := store.WriteStoreFile(cfg, stored, data); err != nil {
 		t.Fatal(err)
 	}
 	c := &domain.Cert{PdfHash: hash, OriginalFilename: "x.pdf", StoredName: stored,
@@ -178,9 +177,9 @@ func TestCertJSONExtractionFields(t *testing.T) {
 	impactTemp, cev, carbon, phos, sulfur, minTemp := -20.0, 0.43, 0.12, 0.01, 0.002, -40.0
 
 	setData := []byte("%PDF-1.4 set\n")
-	setHash := v2store.HashPDF(setData)
-	setStored := v2store.StoredName(setHash, "set.pdf")
-	if _, err := v2store.WriteStoreFile(cfg, setStored, setData); err != nil {
+	setHash := store.HashPDF(setData)
+	setStored := store.StoredName(setHash, "set.pdf")
+	if _, err := store.WriteStoreFile(cfg, setStored, setData); err != nil {
 		t.Fatal(err)
 	}
 	setCert := &domain.Cert{
@@ -231,9 +230,9 @@ func TestCertJSONExtractionFields(t *testing.T) {
 
 	// Tomt cert: pekarfälten ska serialiseras som JSON-null (inte 0/tomt tal).
 	nullData := []byte("%PDF-1.4 null\n")
-	nullHash := v2store.HashPDF(nullData)
-	nullStored := v2store.StoredName(nullHash, "null.pdf")
-	if _, err := v2store.WriteStoreFile(cfg, nullStored, nullData); err != nil {
+	nullHash := store.HashPDF(nullData)
+	nullStored := store.StoredName(nullHash, "null.pdf")
+	if _, err := store.WriteStoreFile(cfg, nullStored, nullData); err != nil {
 		t.Fatal(err)
 	}
 	nullCert := &domain.Cert{
@@ -356,9 +355,9 @@ func TestOverviewVerdictWiring(t *testing.T) {
 
 	// Cert: engelska EJ uppfyllt, cert-typ 3.1, slagseghet 27J vid -20°C.
 	data := []byte("%PDF-1.4 verdict\n")
-	hash := v2store.HashPDF(data)
-	stored := v2store.StoredName(hash, "verdict.pdf")
-	if _, err := v2store.WriteStoreFile(cfg, stored, data); err != nil {
+	hash := store.HashPDF(data)
+	stored := store.StoredName(hash, "verdict.pdf")
+	if _, err := store.WriteStoreFile(cfg, stored, data); err != nil {
 		t.Fatal(err)
 	}
 	temp := -20.0

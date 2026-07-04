@@ -10,9 +10,8 @@ import (
 	"testing"
 	"time"
 
-	v1store "cert-renamer/internal/store"
 	"cert-renamer/internal/v2/server"
-	v2store "cert-renamer/internal/v2/store"
+	"cert-renamer/internal/v2/store"
 )
 
 // buildTestMux reser en riktig V2-server + mux mot en temp-databas, så testet
@@ -20,13 +19,13 @@ import (
 func buildTestMux(t *testing.T) http.Handler {
 	t.Helper()
 	dir := t.TempDir()
-	db, err := v2store.Open(filepath.Join(dir, "test.db"))
+	db, err := store.Open(filepath.Join(dir, "test.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	return server.NewMux(server.New(v1store.Config{InboxDir: dir}, db, logger))
+	return server.NewMux(server.New(store.Config{InboxDir: dir}, db, logger))
 }
 
 // openSSE öppnar en långlivad /api/events-anslutning och väntar tills första

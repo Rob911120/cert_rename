@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	v1store "cert-renamer/internal/store"
 	"cert-renamer/internal/v2/domain"
 	"cert-renamer/internal/v2/store"
 )
@@ -33,12 +32,12 @@ func (NopNotifier) OverviewChanged()    {}
 // kan frysa både konfiguration och klocka.
 type App struct {
 	Repo   *store.Repository
-	Config func() v1store.Config
+	Config func() store.Config
 	Now    func() time.Time
 	Notify Notifier
 }
 
-func New(repo *store.Repository, cfg func() v1store.Config, now func() time.Time, notify Notifier) *App {
+func New(repo *store.Repository, cfg func() store.Config, now func() time.Time, notify Notifier) *App {
 	if now == nil {
 		now = time.Now
 	}

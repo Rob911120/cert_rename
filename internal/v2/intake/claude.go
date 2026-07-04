@@ -7,9 +7,9 @@ import (
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
 
-	"cert-renamer/internal/ai"
-	"cert-renamer/internal/cert"
-	"cert-renamer/internal/eml"
+	"cert-renamer/internal/v2/ai"
+	"cert-renamer/internal/v2/cert"
+	"cert-renamer/internal/v2/eml"
 )
 
 // Claude implementerar AI-porten mot riktiga internal/ai-anrop. Base-loggern

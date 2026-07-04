@@ -12,7 +12,7 @@ import (
 
 type nopLogger struct{}
 
-func (nopLogger) Logf(string, ...any)                 {}
+func (nopLogger) Logf(string, ...any)                            {}
 func (nopLogger) RecordUsage(string, int64, int64, int64, int64) {}
 
 func TestExtractFromImage(t *testing.T) {

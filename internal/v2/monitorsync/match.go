@@ -3,8 +3,8 @@ package monitorsync
 import (
 	"context"
 
-	"cert-renamer/internal/monitor"
 	"cert-renamer/internal/v2/domain"
+	"cert-renamer/internal/v2/monitor"
 )
 
 // SuggestAll kör förslagspasset för alla levande cert. Grundmatchningen är

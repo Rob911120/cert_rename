@@ -9,7 +9,7 @@ import (
 
 	"cert-renamer/internal/v2/app"
 	"cert-renamer/internal/v2/domain"
-	v2store "cert-renamer/internal/v2/store"
+	"cert-renamer/internal/v2/store"
 )
 
 // GET /api/overview är den ENDA datafeeden till UI:t. Alla 64-bitars ID:n
@@ -73,7 +73,7 @@ type certJSON struct {
 	SavedAt          string `json:"saved_at"`
 	ReceivedAt       string `json:"received_at"`
 
-	Notes []*v2store.Note `json:"notes"`
+	Notes []*store.Note `json:"notes"`
 }
 
 type linkJSON struct {
@@ -155,8 +155,8 @@ type rowJSON struct {
 	ReqImpact      string `json:"req_impact"`
 	ReqNotes       string `json:"req_notes"`
 
-	Links []linkJSON      `json:"links"`
-	Notes []*v2store.Note `json:"notes"`
+	Links []linkJSON    `json:"links"`
+	Notes []*store.Note `json:"notes"`
 }
 
 type orderGroupJSON struct {
@@ -188,7 +188,7 @@ type overviewJSON struct {
 	UnlinkedCerts []unlinkedJSON   `json:"unlinked_certs"`
 	SavedRecent   []certJSON       `json:"saved_recent"`
 	Archived      []certJSON       `json:"archived"`
-	Tasks         []*v2store.Task  `json:"tasks"`
+	Tasks         []*store.Task    `json:"tasks"`
 	Errors        []string         `json:"errors"`
 }
 
@@ -212,7 +212,7 @@ func (s *Server) certJSON(ctx context.Context, view *app.CertView) certJSON {
 	c := view.Cert
 	notes, _ := s.Repo.ListNotes(ctx, "cert", c.ID)
 	if notes == nil {
-		notes = []*v2store.Note{}
+		notes = []*store.Note{}
 	}
 	return certJSON{
 		ID: idStr(c.ID), Status: string(c.Status),
@@ -330,7 +330,7 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 		if notes, _ := s.Repo.ListNotes(ctx, "order_row", row.DeliveryRowID); notes != nil {
 			rj.Notes = notes
 		} else {
-			rj.Notes = []*v2store.Note{}
+			rj.Notes = []*store.Note{}
 		}
 		links, _ := s.Repo.ListLinksForRow(ctx, row.DeliveryRowID)
 		for _, l := range links {
@@ -412,7 +412,7 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 	if tasks, _ := s.Repo.ListTasks(ctx, "open"); tasks != nil {
 		resp.Tasks = tasks
 	} else {
-		resp.Tasks = []*v2store.Task{}
+		resp.Tasks = []*store.Task{}
 	}
 	if errs, _ := s.Repo.ListEmailErrors(ctx); errs != nil {
 		resp.Errors = errs

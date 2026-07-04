@@ -11,8 +11,8 @@ import (
 
 	"github.com/anthropics/anthropic-sdk-go"
 
-	"cert-renamer/internal/cert"
-	"cert-renamer/internal/eml"
+	"cert-renamer/internal/v2/cert"
+	"cert-renamer/internal/v2/eml"
 )
 
 // callTool gör ett Messages-anrop där svaret förväntas komma via tool_use,

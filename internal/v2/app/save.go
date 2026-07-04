@@ -6,8 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"cert-renamer/internal/cert"
-	v1store "cert-renamer/internal/store"
+	"cert-renamer/internal/v2/cert"
 	"cert-renamer/internal/v2/domain"
 	"cert-renamer/internal/v2/store"
 )
@@ -71,7 +70,7 @@ func (a *App) SaveCert(ctx context.Context, certID int64, confirm bool) (*SaveRe
 	// Inbäddning vid spar — enda gången metadata skrivs in i en PDF. Fel är
 	// inte fatala: EmbedMetadata faller själv tillbaka på sidecar-JSON, och
 	// DB förblir sanningen.
-	if err := v1store.EmbedMetadata(outPath, a.buildMeta(c, bNums)); err != nil {
+	if err := store.EmbedMetadata(outPath, a.buildMeta(c, bNums)); err != nil {
 		a.Notify.Logf("⚠️  metadata-inbäddning misslyckades för %s: %v", name, err)
 	}
 
@@ -126,7 +125,7 @@ func (a *App) MarkImportedSaved(ctx context.Context, certID int64, finalFilename
 func (a *App) placeOutputFile(outDir, name string, data []byte, pdfHash string) (string, error) {
 	target := filepath.Join(outDir, name)
 	if _, err := os.Stat(target); err == nil {
-		if m, ok := v1store.ReadMetadata(target); ok && m.Hash == pdfHash {
+		if m, ok := store.ReadMetadata(target); ok && m.Hash == pdfHash {
 			return target, nil // färdig utfil från tidigare (avbrutet) spar
 		}
 		if b, err := os.ReadFile(target); err == nil && store.HashPDF(b) == pdfHash {
@@ -134,13 +133,13 @@ func (a *App) placeOutputFile(outDir, name string, data []byte, pdfHash string) 
 		}
 		// Annat cert med samma namn — äkta kollision, låt suffixen lösa det.
 	}
-	return v1store.WriteUniqueFile(outDir, name, data)
+	return store.WriteUniqueFile(outDir, name, data)
 }
 
 // buildMeta bygger PdfMeta av SLUTLIG effektiv data. Schema 6 = V2-sparad.
-func (a *App) buildMeta(c *domain.Cert, bNums []string) v1store.PdfMeta {
+func (a *App) buildMeta(c *domain.Cert, bNums []string) store.PdfMeta {
 	ext := c.EffectiveExtraction()
-	return v1store.PdfMeta{
+	return store.PdfMeta{
 		Charge:            ext.Charge,
 		Material:          ext.Material,
 		EnStandardPresent: ext.EnStandardPresent,

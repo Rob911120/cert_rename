@@ -9,12 +9,11 @@ import (
 	"testing"
 	"time"
 
-	"cert-renamer/internal/ai"
-	"cert-renamer/internal/cert"
-	"cert-renamer/internal/eml"
-	v1store "cert-renamer/internal/store"
+	"cert-renamer/internal/v2/ai"
 	"cert-renamer/internal/v2/app"
+	"cert-renamer/internal/v2/cert"
 	"cert-renamer/internal/v2/domain"
+	"cert-renamer/internal/v2/eml"
 	"cert-renamer/internal/v2/store"
 )
 
@@ -62,7 +61,7 @@ func (f *fakeAI) Extract(ctx context.Context, pdf []byte, subject, body, filenam
 	}, nil
 }
 
-func testIntake(t *testing.T, fake *fakeAI) (*Intake, v1store.Config) {
+func testIntake(t *testing.T, fake *fakeAI) (*Intake, store.Config) {
 	t.Helper()
 	dir := t.TempDir()
 	db, err := store.Open(filepath.Join(dir, "test.db"))
@@ -70,15 +69,15 @@ func testIntake(t *testing.T, fake *fakeAI) (*Intake, v1store.Config) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
-	cfg := v1store.Config{InboxDir: dir}
+	cfg := store.Config{InboxDir: dir}
 	clock := time.Date(2026, 7, 3, 10, 0, 0, 0, time.UTC)
-	a := app.New(store.NewRepository(db), func() v1store.Config { return cfg },
+	a := app.New(store.NewRepository(db), func() store.Config { return cfg },
 		func() time.Time { return clock }, nil)
-	return &Intake{App: a, AI: fake, Config: func() v1store.Config { return cfg }}, cfg
+	return &Intake{App: a, AI: fake, Config: func() store.Config { return cfg }}, cfg
 }
 
 // writeEml skapar en riktig MIME-.eml med en PDF-bilaga i inkorgen.
-func writeEml(t *testing.T, cfg v1store.Config, name string, pdfData []byte) string {
+func writeEml(t *testing.T, cfg store.Config, name string, pdfData []byte) string {
 	t.Helper()
 	b64 := base64.StdEncoding.EncodeToString(pdfData)
 	raw := "From: mill@ssab.com\r\n" +
@@ -146,7 +145,7 @@ func TestProcessEmlHappyPath(t *testing.T) {
 	if _, err := os.Stat(storePath); err != nil {
 		t.Errorf("lagerfil saknas: %v", err)
 	}
-	if _, err := os.Stat(v1store.MetaSidecarPath(storePath)); err != nil {
+	if _, err := os.Stat(store.MetaSidecarPath(storePath)); err != nil {
 		t.Errorf("sidecar saknas: %v", err)
 	}
 

@@ -8,8 +8,6 @@ import (
 	"fmt"
 	"path/filepath"
 
-	v1store "cert-renamer/internal/store"
-
 	_ "modernc.org/sqlite"
 )
 
@@ -347,5 +345,5 @@ func seedAgentRules(db *sql.DB) error {
 // DBPath returnerar V2-databasens sökväg (bredvid config.json, egen fil —
 // V1:s cert-renamer.db röres aldrig).
 func DBPath() string {
-	return filepath.Join(filepath.Dir(v1store.ConfigPath()), "cert-renamer-v2.db")
+	return filepath.Join(filepath.Dir(ConfigPath()), "cert-renamer-v2.db")
 }

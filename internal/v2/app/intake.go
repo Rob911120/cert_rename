@@ -5,8 +5,7 @@ import (
 	"encoding/json"
 	"os"
 
-	"cert-renamer/internal/cert"
-	v1store "cert-renamer/internal/store"
+	"cert-renamer/internal/v2/cert"
 	"cert-renamer/internal/v2/domain"
 	"cert-renamer/internal/v2/store"
 )
@@ -70,7 +69,7 @@ func (a *App) IngestCert(ctx context.Context, in IngestInput) (*domain.Cert, boo
 	// Sidecar: rå extraktion + mailkontext bredvid lagerfilen. Ingen
 	// pdfcpu-inbäddning i hot path — DB är sanningen.
 	ext := in.Extraction
-	sidecar := v1store.PdfMeta{
+	sidecar := store.PdfMeta{
 		Charge: ext.Charge, Material: ext.Material,
 		EnStandardPresent: ext.EnStandardPresent, IsEnglish: ext.IsEnglish,
 		ProductForm: ext.ProductForm, Dimensions: ext.Dimensions,
@@ -149,12 +148,12 @@ func (a *App) IngestCert(ctx context.Context, in IngestInput) (*domain.Cert, boo
 }
 
 // writeSidecar skriver katastrofskydds-JSON bredvid lagerfilen (best effort).
-func writeSidecar(pdfPath string, meta v1store.PdfMeta) {
+func writeSidecar(pdfPath string, meta store.PdfMeta) {
 	data, err := json.Marshal(meta)
 	if err != nil {
 		return
 	}
-	_ = os.WriteFile(v1store.MetaSidecarPath(pdfPath), data, 0644)
+	_ = os.WriteFile(store.MetaSidecarPath(pdfPath), data, 0644)
 }
 
 // SuggestLinksByBNumber kör förslagspasset för ett cert: varje effektivt

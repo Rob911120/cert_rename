@@ -69,7 +69,7 @@ func unmarshalList(s string) []string {
 	return v
 }
 
-// corrected_b_numbers: '' = ej rättad (nil), annars JSON-array (även "[]" =
+// corrected_b_numbers: ” = ej rättad (nil), annars JSON-array (även "[]" =
 // rättad till inga).
 func marshalCorrectedB(v []string) string {
 	if v == nil {
@@ -87,7 +87,7 @@ func unmarshalCorrectedB(s string) []string {
 
 // marshalHyperlinks/unmarshalHyperlinks: order_rows.hyperlinks lagras som
 // JSON-TEXT (domain.Hyperlink bär redan json-taggar, se domain.go). Tom/nil
-// lista → '' (inte "[]") — enligt uppdraget, se Task 6-briefen.
+// lista → ” (inte "[]") — enligt uppdraget, se Task 6-briefen.
 func marshalHyperlinks(v []domain.Hyperlink) string {
 	if len(v) == 0 {
 		return ""
@@ -669,7 +669,7 @@ func (q *Q) UpdateEmailStatus(ctx context.Context, id int64, status, errMsg stri
 	return oneRow(res, err)
 }
 
-// LatestEmailStatus returnerar senaste status för ett .eml-filnamn ('' om
+// LatestEmailStatus returnerar senaste status för ett .eml-filnamn (” om
 // aldrig sett) — intagets skip-nyckel för filer som slutat i fel.
 func (q *Q) LatestEmailStatus(ctx context.Context, filename string) (string, error) {
 	var s string

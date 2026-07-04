@@ -4,7 +4,7 @@ import (
 	"sort"
 	"strings"
 
-	"cert-renamer/internal/cert"
+	"cert-renamer/internal/v2/cert"
 )
 
 // sanitizeOverride tillämpar samma filnamnsregler på ett manuellt namn som

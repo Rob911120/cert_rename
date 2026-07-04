@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	v1store "cert-renamer/internal/store"
 	"cert-renamer/internal/v2/domain"
 	"cert-renamer/internal/v2/store"
 )
@@ -22,7 +21,7 @@ type fakeNotifier struct {
 func (f *fakeNotifier) Logf(format string, args ...any) { f.logs = append(f.logs, format) }
 func (f *fakeNotifier) OverviewChanged()                { f.overview++ }
 
-func testApp(t *testing.T) (*App, *fakeNotifier, v1store.Config) {
+func testApp(t *testing.T) (*App, *fakeNotifier, store.Config) {
 	t.Helper()
 	dir := t.TempDir()
 	db, err := store.Open(filepath.Join(dir, "test.db"))
@@ -30,15 +29,15 @@ func testApp(t *testing.T) (*App, *fakeNotifier, v1store.Config) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
-	cfg := v1store.Config{InboxDir: dir}
+	cfg := store.Config{InboxDir: dir}
 	notify := &fakeNotifier{}
 	clock := time.Date(2026, 7, 3, 10, 0, 0, 0, time.UTC)
-	a := New(store.NewRepository(db), func() v1store.Config { return cfg }, func() time.Time { return clock }, notify)
+	a := New(store.NewRepository(db), func() store.Config { return cfg }, func() time.Time { return clock }, notify)
 	return a, notify, cfg
 }
 
 // seedCert lägger ett komplett, giltigt cert med lagerfil på disk.
-func seedCert(t *testing.T, a *App, cfg v1store.Config) *domain.Cert {
+func seedCert(t *testing.T, a *App, cfg store.Config) *domain.Cert {
 	t.Helper()
 	data := []byte("%PDF-1.4 fejkcert for test\n")
 	hash := store.HashPDF(data)

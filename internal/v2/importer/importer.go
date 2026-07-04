@@ -11,10 +11,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	"cert-renamer/internal/cert"
-	v1store "cert-renamer/internal/store"
 	"cert-renamer/internal/v2/app"
+	"cert-renamer/internal/v2/cert"
 	"cert-renamer/internal/v2/domain"
+	"cert-renamer/internal/v2/store"
 )
 
 // Stats är importens utfall.
@@ -27,7 +27,7 @@ type Stats struct {
 
 // ImportV1 går igenom V1:s approved/ (→ sparade, frysta) och queue/
 // (→ levande) och tar in dem i V2. PDF:erna KOPIERAS till V2:s certlager.
-func ImportV1(ctx context.Context, a *app.App, cfg v1store.Config) (Stats, error) {
+func ImportV1(ctx context.Context, a *app.App, cfg store.Config) (Stats, error) {
 	var st Stats
 	if cfg.InboxDir == "" {
 		return st, fmt.Errorf("ingen inbox konfigurerad — V1-mapparna kan inte härledas")
@@ -36,8 +36,8 @@ func ImportV1(ctx context.Context, a *app.App, cfg v1store.Config) (Stats, error
 		dir   string
 		saved bool
 	}{
-		{v1store.ApprovedDir(cfg), true},
-		{v1store.QueueDir(cfg), false},
+		{store.ApprovedDir(cfg), true},
+		{store.QueueDir(cfg), false},
 	} {
 		if err := importDir(ctx, a, src.dir, src.saved, &st); err != nil {
 			return st, err
@@ -72,7 +72,7 @@ func importDir(ctx context.Context, a *app.App, dir string, saved bool, st *Stat
 }
 
 func importOne(ctx context.Context, a *app.App, path string, saved bool, st *Stats) error {
-	meta, ok := v1store.ReadMetadata(path)
+	meta, ok := store.ReadMetadata(path)
 	if !ok {
 		st.NoMeta++
 		a.Notify.Logf("   ⏭  %s: ingen läsbar metadata — hoppar över", filepath.Base(path))

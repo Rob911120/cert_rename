@@ -12,7 +12,7 @@ import (
 
 	"github.com/anthropics/anthropic-sdk-go"
 
-	"cert-renamer/internal/ai"
+	"cert-renamer/internal/v2/ai"
 )
 
 // MaxRounds är taket på antal tool-use-iterationer per användarmeddelande.

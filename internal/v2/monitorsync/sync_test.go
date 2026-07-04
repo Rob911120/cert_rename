@@ -8,11 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"cert-renamer/internal/ai"
-	"cert-renamer/internal/monitor"
-	v1store "cert-renamer/internal/store"
+	"cert-renamer/internal/v2/ai"
 	"cert-renamer/internal/v2/app"
 	"cert-renamer/internal/v2/domain"
+	"cert-renamer/internal/v2/monitor"
 	"cert-renamer/internal/v2/store"
 )
 
@@ -123,10 +122,10 @@ func testSync(t *testing.T, erp ERP, judge Judge) *Sync {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
-	cfg := v1store.Config{InboxDir: dir, UpcomingWindowDays: 14, UpcomingBackDays: 365, UpcomingTime: "16:30"}
-	a := app.New(store.NewRepository(db), func() v1store.Config { return cfg },
+	cfg := store.Config{InboxDir: dir, UpcomingWindowDays: 14, UpcomingBackDays: 365, UpcomingTime: "16:30"}
+	a := app.New(store.NewRepository(db), func() store.Config { return cfg },
 		func() time.Time { return time.Date(2026, 7, 3, 12, 0, 0, 0, time.UTC) }, nil)
-	return &Sync{App: a, ERP: erp, Judge: judge, Config: func() v1store.Config { return cfg }}
+	return &Sync{App: a, ERP: erp, Judge: judge, Config: func() store.Config { return cfg }}
 }
 
 func seedLivingCert(t *testing.T, a *app.App, charge string, bNums []string) *domain.Cert {

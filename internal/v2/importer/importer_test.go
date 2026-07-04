@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	v1store "cert-renamer/internal/store"
 	"cert-renamer/internal/v2/app"
 	"cert-renamer/internal/v2/domain"
 	"cert-renamer/internal/v2/store"
@@ -16,7 +15,7 @@ import (
 
 // writeV1Pdf lägger en fejkad V1-PDF med sidecar-metadata (ReadMetadata
 // föredrar sidecar, så pdfcpu behövs inte i testet).
-func writeV1Pdf(t *testing.T, dir, name string, meta v1store.PdfMeta) {
+func writeV1Pdf(t *testing.T, dir, name string, meta store.PdfMeta) {
 	t.Helper()
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		t.Fatal(err)
@@ -26,36 +25,36 @@ func writeV1Pdf(t *testing.T, dir, name string, meta v1store.PdfMeta) {
 		t.Fatal(err)
 	}
 	data, _ := json.Marshal(meta)
-	if err := os.WriteFile(v1store.MetaSidecarPath(path), data, 0644); err != nil {
+	if err := os.WriteFile(store.MetaSidecarPath(path), data, 0644); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func TestImportV1(t *testing.T) {
 	dir := t.TempDir()
-	cfg := v1store.Config{InboxDir: dir}
+	cfg := store.Config{InboxDir: dir}
 	db, err := store.Open(filepath.Join(dir, "v2.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
-	a := app.New(store.NewRepository(db), func() v1store.Config { return cfg },
+	a := app.New(store.NewRepository(db), func() store.Config { return cfg },
 		func() time.Time { return time.Date(2026, 7, 3, 12, 0, 0, 0, time.UTC) }, nil)
 	ctx := context.Background()
 
-	writeV1Pdf(t, v1store.ApprovedDir(cfg), "70703-plat-16-S690QL-B127562.pdf", v1store.PdfMeta{
+	writeV1Pdf(t, store.ApprovedDir(cfg), "70703-plat-16-S690QL-B127562.pdf", store.PdfMeta{
 		Charge: "70703", Material: "S690QL", EnStandardPresent: true, IsEnglish: true,
 		ProductForm: "plåt", Dimensions: "16", BNumbers: []string{"B127562"},
 		OriginalFilename: "SSAB_orig.pdf", ExtractedAt: "2026-06-01T10:00:00Z",
 		Hash: "origalhash123", Schema: 5, Status: "approved",
 	})
-	writeV1Pdf(t, v1store.QueueDir(cfg), "43136-plat-60-S355J2N-B128293.pdf", v1store.PdfMeta{
+	writeV1Pdf(t, store.QueueDir(cfg), "43136-plat-60-S355J2N-B128293.pdf", store.PdfMeta{
 		Charge: "43136", Material: "S355J2+N", EnStandardPresent: true, IsEnglish: true,
 		ProductForm: "plåt", Dimensions: "60", BNumbers: []string{"B128293"},
 		OriginalFilename: "cert_b128293.pdf", Hash: "origalhash456",
 	})
 	// PDF utan metadata — ska hoppas över
-	if err := os.WriteFile(filepath.Join(v1store.QueueDir(cfg), "okand.pdf"), []byte("%PDF x"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(store.QueueDir(cfg), "okand.pdf"), []byte("%PDF x"), 0644); err != nil {
 		t.Fatal(err)
 	}
 

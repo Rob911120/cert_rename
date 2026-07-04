@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"cert-renamer/internal/cert"
+	"cert-renamer/internal/v2/cert"
 )
 
 func f64(v float64) *float64 { return &v }

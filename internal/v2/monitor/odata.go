@@ -56,5 +56,5 @@ func (q *Query) Values() url.Values {
 	return v
 }
 
-// odataEsc escapar enkel-citattecken i ett OData-strängliteral ('' = ett ').
+// odataEsc escapar enkel-citattecken i ett OData-strängliteral (” = ett ').
 func odataEsc(s string) string { return strings.ReplaceAll(s, "'", "''") }

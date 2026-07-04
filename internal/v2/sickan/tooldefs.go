@@ -25,7 +25,7 @@ func ToolDefs(readOnly bool) []anthropic.ToolUnionParam {
 	return out
 }
 
-func str(s string) map[string]any    { return map[string]any{"type": "string", "description": s} }
+func str(s string) map[string]any     { return map[string]any{"type": "string", "description": s} }
 func integer(s string) map[string]any { return map[string]any{"type": "integer", "description": s} }
 
 var listOverviewTool = anthropic.ToolParam{

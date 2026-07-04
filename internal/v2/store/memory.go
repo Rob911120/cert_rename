@@ -2,8 +2,8 @@ package store
 
 import (
 	"context"
-	"errors"
 	"database/sql"
+	"errors"
 
 	"cert-renamer/internal/v2/domain"
 )

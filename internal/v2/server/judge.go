@@ -6,7 +6,7 @@ import (
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
 
-	"cert-renamer/internal/ai"
+	"cert-renamer/internal/v2/ai"
 	"cert-renamer/internal/v2/monitorsync"
 )
 

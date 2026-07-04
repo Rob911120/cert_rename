@@ -9,9 +9,9 @@ import (
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
 
-	"cert-renamer/internal/ai"
-	v1store "cert-renamer/internal/store"
+	"cert-renamer/internal/v2/ai"
 	"cert-renamer/internal/v2/sickan"
+	"cert-renamer/internal/v2/store"
 )
 
 // Sessionshantering + stream-protokoll är porterade 1:1 från V1
@@ -74,7 +74,7 @@ func (s *Server) persistSickanModel(session, model string) {
 	s.cfg.SickanModel = model
 	cfg := s.cfg
 	s.mu.Unlock()
-	if err := v1store.SaveConfig(cfg); err != nil {
+	if err := store.SaveConfig(cfg); err != nil {
 		s.Logf("⚠️  kunde inte spara config (sickan-modell): %v", err)
 	}
 }

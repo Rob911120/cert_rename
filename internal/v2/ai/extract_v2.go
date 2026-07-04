@@ -7,7 +7,7 @@ import (
 
 	"github.com/anthropics/anthropic-sdk-go"
 
-	"cert-renamer/internal/cert"
+	"cert-renamer/internal/v2/cert"
 )
 
 // extractV2SystemPrompt är V2:s kolumnfokuserade cert-prompt. Till skillnad från

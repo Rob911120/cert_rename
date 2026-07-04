@@ -3,7 +3,7 @@ package monitorsync
 import (
 	"time"
 
-	v1store "cert-renamer/internal/store"
+	"cert-renamer/internal/v2/store"
 )
 
 // Rena schemafunktioner (injicerad klocka, tabelltestbara) + drift-loopen.
@@ -35,7 +35,7 @@ func ShouldCatchUp(lastRun, now time.Time, upcomingTime string) bool {
 func parseHHMM(s string) (int, int) {
 	t, err := time.Parse("15:04", s)
 	if err != nil {
-		t, _ = time.Parse("15:04", v1store.DefaultUpcomingTime)
+		t, _ = time.Parse("15:04", store.DefaultUpcomingTime)
 	}
 	return t.Hour(), t.Minute()
 }

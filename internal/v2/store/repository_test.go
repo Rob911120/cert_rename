@@ -234,7 +234,7 @@ func TestOrderRowUpsertPreservesLocalBookkeeping(t *testing.T) {
 // TestOrderRowCertFieldsRoundtrip täcker Task 6:s nya order_rows-fält (rå
 // kravtext + artikeldata från Monitor, inkl. hyperlinks-listan) i detalj: ett
 // satt-fall (alla fält ifyllda) och ett tomt-hyperlinks-fall (tom lista ska
-// lagras som '' i DB och läsas tillbaka som tom lista, inte nil).
+// lagras som ” i DB och läsas tillbaka som tom lista, inte nil).
 func TestOrderRowCertFieldsRoundtrip(t *testing.T) {
 	repo := testRepo(t)
 	ctx := context.Background()

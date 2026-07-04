@@ -14,11 +14,10 @@ import (
 	"strings"
 	"time"
 
-	"cert-renamer/internal/ai"
-	"cert-renamer/internal/monitor"
-	v1store "cert-renamer/internal/store"
+	"cert-renamer/internal/v2/ai"
 	"cert-renamer/internal/v2/app"
 	"cert-renamer/internal/v2/domain"
+	"cert-renamer/internal/v2/monitor"
 	"cert-renamer/internal/v2/store"
 )
 
@@ -50,7 +49,7 @@ type Sync struct {
 	App    *app.App
 	ERP    ERP
 	Judge  Judge
-	Config func() v1store.Config
+	Config func() store.Config
 }
 
 // Refresh kör hela kedjan: hämta fönstret → synka order_rows → förslagspass →

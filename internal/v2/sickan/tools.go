@@ -12,11 +12,10 @@ import (
 
 	"github.com/anthropics/anthropic-sdk-go"
 
-	"cert-renamer/internal/monitor"
-	v1store "cert-renamer/internal/store"
 	"cert-renamer/internal/v2/app"
 	"cert-renamer/internal/v2/domain"
-	v2store "cert-renamer/internal/v2/store"
+	"cert-renamer/internal/v2/monitor"
+	"cert-renamer/internal/v2/store"
 )
 
 // Toolbox knyter ihop app-servicen (den enda skrivvägen — verktygen är tunna
@@ -24,7 +23,7 @@ import (
 // konfig och lazy Monitor-klient för en chat-session.
 type Toolbox struct {
 	App            *app.App
-	Cfg            func() v1store.Config
+	Cfg            func() store.Config
 	Monitor        *monitor.Client
 	MonitorConnect func() (*monitor.Client, error)
 
@@ -184,7 +183,7 @@ func (tb *Toolbox) listOverview() (string, error) {
 		unlinked = append(unlinked, unlinkedView{
 			CertID: c.ID, OriginalFilename: c.OriginalFilename,
 			Charge: c.EffectiveCharge(), Material: c.EffectiveMaterial(),
-			BNumbers: c.EffectiveBNumbers(),
+			BNumbers:         c.EffectiveBNumbers(),
 			ProposedFilename: domain.ProposedFilename(c, nil),
 		})
 	}
@@ -339,7 +338,7 @@ func (tb *Toolbox) readPdf(input json.RawMessage) (DispatchResult, error) {
 	if err != nil {
 		return DispatchResult{}, err
 	}
-	data, err := os.ReadFile(v2store.StorePath(tb.Cfg(), c.StoredName))
+	data, err := os.ReadFile(store.StorePath(tb.Cfg(), c.StoredName))
 	if err != nil {
 		return DispatchResult{}, fmt.Errorf("läsa lagerfil: %w", err)
 	}
@@ -686,7 +685,7 @@ func (tb *Toolbox) addTask(input json.RawMessage) (string, error) {
 	}
 	ctx, cancel := bg()
 	defer cancel()
-	t := &v2store.Task{Text: args.Text, DueDate: args.DueDate, OrderNumber: args.OrderNumber,
+	t := &store.Task{Text: args.Text, DueDate: args.DueDate, OrderNumber: args.OrderNumber,
 		Source: "sickan", CreatedAt: time.Now().UTC().Format(time.RFC3339)}
 	if _, err := tb.App.Repo.AddTask(ctx, t); err != nil {
 		return "", err

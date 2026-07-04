@@ -14,12 +14,11 @@ import (
 	"sync"
 	"time"
 
-	"cert-renamer/internal/monitor"
-	v1store "cert-renamer/internal/store"
 	"cert-renamer/internal/v2/app"
 	"cert-renamer/internal/v2/intake"
+	"cert-renamer/internal/v2/monitor"
 	"cert-renamer/internal/v2/monitorsync"
-	v2store "cert-renamer/internal/v2/store"
+	"cert-renamer/internal/v2/store"
 )
 
 //go:embed ui
@@ -31,11 +30,11 @@ var uiFS embed.FS
 type Server struct {
 	DB   *sql.DB
 	Slog *slog.Logger
-	Repo *v2store.Repository
+	Repo *store.Repository
 	App  *app.App
 
 	mu         sync.Mutex
-	cfg        v1store.Config
+	cfg        store.Config
 	running    bool
 	stopWorker context.CancelFunc
 	intakeInst *intake.Intake // satt medan workern kör (PDF-upload behöver den)
@@ -50,7 +49,7 @@ type Server struct {
 	logBuf []string
 
 	costsMu sync.Mutex
-	costs   v1store.Costs
+	costs   store.Costs
 
 	intakeKick chan struct{}
 	syncKick   chan struct{}
@@ -58,14 +57,14 @@ type Server struct {
 	sickanSess sickanSessions
 }
 
-func New(cfg v1store.Config, db *sql.DB, logger *slog.Logger) *Server {
+func New(cfg store.Config, db *sql.DB, logger *slog.Logger) *Server {
 	s := &Server{
 		DB:         db,
 		Slog:       logger,
-		Repo:       v2store.NewRepository(db),
+		Repo:       store.NewRepository(db),
 		cfg:        cfg,
 		subs:       map[chan ssEvent]struct{}{},
-		costs:      v1store.LoadCosts(),
+		costs:      store.LoadCosts(),
 		intakeKick: make(chan struct{}, 1),
 		syncKick:   make(chan struct{}, 1),
 	}
@@ -74,13 +73,13 @@ func New(cfg v1store.Config, db *sql.DB, logger *slog.Logger) *Server {
 }
 
 // Config returnerar en kopia av aktuell konfig.
-func (s *Server) Config() v1store.Config {
+func (s *Server) Config() store.Config {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.cfg
 }
 
-func (s *Server) setConfig(cfg v1store.Config) {
+func (s *Server) setConfig(cfg store.Config) {
 	s.mu.Lock()
 	s.cfg = cfg
 	s.mon = nil // tvinga om-login om Monitor-uppgifterna ändrats
@@ -110,7 +109,7 @@ func (s *Server) RecordUsage(model string, in, out, cacheCreate, cacheRead int64
 	s.costs.Add(model, in, out, cacheCreate, cacheRead)
 	snapshot := s.costs
 	s.costsMu.Unlock()
-	if err := v1store.SaveCosts(snapshot); err != nil {
+	if err := store.SaveCosts(snapshot); err != nil {
 		s.Slog.Warn("SaveCosts", "err", err)
 	}
 	s.broadcastCosts()
@@ -132,7 +131,7 @@ func (s *Server) StartWorker() error {
 	if s.cfg.InboxDir == "" {
 		return errors.New("ingen inkorgsmapp konfigurerad")
 	}
-	if err := v2store.EnsureDirs(s.cfg); err != nil {
+	if err := store.EnsureDirs(s.cfg); err != nil {
 		return fmt.Errorf("skapa V2-mappar: %w", err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())

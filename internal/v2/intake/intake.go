@@ -13,12 +13,12 @@ import (
 	"strings"
 	"time"
 
-	"cert-renamer/internal/ai"
-	"cert-renamer/internal/cert"
-	"cert-renamer/internal/eml"
-	v1store "cert-renamer/internal/store"
+	"cert-renamer/internal/v2/ai"
 	"cert-renamer/internal/v2/app"
+	"cert-renamer/internal/v2/cert"
 	"cert-renamer/internal/v2/domain"
+	"cert-renamer/internal/v2/eml"
+	"cert-renamer/internal/v2/store"
 )
 
 const PollInterval = 30 * time.Second
@@ -46,7 +46,7 @@ type AI interface {
 type Intake struct {
 	App    *app.App
 	AI     AI
-	Config func() v1store.Config
+	Config func() store.Config
 }
 
 // Run pollar inkorgen tills ctx avbryts. kick triggar en omedelbar tick
