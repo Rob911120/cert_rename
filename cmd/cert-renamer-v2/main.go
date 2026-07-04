@@ -99,7 +99,7 @@ func run(logger *slog.Logger, noBrowser bool) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	httpSrv := &http.Server{Handler: mux}
+	httpSrv, cancelConns := gracefulServer(mux)
 	g, ctx := errgroup.WithContext(ctx)
 
 	g.Go(func() error { srv.RunSyncScheduler(ctx); return nil })
@@ -114,6 +114,11 @@ func run(logger *slog.Logger, noBrowser bool) error {
 	g.Go(func() error {
 		<-ctx.Done()
 		logger.Info("stänger ner")
+		// Avbryt först alla pågående request-kontexter så långlivade
+		// streaming-handlers (SSE: /api/events) avslutar — annars blir
+		// anslutningen aldrig inaktiv och Shutdown fastnar tills sin
+		// deadline och returnerar "context deadline exceeded".
+		cancelConns()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		return httpSrv.Shutdown(shutdownCtx)
@@ -127,6 +132,19 @@ func run(logger *slog.Logger, noBrowser bool) error {
 	}
 
 	return g.Wait()
+}
+
+// gracefulServer bygger en http.Server vars alla request-kontexter härleds ur
+// en gemensam bas-kontext. cancelFunc:en avbryter den basen, vilket avslutar
+// långlivade streaming-handlers (SSE) så deras anslutningar blir inaktiva och
+// httpSrv.Shutdown kan slutföra i stället för att fastna tills sin deadline.
+func gracefulServer(mux http.Handler) (*http.Server, context.CancelFunc) {
+	baseCtx, cancel := context.WithCancel(context.Background())
+	srv := &http.Server{
+		Handler:     mux,
+		BaseContext: func(net.Listener) context.Context { return baseCtx },
+	}
+	return srv, cancel
 }
 
 // ---------------------------------------------------------------------------
