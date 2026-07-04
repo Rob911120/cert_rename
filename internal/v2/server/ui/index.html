@@ -5,6 +5,14 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Cert Renamer V2</title>
 <link rel="stylesheet" href="app.css">
+<script>
+  // Sätt sparat tema innan CSS målar (undviker tema-blink vid reload).
+  // Bara light/dark tvingar; auto lämnar attributet osatt → OS-preferensen styr.
+  try {
+    var t = localStorage.getItem('certv2-theme');
+    if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
+  } catch (e) {}
+</script>
 </head>
 <body>
 
@@ -20,6 +28,11 @@
       <span id="workerDot" class="dot dot-off"></span><span id="workerLabel">Starta</span>
     </button>
     <span id="costsBadge" class="muted small" title="AI-kostnad totalt"></span>
+    <div id="themeSeg" class="theme-seg" role="group" aria-label="Tema">
+      <button type="button" data-theme-choice="auto" title="Följ systemet">🌓</button>
+      <button type="button" data-theme-choice="light" title="Ljust tema">☀️</button>
+      <button type="button" data-theme-choice="dark" title="Mörkt tema">🌙</button>
+    </div>
     <button id="settingsBtn" class="btn btn-icon" title="Inställningar">⚙️</button>
   </div>
 </header>

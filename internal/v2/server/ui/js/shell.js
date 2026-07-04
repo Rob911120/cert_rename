@@ -36,6 +36,43 @@ export function initShell() {
 
   initSettings();
   initDragDrop();
+  initTheme();
+}
+
+// --- Tema (auto / ljust / mörkt) ---------------------------------------------
+// Auto = lämna data-theme osatt så OS-preferensen (CSS-media-frågan) styr.
+// light/dark = tvinga via data-theme på <html>. Valet sparas i localStorage;
+// index.html-inline-scriptet applicerar det redan före första målning.
+
+const THEME_KEY = 'certv2-theme';
+
+function initTheme() {
+  const seg = $('themeSeg');
+  if (!seg) return;
+  let choice = 'auto';
+  try { choice = localStorage.getItem(THEME_KEY) || 'auto'; } catch { /* ignore */ }
+  if (choice !== 'light' && choice !== 'dark') choice = 'auto';
+  applyTheme(choice);
+
+  seg.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-theme-choice]');
+    if (!btn) return;
+    const next = btn.dataset.themeChoice;
+    try {
+      if (next === 'auto') localStorage.removeItem(THEME_KEY);
+      else localStorage.setItem(THEME_KEY, next);
+    } catch { /* ignore */ }
+    applyTheme(next);
+  });
+}
+
+function applyTheme(choice) {
+  const root = document.documentElement;
+  if (choice === 'auto') delete root.dataset.theme;
+  else root.dataset.theme = choice;
+  for (const btn of document.querySelectorAll('#themeSeg [data-theme-choice]')) {
+    btn.setAttribute('aria-pressed', String(btn.dataset.themeChoice === choice));
+  }
 }
 
 export function setWorkerState(running) {

@@ -18,8 +18,10 @@
   --radius: 10px;
   --shadow: 0 1px 3px rgba(20, 30, 50, .08);
 }
+/* Mörka tokens. Nås via OS-preferens (om inte ljust tvingats) ELLER
+   ett explicit data-theme="dark". Håll de två blocken identiska. */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --bg: #12161d; --panel: #1a202a; --border: #2a3240;
     --text: #dfe5ec; --muted: #8b96a5;
     --accent: #7a95f0; --accent-soft: #232c44;
@@ -27,6 +29,14 @@
     --bad: #e06a78; --bad-soft: #42222a; --frozen: #6b7480;
     --shadow: 0 1px 3px rgba(0, 0, 0, .4);
   }
+}
+:root[data-theme="dark"] {
+  --bg: #12161d; --panel: #1a202a; --border: #2a3240;
+  --text: #dfe5ec; --muted: #8b96a5;
+  --accent: #7a95f0; --accent-soft: #232c44;
+  --ok: #4cc07f; --warn: #d9a44a; --warn-soft: #3a2f1a;
+  --bad: #e06a78; --bad-soft: #42222a; --frozen: #6b7480;
+  --shadow: 0 1px 3px rgba(0, 0, 0, .4);
 }
 
 * { box-sizing: border-box; }
@@ -73,6 +83,21 @@ code, .mono { font-family: var(--mono); font-size: 12.5px; }
 .btn-warn { background: var(--warn); border-color: var(--warn); color: #fff; }
 .btn-icon { padding: 6px 9px; }
 .btn-small { padding: 2px 8px; font-size: 12px; border-radius: 6px; }
+
+/* Temaväxlare — segmented control */
+.theme-seg {
+  display: inline-flex; border: 1px solid var(--border);
+  border-radius: 8px; overflow: hidden; background: var(--panel);
+}
+.theme-seg button {
+  border: 0; background: transparent; color: var(--muted);
+  cursor: pointer; font: inherit; font-size: 14px; line-height: 1;
+  padding: 5px 8px;
+}
+.theme-seg button:hover { color: var(--text); }
+.theme-seg button[aria-pressed="true"] {
+  background: var(--accent-soft); color: var(--accent);
+}
 input, select {
   font: inherit; color: var(--text); background: var(--bg);
   border: 1px solid var(--border); border-radius: 7px; padding: 6px 9px;
