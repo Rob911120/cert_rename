@@ -120,6 +120,7 @@ input, select {
   border: 1px solid var(--border); border-radius: 7px; padding: 6px 9px;
 }
 input:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
+.topbar-search { width: 230px; max-width: 34vw; }
 .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
 .dot-on { background: var(--ok); }
 .dot-off { background: var(--frozen); }
@@ -164,9 +165,13 @@ input:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent)
 .badge.bad { color: var(--bad); border-color: var(--bad); background: var(--bad-soft); }
 .order-rows { margin-top: 10px; display: flex; flex-direction: column; gap: 10px; }
 .artrow { border-top: 1px solid var(--border); padding-top: 10px; }
-.artrow-head { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+.artrow-head { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; cursor: pointer; user-select: none; }
 .artrow-head .partnum { font-weight: 600; }
 .artrow-head .date-late { color: var(--bad); font-weight: 600; }
+.artrow-head .chev { font-size: 10px; color: var(--muted); transition: transform .12s; align-self: center; }
+.artrow-head.open .chev { transform: rotate(90deg); }
+.artrow-badges { margin-left: auto; display: flex; gap: 6px; align-items: center; }
+.artrow-body { margin-top: 8px; }
 .extra-desc { margin: 6px 0; color: var(--muted); font-family: var(--mono); font-size: 12px; white-space: pre-wrap; }
 
 /* KRAV/CERT-tabellen */

@@ -9,7 +9,9 @@ import { initSickan } from './sickan.js';
 
 const $ = (id) => document.getElementById(id);
 const openOrders = new Set();
+const openRows = new Set(); // utfällda artikelrader (per delivery_row_id, som sträng)
 let ov = null; // senaste overview-svaret
+let orderQuery = ''; // fritextfiltret från toppbarens sökruta (rå, trimmas i renderOrders)
 
 // ---------------------------------------------------------------------------
 // Init
@@ -99,10 +101,30 @@ const CATS = [
   ['levererade', '✓ Levererade utan sparat cert'],
 ];
 
+// rowMatches: träffar sökningen den HÄR artikelraden (rad-nivå-fälten)? Används
+// för sök-avslöjning — en artikel-träff fäller ut just den raden. q förväntas
+// redan lowercased och trimmat.
+function rowMatches(r, q) {
+  return [r.part_number, r.description, r.req_material]
+    .filter(Boolean).join(' ').toLowerCase().includes(q);
+}
+
+// orderMatches: skiftlägesokänslig delsträngsmatchning över ordernummer +
+// leverantör + varje rads artikeldata (som V1:s #upcomingFilter). q förväntas
+// redan lowercased och trimmat.
+function orderMatches(g, q) {
+  const hay = [g.order_number, g.supplier_name,
+    ...g.rows.flatMap((r) => [r.part_number, r.description, r.req_material])]
+    .filter(Boolean).join(' ').toLowerCase();
+  return hay.includes(q);
+}
+
 function renderOrders() {
   const today = new Date().toISOString().slice(0, 10);
+  const q = orderQuery.trim().toLowerCase();
+  const source = q ? ov.orders.filter((g) => orderMatches(g, q)) : ov.orders;
   const byCat = { forsenade: [], idag: [], kommande: [], levererade: [] };
-  for (const g of ov.orders) {
+  for (const g of source) {
     const cat = categorize(g, today);
     if (cat) byCat[cat].push(g);
   }
@@ -115,8 +137,12 @@ function renderOrders() {
     html += byCat[key].map(orderCard).join('');
   }
   $('ordersList').innerHTML = html;
-  $('ordersCount').textContent = shown ? `(${shown})` : '';
-  $('ordersEmpty').classList.toggle('hidden', ov.orders.length > 0);
+  $('ordersCount').textContent = q ? `${shown}/${ov.orders.length}` : (shown ? `(${shown})` : '');
+  $('ordersEmpty').textContent = q
+    ? 'Inga träffar.'
+    : 'Inga orderrader ännu — kör 🔄 Uppdatera för att hämta från Monitor.';
+  $('ordersEmpty').classList.toggle('hidden', shown > 0);
+  if (q) $('ordersSection').open = true; // annars rör vi inte användarens infäll-läge
 }
 
 // categorize: null = göm (allt levererat och alla cert sparade — klar).
@@ -135,7 +161,12 @@ function categorize(g, today) {
 }
 
 function orderCard(g) {
-  const open = openOrders.has(g.order_number);
+  const q = orderQuery.trim().toLowerCase();
+  // Sök-avslöjning: har ordern en artikel som matchar? Fäll då ut den (och nedan
+  // just den raden) så artikeln syns direkt. En ren order-/leverantörsträff
+  // (t.ex. B-nummer i order_number) räcker med rubriken → lämnas infälld. Rör
+  // aldrig användarens sparade openOrders/openRows-läge.
+  const open = openOrders.has(g.order_number) || (!!q && g.rows.some((r) => rowMatches(r, q)));
   const nRows = g.rows.length;
   const mismatch = g.rows.some((r) => r.links.some((l) => l.material_ok === 'mismatch'));
   const missing = g.rows.some((r) => r.cert_required && !r.links.length);
@@ -156,20 +187,36 @@ function orderCard(g) {
   </div>`;
 }
 
+// Kompakt statusbadge för en infälld artikelrad — så man ser cert-läget utan
+// att fälla ut raden: materialavvikelse (röd), sparat cert (grön) eller
+// cert saknas (gul, bara när cert krävs och inget är bekräftat).
+function rowStatusBadge(r) {
+  if (r.links.some((l) => l.material_ok === 'mismatch')) return '<span class="badge bad">⚠ material</span>';
+  if (r.links.some((l) => l.cert && l.cert.status === 'sparad')) return '<span class="badge ok">✓ cert</span>';
+  if (r.cert_required && !r.links.some((l) => l.status === 'bekraftad' && l.cert)) return '<span class="badge warn">cert saknas</span>';
+  return '';
+}
+
 function artRow(r) {
   const today = new Date().toISOString().slice(0, 10);
   const late = r.delivery_date && r.delivery_date < today && !r.delivered;
   const activeLinks = r.links; // avfärdade filtreras redan av servern
+  const q = orderQuery.trim().toLowerCase();
+  // Sök-avslöjning: en artikel-träff fäller ut raden så man ser den direkt.
+  const open = openRows.has(String(r.delivery_row_id)) || (!!q && rowMatches(r, q));
   return `
   <div class="artrow">
-    <div class="artrow-head">
+    <div class="artrow-head ${open ? 'open' : ''}" data-action="toggle-row" data-row="${r.delivery_row_id}">
+      <span class="chev">▶</span>
       <span class="partnum">${esc(r.part_number)}</span>
       <span>${esc(r.description)}</span>
       <span class="muted">${r.planned_qty} st</span>
       <span class="${late ? 'date-late' : 'muted'}">${esc(r.delivery_date)}${late ? ' ⏰' : ''}</span>
       ${r.delivered ? '<span class="badge ok">✓ levererad</span>' : ''}
       ${!r.in_monitor ? '<span class="badge" title="Raden fanns inte i senaste Monitor-hämtningen">utanför fönstret</span>' : ''}
+      <span class="artrow-badges">${rowStatusBadge(r)}</span>
     </div>
+    ${open ? `<div class="artrow-body">
     ${r.extra_description ? `<div class="extra-desc">Extra benämning: ${esc(r.extra_description)}</div>` : ''}
     ${reqTextSection(r)}
     ${drawingSection(r)}
@@ -182,6 +229,7 @@ function artRow(r) {
       <button class="btn btn-small" data-action="mark-delivered" data-row="${r.delivery_row_id}"
               data-delivered="${r.delivered ? 'false' : 'true'}">${r.delivered ? '↩ Ångra levererad' : '✓ Levererad'}</button>
     </div>
+    </div>` : ''}
   </div>`;
 }
 
@@ -479,6 +527,8 @@ function renderTasks() {
     </li>`).join('');
 }
 
+$('orderSearch').addEventListener('input', (e) => { orderQuery = e.target.value; renderOrders(); });
+
 $('taskForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   const input = $('taskInput');
@@ -499,6 +549,10 @@ document.addEventListener('click', async (e) => {
   if (action === 'toggle-order') {
     const key = el.dataset.order;
     openOrders.has(key) ? openOrders.delete(key) : openOrders.add(key);
+    renderOrders();
+  } else if (action === 'toggle-row') {
+    const key = el.dataset.row;
+    openRows.has(key) ? openRows.delete(key) : openRows.add(key);
     renderOrders();
   } else if (action === 'copy') {
     navigator.clipboard?.writeText(el.textContent.trim());
