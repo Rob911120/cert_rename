@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -313,7 +314,7 @@ func NewMux(s *Server) *http.ServeMux {
 	if err != nil {
 		panic(err) // omöjligt: katalogen är inbäddad vid kompilering
 	}
-	mux.Handle("GET /", http.FileServerFS(ui))
+	mux.Handle("GET /", staticHandler(ui))
 
 	mux.HandleFunc("GET /api/health", s.handleHealth)
 	mux.HandleFunc("GET /api/events", s.handleEvents)
@@ -353,6 +354,44 @@ func NewMux(s *Server) *http.ServeMux {
 	mux.HandleFunc("POST /api/sickan/model", s.handleSickanModel)
 
 	return mux
+}
+
+// staticHandler serverar det inbäddade UI:t men TVINGAR rätt Content-Type per
+// filändelse innan http.FileServer får sätta sin. På Windows läser FileServer
+// MIME-typen ur registret (HKEY_CLASSES_ROOT\.js), där .js ofta är felregistrerad
+// som text/plain av annan installerad mjukvara. Webbläsaren vägrar då köra
+// <script type="module"> (strikt MIME-koll) och HELA gränssnittet dör tyst —
+// ingen SSE-logg, inga rader, inställningsrutan går inte att öppna. Genom att
+// sätta headern explicit kringgår vi registret helt (ServeContent respekterar en
+// redan satt Content-Type och skriver inte över den).
+func staticHandler(ui fs.FS) http.Handler {
+	fileServer := http.FileServerFS(ui)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if ct := contentTypeByExt(r.URL.Path); ct != "" {
+			w.Header().Set("Content-Type", ct)
+		}
+		fileServer.ServeHTTP(w, r)
+	})
+}
+
+// contentTypeByExt ger en stabil, register-oberoende MIME-typ för de filtyper UI:t
+// levererar. Tom sträng = lämna åt FileServer att gissa (t.ex. för "/" → index.html,
+// där html-detektionen är ofarlig).
+func contentTypeByExt(p string) string {
+	p = strings.ToLower(p)
+	switch {
+	case strings.HasSuffix(p, ".js"), strings.HasSuffix(p, ".mjs"):
+		return "text/javascript; charset=utf-8"
+	case strings.HasSuffix(p, ".css"):
+		return "text/css; charset=utf-8"
+	case strings.HasSuffix(p, ".html"):
+		return "text/html; charset=utf-8"
+	case strings.HasSuffix(p, ".json"):
+		return "application/json"
+	case strings.HasSuffix(p, ".svg"):
+		return "image/svg+xml; charset=utf-8"
+	}
+	return ""
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {

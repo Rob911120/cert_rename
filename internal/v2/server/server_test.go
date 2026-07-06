@@ -6,10 +6,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"mime"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -520,5 +522,40 @@ func TestOverviewChangedThrottle(t *testing.T) {
 	s.OverviewChanged()
 	if got := count(); got != 1 {
 		t.Fatalf("nytt fönster: väntade 1 ny leading-ping, fick %d", got)
+	}
+}
+
+// TestStaticJSMimeForced skyddar Windows-fixen: <script type="module"> kräver att
+// .js serveras med en JavaScript-MIME. På Windows kan registret felaktigt mappa
+// .js → text/plain, vilket får webbläsaren att vägra köra modulen och HELA UI:t
+// dör. Vi förgiftar MIME-tabellen (simulerar registret) och verifierar att
+// servern ÄNDÅ tvingar text/javascript för alla UI-moduler.
+func TestStaticJSMimeForced(t *testing.T) {
+	// Simulera Windows-registret som mappar .js → text/plain.
+	if err := mime.AddExtensionType(".js", "text/plain"); err != nil {
+		t.Fatalf("kunde inte förgifta MIME-tabellen: %v", err)
+	}
+
+	s, mux, _ := testServer(t)
+	_ = s
+	for _, path := range []string{"/js/overview.js", "/js/api.js", "/js/shell.js", "/js/sickan.js"} {
+		req := httptest.NewRequest("GET", path, nil)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != 200 {
+			t.Fatalf("%s: status %d", path, rec.Code)
+		}
+		ct := rec.Header().Get("Content-Type")
+		if !strings.HasPrefix(ct, "text/javascript") {
+			t.Errorf("%s: Content-Type = %q, vill ha text/javascript — modulen skulle vägras av webbläsaren", path, ct)
+		}
+	}
+
+	// CSS ska också tvingas rätt.
+	req := httptest.NewRequest("GET", "/app.css", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/css") {
+		t.Errorf("/app.css: Content-Type = %q, vill ha text/css", ct)
 	}
 }
