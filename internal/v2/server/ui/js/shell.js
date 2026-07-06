@@ -101,7 +101,8 @@ function renderCosts(costs) {
 
 // --- Inställningar ------------------------------------------------------------
 
-const CFG_FIELDS = ['inbox_dir', 'api_key', 'monitor_url', 'monitor_user',
+// monitor_url ingår INTE — URL:en är hårdkodad och visas bara skrivskyddat.
+const CFG_FIELDS = ['inbox_dir', 'api_key', 'monitor_user',
   'monitor_password', 'upcoming_time', 'v2_store_dir', 'v2_output_dir', 'report_email'];
 const CFG_NUMS = ['upcoming_window_days', 'upcoming_back_days'];
 const CFG_BOOLS = ['autostart', 'upcoming_enabled'];
@@ -116,11 +117,19 @@ function initSettings() {
     for (const k of CFG_FIELDS) form.elements[k].value = current[k] ?? '';
     for (const k of CFG_NUMS) form.elements[k].value = current[k] ?? '';
     for (const k of CFG_BOOLS) form.elements[k].checked = !!current[k];
+    const urlDisp = document.getElementById('monitorUrlDisplay');
+    if (urlDisp) urlDisp.textContent = current.monitor_url || '—';
     dlg.showModal();
   });
   document.getElementById('settingsCancel').addEventListener('click', () => dlg.close());
+  // Stäng utan att spara: klick på backdrop (utanför formuläret). Escape stänger
+  // <dialog> nativt. Ingen av dessa submittar, så inget sparas oavsiktligt.
+  dlg.addEventListener('click', (e) => { if (e.target === dlg) dlg.close(); });
 
   form.addEventListener('submit', async () => {
+    // Tomt hemlighetsfält lämnas tomt här och tolkas serverside som "behåll
+    // befintligt" (se handleConfigPost) — så credentials nollställs aldrig av
+    // ett spar. monitor_url skickas inte (hårdkodad).
     const cfg = { ...current };
     for (const k of CFG_FIELDS) cfg[k] = form.elements[k].value.trim();
     for (const k of CFG_NUMS) cfg[k] = parseInt(form.elements[k].value, 10) || 0;

@@ -559,3 +559,47 @@ func TestStaticJSMimeForced(t *testing.T) {
 		t.Errorf("/app.css: Content-Type = %q, vill ha text/css", ct)
 	}
 }
+
+// TestConfigPostKeepsSecretsOnEmpty skyddar 4c: ett spar med tomma
+// hemlighets-/inloggningsfält får INTE nollställa redan sparade credentials
+// (webbläsaren tömmer programsatta lösenordsfält). Tomt = behåll befintligt.
+func TestConfigPostKeepsSecretsOnEmpty(t *testing.T) {
+	s, mux, _ := testServer(t)
+
+	// Lägg först in credentials.
+	rec := doJSON(t, mux, "POST", "/api/config", map[string]any{
+		"api_key":          "sk-abc",
+		"monitor_user":     "rob",
+		"monitor_password": "hemlig",
+	})
+	if rec.Code != 200 {
+		t.Fatalf("första spar: %d %s", rec.Code, rec.Body)
+	}
+
+	// Spara igen med tomma hemlighetsfält (som när man öppnar rutan och bara
+	// ändrar något annat) — de gamla värdena ska bestå.
+	rec = doJSON(t, mux, "POST", "/api/config", map[string]any{
+		"api_key":          "",
+		"monitor_user":     "",
+		"monitor_password": "",
+		"upcoming_time":    "07:00",
+	})
+	if rec.Code != 200 {
+		t.Fatalf("andra spar: %d %s", rec.Code, rec.Body)
+	}
+
+	cfg := s.Config()
+	if cfg.ApiKey != "sk-abc" {
+		t.Errorf("api_key nollställdes: %q", cfg.ApiKey)
+	}
+	if cfg.MonitorUser != "rob" {
+		t.Errorf("monitor_user nollställdes: %q", cfg.MonitorUser)
+	}
+	if cfg.MonitorPassword != "hemlig" {
+		t.Errorf("monitor_password nollställdes: %q", cfg.MonitorPassword)
+	}
+	// URL:en ska vara den hårdkodade defaulten (aldrig tom, aldrig http).
+	if cfg.MonitorURL != store.DefaultMonitorURL {
+		t.Errorf("monitor_url = %q, vill ha %q", cfg.MonitorURL, store.DefaultMonitorURL)
+	}
+}

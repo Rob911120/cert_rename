@@ -22,6 +22,13 @@ const (
 // DefaultBriefTime är morgonbriefens schemalagda tid.
 const DefaultBriefTime = "06:45"
 
+// DefaultMonitorURL är den hårdkodade Monitor-adressen. Monitor G5:s REST/OData-API
+// kräver TLS (self-signed på den lokala servern) — därför https. URL:en är medvetet
+// inte redigerbar i inställningarna (en operatör kan inte råka posta plaintext-HTTP
+// mot TLS-porten, vilket ger "connection forcibly closed"). Env MONITOR_URL kan
+// fortfarande överstyra som escape hatch.
+const DefaultMonitorURL = "https://192.168.52.232:8001"
+
 type Config struct {
 	InboxDir    string `json:"inbox_dir"`
 	ApiKey      string `json:"api_key,omitempty"`
@@ -99,6 +106,25 @@ func (c *Config) NormalizeUpcoming() {
 	}
 }
 
+// NormalizeMonitorURL tvingar en giltig https-URL. Tom → hårdkodad default.
+// Saknad scheme → https:// läggs till. http:// → uppgraderas till https:// (Monitor
+// kräver TLS; plaintext mot TLS-porten ger "connection forcibly closed"). Avslutande
+// snedstreck trimmas. Anropas från LoadConfig och vid spara så resten av koden kan
+// lita på fältet.
+func (c *Config) NormalizeMonitorURL() {
+	u := strings.TrimRight(strings.TrimSpace(c.MonitorURL), "/")
+	switch {
+	case u == "":
+		u = DefaultMonitorURL
+	case strings.HasPrefix(u, "http://"):
+		log.Printf("⚠️  Monitor-URL var http:// — tvingar https:// (Monitor kräver TLS)")
+		u = "https://" + strings.TrimPrefix(u, "http://")
+	case !strings.Contains(u, "://"):
+		u = "https://" + u
+	}
+	c.MonitorURL = u
+}
+
 func QueueDir(c Config) string         { return filepath.Join(c.InboxDir, "queue") }
 func ReviewDir(c Config) string        { return filepath.Join(c.InboxDir, "review") }
 func ApprovedDir(c Config) string      { return filepath.Join(c.InboxDir, "approved") }
@@ -164,6 +190,7 @@ func LoadConfig() Config {
 		}
 	}
 	c.NormalizeUpcoming()
+	c.NormalizeMonitorURL()
 	return c
 }
 

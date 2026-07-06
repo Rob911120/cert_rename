@@ -414,7 +414,26 @@ func (s *Server) handleConfigPost(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &cfg) {
 		return
 	}
+	// Tomt hemlighets-/inloggningsfält = behåll befintligt värde. Webbläsaren tömmer
+	// ofta programsatta lösenordsfält (autocomplete=off), och utan detta skulle ett
+	// spar utan att röra fälten nollställa credentials man redan lagt in. Samma känsla
+	// som Anthropic-API-nyckeln — den ska sitta kvar. Monitor-URL:en skickas inte längre
+	// av UI:t (hårdkodad), så tom URL behåller den effektiva (default/env).
+	prev := s.Config()
+	if strings.TrimSpace(cfg.ApiKey) == "" {
+		cfg.ApiKey = prev.ApiKey
+	}
+	if strings.TrimSpace(cfg.MonitorUser) == "" {
+		cfg.MonitorUser = prev.MonitorUser
+	}
+	if strings.TrimSpace(cfg.MonitorPassword) == "" {
+		cfg.MonitorPassword = prev.MonitorPassword
+	}
+	if strings.TrimSpace(cfg.MonitorURL) == "" {
+		cfg.MonitorURL = prev.MonitorURL
+	}
 	cfg.NormalizeUpcoming()
+	cfg.NormalizeMonitorURL()
 	if err := store.SaveConfig(cfg); err != nil {
 		writeError(w, err)
 		return

@@ -89,9 +89,9 @@
     <label class="check"><input name="autostart" type="checkbox"> Starta mailintaget vid appstart</label>
     <fieldset>
       <legend>Monitor</legend>
-      <label>URL<input name="monitor_url" placeholder="https://…:8001/sv/001.1"></label>
-      <label>Användare<input name="monitor_user"></label>
-      <label>Lösenord<input name="monitor_password" type="password" autocomplete="off"></label>
+      <div class="muted small">Server: <span id="monitorUrlDisplay">—</span> <span class="muted">(hårdkodad)</span></div>
+      <label>Användare<input name="monitor_user" autocomplete="off"></label>
+      <label>Lösenord<input name="monitor_password" type="password" autocomplete="off" placeholder="•••• (sparat)"></label>
       <label class="check"><input name="upcoming_enabled" type="checkbox"> Daglig sync</label>
       <div class="grid3">
         <label>Tid<input name="upcoming_time" placeholder="16:30"></label>

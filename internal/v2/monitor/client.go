@@ -106,7 +106,9 @@ func (c *Client) Login(ctx context.Context, user, pass string) error {
 	req.Header.Set("Accept", "application/json")
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return fmt.Errorf("login: %w", err)
+		// Transport-fel (reset/EOF/timeout) — nästan alltid fel scheme/port:
+		// plaintext-HTTP mot Monitors TLS-port ger "connection forcibly closed".
+		return fmt.Errorf("login: %w (kontrollera att Monitor-URL:en är https:// och att porten stämmer)", err)
 	}
 	defer resp.Body.Close()
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
