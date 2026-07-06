@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"fmt"
 	"path/filepath"
+	"strings"
 
 	_ "modernc.org/sqlite"
 )
@@ -277,27 +278,62 @@ CREATE TABLE ai_requirements_cache (
 	`ALTER TABLE certs ADD COLUMN product_code TEXT NOT NULL DEFAULT '';`,
 }
 
+// openDB försöker öppna databasen i WAL-läge (bäst för samtidiga läsningar under
+// en lång sync) och faller tillbaka på ett vanligt läge om WAL inte går att slå
+// på. WAL kräver en anständig lokal filesystem och exklusiv åtkomst vid själva
+// omställningen — det MISSLYCKAS typiskt på nätverks-/molnsynkade mappar (t.ex.
+// OneDrive under Windows APPDATA) eller om en kvarhängande tidigare instans
+// fortfarande håller filen låst. Ett WAL-fel FÅR ALDRIG hindra appen från att
+// starta (modernc returnerar pragma-fel som fatala vid open), så vi provar WAL
+// och backar tyst till rå öppning om det inte tar.
+//
+// Returnerar (db, walPå, err). walPå styr connection-poolens storlek i Open.
+func openDB(dbPath string) (*sql.DB, bool, error) {
+	// Pragmorna splittas av drivrutinen vid första '?'; en filsökväg (även
+	// Windows C:\…) innehåller aldrig '?', så det är säkert att lägga till dem.
+	dsn := dbPath + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)"
+	if db, err := sql.Open("sqlite", dsn); err == nil {
+		// Ping öppnar en anslutning och kör pragmorna; lyckas det OCH journal_mode
+		// faktiskt blev "wal" är WAL påslaget för alla framtida anslutningar
+		// (journal_mode persisteras i filhuvudet).
+		if perr := db.Ping(); perr == nil {
+			var jm string
+			if qerr := db.QueryRow("PRAGMA journal_mode").Scan(&jm); qerr == nil && strings.EqualFold(jm, "wal") {
+				return db, true, nil
+			}
+		}
+		db.Close()
+	}
+	// Fallback: rå sökväg utan pragmor — alltid-fungerande rollback-journal-läge.
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		return nil, false, err
+	}
+	if err := db.Ping(); err != nil {
+		db.Close()
+		return nil, false, err
+	}
+	return db, false, nil
+}
+
 // Open öppnar (eller skapar) V2-databasen och applicerar väntande migrationer.
 func Open(dbPath string) (*sql.DB, error) {
-	// WAL-läge + busy_timeout sätts på VARJE ny anslutning via DSN:en. WAL låter
-	// läsare (t.ex. den tunga GET /api/overview) läsa SAMTIDIGT som en lång
-	// Monitor-sync skriver — tidigare köade allt bakom en enda anslutning, så
-	// UI:t frös helt under synken. Pragmorna splittas av drivrutinen vid första
-	// '?'; ett filsökväg (även Windows C:\…) innehåller aldrig '?', så det är
-	// säkert att bara lägga till frågesträngen.
-	dsn := dbPath + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)"
-	db, err := sql.Open("sqlite", dsn)
+	db, wal, err := openDB(dbPath)
 	if err != nil {
 		return nil, err
 	}
-	// WAL = en skrivare + flera läsare samtidigt. Skrivare serialiseras av SQLite
-	// och väntar upp till busy_timeout (5 s) i stället för att fela med SQLITE_BUSY;
-	// läsare blockeras aldrig av skrivaren. Poolen släpps upp så läs-anrop kan få
-	// egna anslutningar medan synken håller sin skrivanslutning varm.
-	db.SetMaxOpenConns(8)
-	if err := db.Ping(); err != nil {
-		db.Close()
-		return nil, err
+	if wal {
+		// WAL = en skrivare + flera läsare samtidigt. Skrivare serialiseras av
+		// SQLite och väntar upp till busy_timeout (5 s) i stället för att fela med
+		// SQLITE_BUSY; läsare blockeras aldrig av skrivaren. Poolen släpps upp så
+		// läs-anrop (t.ex. den tunga GET /api/overview) kan få egna anslutningar
+		// medan en lång Monitor-sync håller sin skrivanslutning varm.
+		db.SetMaxOpenConns(8)
+	} else {
+		// Fallback (WAL gick inte att slå på — se openDB): klassiskt
+		// rollback-journal-läge, en skrivare åt gången. Samma beteende som före
+		// WAL-införandet; UI:t kan då köa bakom synken men appen STARTAR alltid.
+		db.SetMaxOpenConns(1)
 	}
 	if err := migrate(db); err != nil {
 		db.Close()

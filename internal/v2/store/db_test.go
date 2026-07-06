@@ -206,3 +206,36 @@ func Test_Migrate_AddsOrderRowRequirementFieldsToExistingDB(t *testing.T) {
 		t.Errorf("tom krav-cache ska ge ErrNotFound, fick %v", err)
 	}
 }
+
+// TestOpenReopenPersists skyddar omstart-vägen: en redan skapad databas ska gå
+// att öppna igen (som när användaren startar om programmet) utan att Open felar,
+// och datan ska finnas kvar. Fångar regressen där WAL-omställning kunde göra
+// Open fatal på en befintlig DB.
+func TestOpenReopenPersists(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "reopen.db")
+
+	db, err := Open(path)
+	if err != nil {
+		t.Fatalf("första Open: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO app_state (key, value) VALUES ('probe', 'v1')`); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	// Omstart: öppna samma fil igen.
+	db2, err := Open(path)
+	if err != nil {
+		t.Fatalf("andra Open (omstart): %v", err)
+	}
+	defer db2.Close()
+	var v string
+	if err := db2.QueryRow(`SELECT value FROM app_state WHERE key='probe'`).Scan(&v); err != nil {
+		t.Fatalf("läs efter omstart: %v", err)
+	}
+	if v != "v1" {
+		t.Fatalf("data överlevde inte omstart: fick %q", v)
+	}
+}
