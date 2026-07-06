@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"cert-renamer/internal/v2/domain"
 	"cert-renamer/internal/v2/store"
@@ -469,5 +470,55 @@ func TestOverviewShape(t *testing.T) {
 	}
 	if len(ov.Orders[0].Rows[0].Links) != 1 || ov.Orders[0].Rows[0].Links[0].Cert == nil {
 		t.Errorf("länkat cert saknas på raden: %+v", ov.Orders[0].Rows[0].Links)
+	}
+}
+
+// TestOverviewChangedThrottle skyddar fix B: första ändringen sänds direkt
+// (leading edge) och en snabb skur av ändringar därefter slås ihop till EN
+// eftersläpande ping — annars skulle en lång sync trigga en full
+// /api/overview-refetch per rad och frysa UI:t.
+func TestOverviewChangedThrottle(t *testing.T) {
+	s, _, _ := testServer(t)
+
+	// Prenumerera direkt på SSE-bussen och räkna overview-pingar.
+	ch := make(chan ssEvent, 100)
+	s.subsMu.Lock()
+	s.subs[ch] = struct{}{}
+	s.subsMu.Unlock()
+
+	count := func() int {
+		n := 0
+		for {
+			select {
+			case ev := <-ch:
+				if ev.Event == "overview" {
+					n++
+				}
+			default:
+				return n
+			}
+		}
+	}
+
+	// En skur av 50 ändringar inom fönstret → exakt 1 omedelbar ping (leading).
+	for i := 0; i < 50; i++ {
+		s.OverviewChanged()
+	}
+	if got := count(); got != 1 {
+		t.Fatalf("leading edge: väntade 1 omedelbar ping, fick %d", got)
+	}
+
+	// Efter fönstret ska den eftersläpande, koalescerade pingen ha sänts.
+	time.Sleep(overviewThrottle + 250*time.Millisecond)
+	if got := count(); got != 1 {
+		t.Fatalf("trailing edge: väntade 1 eftersläpande ping, fick %d", got)
+	}
+
+	// När allt lugnat sig ska fönstret vara stängt igen (nästa ändring = ny
+	// leading edge, inte tyst).
+	time.Sleep(overviewThrottle + 250*time.Millisecond)
+	s.OverviewChanged()
+	if got := count(); got != 1 {
+		t.Fatalf("nytt fönster: väntade 1 ny leading-ping, fick %d", got)
 	}
 }

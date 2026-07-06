@@ -279,11 +279,22 @@ CREATE TABLE ai_requirements_cache (
 
 // Open öppnar (eller skapar) V2-databasen och applicerar väntande migrationer.
 func Open(dbPath string) (*sql.DB, error) {
-	db, err := sql.Open("sqlite", dbPath)
+	// WAL-läge + busy_timeout sätts på VARJE ny anslutning via DSN:en. WAL låter
+	// läsare (t.ex. den tunga GET /api/overview) läsa SAMTIDIGT som en lång
+	// Monitor-sync skriver — tidigare köade allt bakom en enda anslutning, så
+	// UI:t frös helt under synken. Pragmorna splittas av drivrutinen vid första
+	// '?'; ett filsökväg (även Windows C:\…) innehåller aldrig '?', så det är
+	// säkert att bara lägga till frågesträngen.
+	dsn := dbPath + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)"
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, err
 	}
-	db.SetMaxOpenConns(1) // SQLite: en skrivare åt gången
+	// WAL = en skrivare + flera läsare samtidigt. Skrivare serialiseras av SQLite
+	// och väntar upp till busy_timeout (5 s) i stället för att fela med SQLITE_BUSY;
+	// läsare blockeras aldrig av skrivaren. Poolen släpps upp så läs-anrop kan få
+	// egna anslutningar medan synken håller sin skrivanslutning varm.
+	db.SetMaxOpenConns(8)
 	if err := db.Ping(); err != nil {
 		db.Close()
 		return nil, err

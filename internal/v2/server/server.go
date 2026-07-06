@@ -48,6 +48,10 @@ type Server struct {
 	logMu  sync.Mutex
 	logBuf []string
 
+	ovMu      sync.Mutex
+	ovTimer   *time.Timer
+	ovPending bool
+
 	costsMu sync.Mutex
 	costs   store.Costs
 
@@ -97,9 +101,41 @@ func (s *Server) Logf(format string, args ...any) {
 	s.recordAndBroadcastLog(text)
 }
 
-// OverviewChanged pingar klienterna att refetcha /api/overview.
+// overviewThrottle är fönstret för att koalescera overview-pingar.
+const overviewThrottle = 750 * time.Millisecond
+
+// OverviewChanged pingar klienterna att refetcha /api/overview, koalescerat
+// (leading + trailing): FÖRSTA ändringen sänds direkt så interaktiva klick
+// (bekräfta, spara) känns omedelbara; följande ändringar inom fönstret slås
+// ihop till EN eftersläpande ping. Det hindrar en lång Monitor-sync från att
+// trigga hundratals fulla /api/overview-refetchar (en per rad) som förr dränkte
+// den enda DB-anslutningen och frös UI:t.
 func (s *Server) OverviewChanged() {
-	s.broadcast(ssEvent{Event: "overview", Data: "{}"})
+	s.ovMu.Lock()
+	defer s.ovMu.Unlock()
+	if s.ovTimer == nil {
+		// Inget öppet fönster — sänd direkt (leading edge) och öppna ett.
+		s.broadcast(ssEvent{Event: "overview", Data: "{}"})
+		s.ovTimer = time.AfterFunc(overviewThrottle, s.flushOverview)
+		return
+	}
+	// Fönster redan öppet — markera bara att en eftersläpande ping behövs.
+	s.ovPending = true
+}
+
+// flushOverview sänder en koalescerad ping om ändringar samlats under fönstret
+// och håller då fönstret öppet ytterligare en period (så en pågående sync ger
+// högst ~1 ping per fönster). Utan väntande ändringar stängs fönstret.
+func (s *Server) flushOverview() {
+	s.ovMu.Lock()
+	defer s.ovMu.Unlock()
+	if s.ovPending {
+		s.broadcast(ssEvent{Event: "overview", Data: "{}"})
+		s.ovPending = false
+		s.ovTimer = time.AfterFunc(overviewThrottle, s.flushOverview)
+		return
+	}
+	s.ovTimer = nil
 }
 
 // RecordUsage ackumulerar tokenkostnad (delar costs.json med V1) och
