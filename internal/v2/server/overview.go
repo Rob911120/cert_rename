@@ -187,7 +187,11 @@ type overviewJSON struct {
 	LastSync      string           `json:"last_sync"`
 	Orders        []orderGroupJSON `json:"orders"`
 	UnlinkedCerts []unlinkedJSON   `json:"unlinked_certs"`
-	SavedRecent   []certJSON       `json:"saved_recent"`
+	// UnmatchedCerts: levande cert helt utan länkar/förslag — de vi INTE kunde
+	// matcha automatiskt. Surfas i "Att göra" så operatören kan ange B-nummer och
+	// koppla. Härledda varje overview → försvinner av sig själva när de kopplats.
+	UnmatchedCerts []unlinkedJSON `json:"unmatched_certs"`
+	SavedRecent    []certJSON     `json:"saved_recent"`
 	Archived      []certJSON       `json:"archived"`
 	Tasks         []*store.Task    `json:"tasks"`
 	Errors        []string         `json:"errors"`
@@ -404,6 +408,7 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp.UnlinkedCerts = []unlinkedJSON{}
+	resp.UnmatchedCerts = []unlinkedJSON{}
 	for _, c := range living {
 		view := getView(c.ID)
 		if view == nil || len(view.ConfirmedOrders) > 0 {
@@ -425,7 +430,13 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 			}
 			u.Suggestions = append(u.Suggestions, sug)
 		}
-		resp.UnlinkedCerts = append(resp.UnlinkedCerts, u)
+		// Har certet auto-förslag att bekräfta → "Okopplade cert". Inga förslag alls
+		// → omatchat, lyfts till "Att göra" så operatören kan ange B-nummer.
+		if len(u.Suggestions) > 0 {
+			resp.UnlinkedCerts = append(resp.UnlinkedCerts, u)
+		} else {
+			resp.UnmatchedCerts = append(resp.UnmatchedCerts, u)
+		}
 	}
 
 	// Nyligen sparade + arkiverade (frysta vyer).

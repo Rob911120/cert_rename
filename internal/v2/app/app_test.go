@@ -351,3 +351,36 @@ func listPDFs(t *testing.T, dir string) []string {
 	}
 	return out
 }
+
+// TestUpdateBNumbersRematches skyddar Fix 3: att rätta ett certs b_numbers ska
+// köra om matchningen direkt, så en ny föreslagen länk skapas utan att vänta på
+// nästa Monitor-sync.
+func TestUpdateBNumbersRematches(t *testing.T) {
+	a, _, cfg := testApp(t)
+	ctx := context.Background()
+
+	if err := a.Repo.UpsertOrderRow(ctx, &domain.OrderRow{
+		DeliveryRowID: 7, OrderNumber: "B222222", PartNumber: "P",
+	}, "t"); err != nil {
+		t.Fatal(err)
+	}
+	c := seedCert(t, a, cfg) // har B128293 — matchar inte raden ännu
+
+	if links, err := a.Repo.ListLinksForRow(ctx, 7); err != nil {
+		t.Fatal(err)
+	} else if len(links) != 0 {
+		t.Fatalf("0 länkar före rättning, fick %d", len(links))
+	}
+
+	if _, err := a.UpdateCertField(ctx, c.ID, "b_numbers", "B222222", "rob"); err != nil {
+		t.Fatal(err)
+	}
+
+	links, err := a.Repo.ListLinksForRow(ctx, 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(links) != 1 || links[0].Status != domain.LinkForeslagen {
+		t.Fatalf("förväntade 1 föreslagen länk efter B-nummer-rättning, fick %+v", links)
+	}
+}

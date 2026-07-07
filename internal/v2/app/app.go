@@ -112,6 +112,14 @@ func (a *App) UpdateCertField(ctx context.Context, certID int64, field, value, w
 		return nil, err
 	}
 	a.Notify.Logf("✏️  cert %d: %s → %q (%s)", certID, field, value, who)
+	// Rättade B-nummer ska matcha om DIREKT — annars syns nya förslag först vid
+	// nästa Monitor-sync. Körs utanför Tx:en ovan (SuggestLink öppnar egna
+	// transaktioner) och är idempotent (no-op på redan existerande länkar/beslut).
+	if field == "b_numbers" {
+		if _, serr := a.SuggestLinksByBNumber(ctx, certID); serr != nil {
+			a.Notify.Logf("   ⚠️  förslagspass efter B-nummer-rättning: %v", serr)
+		}
+	}
 	a.Notify.OverviewChanged()
 	return view, nil
 }

@@ -693,3 +693,73 @@ func TestOverviewHidesRowsGoneFromMonitor(t *testing.T) {
 		t.Error("rad 3 (borta ur Monitor men osparat länkat cert) borde stanna")
 	}
 }
+
+// seedCertB lägger ett cert med distinkt innehåll (unik hash) och givna B-nummer.
+func seedCertB(t *testing.T, s *Server, cfg store.Config, tag string, bnums []string) *domain.Cert {
+	t.Helper()
+	data := []byte("%PDF-1.4 " + tag + "\n")
+	hash := store.HashPDF(data)
+	stored := store.StoredName(hash, tag+".pdf")
+	if _, err := store.WriteStoreFile(cfg, stored, data); err != nil {
+		t.Fatal(err)
+	}
+	c := &domain.Cert{
+		PdfHash: hash, OriginalFilename: tag + ".pdf", StoredName: stored,
+		CertType: "3.1", Charge: "C" + tag, Material: "S355",
+		EnStandardPresent: true, IsEnglish: true, BNumbers: bnums, ReceivedAt: "t",
+	}
+	if _, err := s.Repo.InsertCert(context.Background(), c); err != nil {
+		t.Fatal(err)
+	}
+	return c
+}
+
+// TestOverviewSplitsUnmatchedCerts skyddar Fix 1: cert utan träff hamnar i
+// unmatched_certs (→ "Att göra"), cert med förslag i unlinked_certs.
+func TestOverviewSplitsUnmatchedCerts(t *testing.T) {
+	s, mux, cfg := testServer(t)
+	ctx := context.Background()
+
+	if err := s.Repo.UpsertOrderRow(ctx, &domain.OrderRow{
+		DeliveryRowID: 10, OrderNumber: "B111111", PartNumber: "P",
+	}, "t"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Matchande cert → förslag skapas via intags-matchningen.
+	match := seedCertB(t, s, cfg, "match", []string{"B111111"})
+	if n, err := s.App.SuggestLinksByBNumber(ctx, match.ID); err != nil || n == 0 {
+		t.Fatalf("förväntade förslag för matchande cert, n=%d err=%v", n, err)
+	}
+	// Omatchat cert (inga B-nummer).
+	nomatch := seedCertB(t, s, cfg, "nomatch", nil)
+
+	rec := doJSON(t, mux, "GET", "/api/overview", nil)
+	if rec.Code != 200 {
+		t.Fatalf("overview: %d %s", rec.Code, rec.Body)
+	}
+	var ov overviewJSON
+	if err := json.Unmarshal(rec.Body.Bytes(), &ov); err != nil {
+		t.Fatal(err)
+	}
+	unmatched := map[string]bool{}
+	for _, u := range ov.UnmatchedCerts {
+		unmatched[u.ID] = true
+	}
+	unlinked := map[string]bool{}
+	for _, u := range ov.UnlinkedCerts {
+		unlinked[u.ID] = true
+	}
+	if !unmatched[idStr(nomatch.ID)] {
+		t.Error("omatchat cert borde ligga i unmatched_certs")
+	}
+	if unlinked[idStr(nomatch.ID)] {
+		t.Error("omatchat cert borde INTE ligga i unlinked_certs")
+	}
+	if !unlinked[idStr(match.ID)] {
+		t.Error("cert med förslag borde ligga i unlinked_certs")
+	}
+	if unmatched[idStr(match.ID)] {
+		t.Error("cert med förslag borde INTE ligga i unmatched_certs")
+	}
+}

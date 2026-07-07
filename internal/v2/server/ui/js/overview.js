@@ -517,14 +517,39 @@ function renderSaved() {
 }
 
 function renderTasks() {
-  $('taskCount').textContent = ov.tasks.length ? `(${ov.tasks.length})` : '';
-  $('taskList').innerHTML = ov.tasks.map((t) => `
+  // Omatchade cert (kunde inte kopplas automatiskt) lyfts överst i "Att göra" som
+  // åtgärdsposter: skriv B-nummer → Koppla (skapar bekräftad länk direkt), eller
+  // Arkivera. De är härledda ur overviewn, så de försvinner av sig själva så snart
+  // certet kopplats/arkiverats. Samma kontroller som okopplat-kortet.
+  const unmatched = ov.unmatched_certs || [];
+  const total = unmatched.length + ov.tasks.length;
+  $('taskCount').textContent = total ? `(${total})` : '';
+
+  const unmatchedHtml = unmatched.map((c) => `
+    <li class="unmatched-cert">
+      <span>📄 <a href="/api/pdf?cert_id=${c.id}" target="_blank"
+          title="Omatchat cert — ange B-nummer för att koppla">${esc(c.original_filename)}</a>
+        <span class="meta">charge ${esc(c.effective.charge) || '—'} · ${esc(c.effective.material) || '—'}</span></span>
+      <span class="inline-form">
+        <input type="text" placeholder="B-nummer, t.ex. B127575" data-linkinput="${c.id}"
+               pattern="[Bb]\\d{6}" title="B + sex siffror">
+        <button class="btn btn-small" data-action="link-free" data-cert="${c.id}">🔗 Koppla</button>
+        <button class="btn btn-small" data-action="archive-cert" data-cert="${c.id}"
+                title="Inte ett cert / irrelevant">🗑 Arkivera</button>
+      </span>
+    </li>`).join('');
+
+  const tasksHtml = ov.tasks.map((t) => `
     <li><span>${esc(t.text)}</span>
       ${t.order_number ? `<span class="meta">${esc(t.order_number)}</span>` : ''}
       ${t.due_date ? `<span class="meta">${esc(t.due_date)}</span>` : ''}
       <button class="btn btn-small" data-action="task-done" data-task="${t.id}">✓</button>
       <button class="btn btn-small" data-action="task-delete" data-task="${t.id}">✕</button>
     </li>`).join('');
+
+  $('taskList').innerHTML = unmatchedHtml + tasksHtml;
+  // Fäll ut "Att göra" när det finns omatchade cert så de faktiskt syns.
+  if (unmatched.length) $('tasksSection').open = true;
 }
 
 $('orderSearch').addEventListener('input', (e) => { orderQuery = e.target.value; renderOrders(); });
