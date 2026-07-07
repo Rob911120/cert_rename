@@ -157,23 +157,32 @@ func (s *Server) RecordUsage(model string, in, out, cacheCreate, cacheRead int64
 // ---------------------------------------------------------------------------
 
 func (s *Server) StartWorker() error {
+	// OBS: släpp s.mu INNAN broadcastState()/go in.Run() — båda tar s.mu igen
+	// (workerRunning resp. in.Config), och Go-mutex är inte återinträdbar. Med
+	// defer-lås skulle broadcastState självlåsa och hänga hela servern (samma
+	// mönster som StopWorker, som låser upp före broadcast).
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.running {
+		s.mu.Unlock()
 		return nil
 	}
 	if s.cfg.ApiKey == "" {
+		s.mu.Unlock()
 		return errors.New("ingen API-nyckel konfigurerad — öppna ⚙️ Inställningar")
 	}
 	if s.cfg.InboxDir == "" {
+		s.mu.Unlock()
 		return errors.New("ingen inkorgsmapp konfigurerad")
 	}
 	if err := store.EnsureDirs(s.cfg); err != nil {
+		s.mu.Unlock()
 		return fmt.Errorf("skapa V2-mappar: %w", err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	in := &intake.Intake{App: s.App, AI: intake.NewClaude(s.cfg.ApiKey, s), Config: s.Config}
 	s.intakeInst, s.stopWorker, s.running = in, cancel, true
+	s.mu.Unlock()
+
 	go in.Run(ctx, s.intakeKick)
 	s.broadcastState()
 	return nil

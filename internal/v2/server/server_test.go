@@ -603,3 +603,93 @@ func TestConfigPostKeepsSecretsOnEmpty(t *testing.T) {
 		t.Errorf("monitor_url = %q, vill ha %q", cfg.MonitorURL, store.DefaultMonitorURL)
 	}
 }
+
+// TestStartWorkerDoesNotDeadlock skyddar Fix 1: StartWorker fick inte hålla s.mu
+// över broadcastState()/go in.Run() (som re-låser s.mu) — då självlåste servern och
+// varje handler som läser config/state hängde. Testet startar workern och kräver att
+// efterföljande s.Config()/GET /api/config svarar utan att hänga.
+func TestStartWorkerDoesNotDeadlock(t *testing.T) {
+	s, mux, cfg := testServer(t)
+	c := s.Config()
+	c.ApiKey = "sk-test"
+	c.InboxDir = cfg.InboxDir
+	s.setConfig(c)
+
+	done := make(chan error, 1)
+	go func() {
+		if err := s.StartWorker(); err != nil {
+			done <- fmt.Errorf("StartWorker: %w", err)
+			return
+		}
+		_ = s.Config() // tar s.mu — hänger vid självlåsning
+		rec := doJSON(t, mux, "GET", "/api/config", nil)
+		if rec.Code != 200 {
+			done <- fmt.Errorf("/api/config status %d", rec.Code)
+			return
+		}
+		done <- nil
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("StartWorker/efterföljande handler hängde — mutex-självlåsning")
+	}
+	s.StopWorker()
+}
+
+// TestOverviewHidesRowsGoneFromMonitor skyddar Fix 3: rader som lämnat Monitor
+// (in_monitor=0) göms när inget cert-arbete återstår, men en rad med osparat länkat
+// cert stannar (invarianten), och rader som fortfarande finns i Monitor visas.
+func TestOverviewHidesRowsGoneFromMonitor(t *testing.T) {
+	s, mux, cfg := testServer(t)
+	ctx := context.Background()
+
+	for _, r := range []*domain.OrderRow{
+		{DeliveryRowID: 1, OrderNumber: "O1", PartNumber: "A"},
+		{DeliveryRowID: 2, OrderNumber: "O2", PartNumber: "B"},
+		{DeliveryRowID: 3, OrderNumber: "O3", PartNumber: "C"},
+	} {
+		if err := s.Repo.UpsertOrderRow(ctx, r, "t"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Simulera en sync där bara rad 1 fortfarande finns i fönstret.
+	if err := s.Repo.MarkAllRowsUnseen(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Repo.UpsertOrderRow(ctx, &domain.OrderRow{DeliveryRowID: 1, OrderNumber: "O1", PartNumber: "A"}, "t"); err != nil {
+		t.Fatal(err)
+	}
+	// Rad 3 (borta ur Monitor) får ett osparat länkat cert → ska stanna.
+	cert := seedCert(t, s, cfg)
+	if _, err := s.App.ConfirmLink(ctx, cert.ID, 3, "O3", "manual"); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := doJSON(t, mux, "GET", "/api/overview", nil)
+	if rec.Code != 200 {
+		t.Fatalf("overview: %d %s", rec.Code, rec.Body)
+	}
+	var ov overviewJSON
+	if err := json.Unmarshal(rec.Body.Bytes(), &ov); err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]bool{}
+	for _, g := range ov.Orders {
+		for _, r := range g.Rows {
+			seen[r.DeliveryRowID] = true
+		}
+	}
+	if !seen["1"] {
+		t.Error("rad 1 (kvar i Monitor) borde visas")
+	}
+	if seen["2"] {
+		t.Error("rad 2 (borta ur Monitor, ingen länk) borde gömmas automatiskt")
+	}
+	if !seen["3"] {
+		t.Error("rad 3 (borta ur Monitor men osparat länkat cert) borde stanna")
+	}
+}

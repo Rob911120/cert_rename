@@ -458,13 +458,17 @@ func TestGetPartsByIds_BatchesAndMaps(t *testing.T) {
 			if !strings.Contains(f, "Id eq ") {
 				t.Errorf("$filter saknar 'Id eq': %q", f)
 			}
-			// Parts ska expandera de cert-bärande navigeringarna (stålsort,
-			// kommentarer, hyperlänkar, ritningar).
+			// Parts ska expandera de cert-bärande navigeringarna (kommentarer,
+			// hyperlänkar, ritningar) MEN inte CurrentAlloy — kontot saknar behörighet
+			// till den och ett otillåtet expand fäller hela frågan (403).
 			exp := r.URL.Query().Get("$expand")
-			for _, want := range []string{"CurrentAlloy", "ReceivingInstruction", "HyperLinks", "Drawings"} {
+			for _, want := range []string{"ReceivingInstruction", "HyperLinks", "Drawings"} {
 				if !strings.Contains(exp, want) {
 					t.Errorf("Parts $expand %q saknar %q", exp, want)
 				}
+			}
+			if strings.Contains(exp, "CurrentAlloy") {
+				t.Errorf("Parts $expand %q ska INTE innehålla CurrentAlloy (403-risk)", exp)
 			}
 			var parts []string
 			for _, tok := range strings.Fields(f) {
@@ -755,12 +759,17 @@ func TestGetUpcomingOrderRowsFull_ExpandsCertNavigations(t *testing.T) {
 	}
 	for _, want := range []string{
 		"ReceivingMessage", "ReceivingInspectionInstruction",
-		"Part($expand=", "CurrentAlloy", "HyperLinks", "Drawings",
+		"Part($expand=", "HyperLinks", "Drawings",
 		"ReceivingInstruction", "PurchaseComment",
 	} {
 		if !strings.Contains(gotExpand, want) {
 			t.Errorf("$expand %q saknar %q", gotExpand, want)
 		}
+	}
+	// CurrentAlloy är medvetet borttagen (kontot saknar behörighet; ett otillåtet
+	// expand fäller hela frågan med 403).
+	if strings.Contains(gotExpand, "CurrentAlloy") {
+		t.Errorf("$expand %q ska INTE innehålla CurrentAlloy", gotExpand)
 	}
 }
 

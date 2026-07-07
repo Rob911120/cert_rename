@@ -36,8 +36,14 @@ const upcomingPageSize = 200
 var (
 	// partExpandFields — Part-nivåns cert-navigeringar. Används både nästlat under
 	// Part i GetUpcomingOrderRowsFull och direkt i GetPartsByIdsFull.
+	//
+	// OBS: CurrentAlloy är MEDVETET utelämnad. Hela $expand-listan skickas som EN
+	// klausul, så ett enda otillåtet expand fäller hela frågan med 403 ("No permission
+	// to expand CurrentAlloy") → fallback till bas-query utan expands → ALLA extra
+	// artikelfält tappas. Vårt Monitor-konto saknar CurrentAlloy-behörighet, så vi
+	// släpper den och behåller de sex cert-bärande fälten nedan. (Återinför den om
+	// ett konto med Alloy-behörighet används; AlloyCode/Description blir annars tomma.)
 	partExpandFields = []string{
-		"CurrentAlloy",         // Alloy: Code + Description (stålsort)
 		"ReceivingInstruction", // Comment: RawText (mottagningsinstruktion)
 		"PurchaseComment",      // Comment: RawText (inköpskommentar)
 		"Comment",              // Comment: RawText (artikelkommentar)

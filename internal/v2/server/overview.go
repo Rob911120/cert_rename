@@ -193,6 +193,19 @@ type overviewJSON struct {
 	Errors        []string         `json:"errors"`
 }
 
+// rowHasPendingCert säger om radens (aktiva) länkar bär cert-arbete som återstår:
+// minst ett länkat cert som ännu inte är sparat (förslag eller osparat). Används för
+// att avgöra om en rad som lämnat Monitor ändå ska visas (invarianten "länkar
+// överlever tills certet sparats").
+func rowHasPendingCert(links []linkJSON) bool {
+	for _, lj := range links {
+		if lj.Cert == nil || lj.Cert.Status != string(domain.CertSparad) {
+			return true
+		}
+	}
+	return false
+}
+
 func idStr(v int64) string { return strconv.FormatInt(v, 10) }
 
 func nowRFC3339() string { return time.Now().UTC().Format(time.RFC3339) }
@@ -357,6 +370,15 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 				lj.ImpactVerdict = domain.ImpactVerdict(row.Req.Impact, cert.ImpactEnergyJ, cert.ImpactTempC)
 			}
 			rj.Links = append(rj.Links, lj)
+		}
+		// Rader som inte längre finns i Monitor (in_monitor=0 = inlevererade/stängda)
+		// göms automatiskt när inget cert-arbete återstår — så användaren slipper
+		// manuellt trycka "Levererad" på varje. Invarianten "länkar överlever tills
+		// certet sparats" bevaras: en rad med ett föreslaget eller osparat länkat cert
+		// stannar. Raden ligger kvar i DB, så länkas ett cert senare (B-nummer) dyker
+		// den upp igen.
+		if !row.InMonitor && !rowHasPendingCert(rj.Links) {
+			continue
 		}
 		g, ok := groups[row.OrderNumber]
 		if !ok {
