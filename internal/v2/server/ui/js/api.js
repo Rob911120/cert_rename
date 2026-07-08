@@ -43,6 +43,14 @@ export function connectSSE() {
       for (const fn of listeners.get(name) ?? []) fn(data);
     });
   }
+  // 'sse-open' är ett syntetiskt klient-event: reconnect=true vid ÅTERanslutning.
+  // Servern spelar upp loggbufferten på varje ny anslutning (loggpanelen måste
+  // tömmas först) och overview-pingar under avbrottet har missats (refetch).
+  let opens = 0;
+  es.onopen = () => {
+    opens++;
+    for (const fn of listeners.get('sse-open') ?? []) fn({ reconnect: opens > 1 });
+  };
   es.onerror = () => { /* EventSource återansluter själv */ };
   return es;
 }

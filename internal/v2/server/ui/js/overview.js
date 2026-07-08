@@ -37,11 +37,29 @@ function fmtLocal(ts) {
 
 initShell();
 initSickan();
-connectSSE();
 onEvent('overview', debounce(load, 250));
+// SSE-avbrott: overview-pingar under avbrottet är förlorade — refetcha vid
+// återanslutning så vyn inte blir stående stale.
+onEvent('sse-open', ({ reconnect }) => { if (reconnect) load(); });
+connectSSE();
 load();
 
+// pendingReload: en omrendering som sköts upp för att användaren höll på att
+// skriva i ett fält (omrender kastar all pågående inmatning). Körs i kapp vid
+// focusout.
+let pendingReload = false;
+
+function overviewHasFocusedInput() {
+  const a = document.activeElement;
+  return !!a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA') && !!a.closest('main');
+}
+
 async function load() {
+  if (overviewHasFocusedInput()) {
+    pendingReload = true;
+    return;
+  }
+  pendingReload = false;
   try {
     ov = await get('/api/overview');
   } catch (err) {
@@ -539,6 +557,8 @@ function renderSaved() {
     </div>`).join('');
 }
 
+let lastUnmatchedCount = 0; // för att bara tvångsöppna "Att göra" när NYA omatchade dyker upp
+
 function renderTasks() {
   // Omatchade cert (kunde inte kopplas automatiskt) lyfts överst i "Att göra" som
   // åtgärdsposter: skriv B-nummer → Koppla (skapar bekräftad länk direkt), eller
@@ -571,11 +591,20 @@ function renderTasks() {
     </li>`).join('');
 
   $('taskList').innerHTML = unmatchedHtml + tasksHtml;
-  // Fäll ut "Att göra" när det finns omatchade cert så de faktiskt syns.
-  if (unmatched.length) $('tasksSection').open = true;
+  // Fäll ut "Att göra" när NYA omatchade cert dyker upp så de faktiskt syns —
+  // men respektera att användaren fällt ihop sektionen (tvångsöppna inte om
+  // antalet är oförändrat vid varje omrendering).
+  if (unmatched.length > lastUnmatchedCount) $('tasksSection').open = true;
+  lastUnmatchedCount = unmatched.length;
 }
 
 $('orderSearch').addEventListener('input', (e) => { orderQuery = e.target.value; renderOrders(); });
+
+// Kör i kapp en uppskjuten omrendering när fältet som blockerade den lämnas.
+document.addEventListener('focusout', () => {
+  if (!pendingReload) return;
+  setTimeout(() => { if (pendingReload && !overviewHasFocusedInput()) load(); }, 0);
+});
 
 $('taskForm').addEventListener('submit', async (e) => {
   e.preventDefault();
@@ -615,6 +644,10 @@ document.addEventListener('click', async (e) => {
     const input = document.querySelector(`[data-linkinput="${el.dataset.cert}"]`);
     const bnr = input?.value.trim();
     if (!bnr) { toast('Skriv ett B-nummer först', true); return; }
+    if (input && !input.checkValidity()) {
+      toast('B-nummer ska vara B + sex siffror, t.ex. B127575', true);
+      return;
+    }
     await act(() => post('/api/link', { cert_id: el.dataset.cert, order_number: bnr }), 'Kopplad till ' + bnr.toUpperCase());
   } else if (action === 'archive-cert') {
     await act(() => post('/api/cert/archive', { cert_id: el.dataset.cert }), 'Arkiverat');

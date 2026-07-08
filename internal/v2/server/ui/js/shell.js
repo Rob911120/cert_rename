@@ -33,6 +33,9 @@ export function initShell() {
     pre.textContent += `${l.ts}  ${l.text}\n`;
     pre.scrollTop = pre.scrollHeight;
   });
+  // Servern spelar upp loggbufferten på varje (åter)anslutning — töm panelen
+  // först så raderna inte dubbleras efter ett SSE-avbrott.
+  onEvent('sse-open', () => { $('logLines').textContent = ''; });
 
   initSettings();
   initDragDrop();
@@ -113,7 +116,12 @@ function initSettings() {
   let current = {};
 
   document.getElementById('settingsBtn').addEventListener('click', async () => {
-    current = await get('/api/config');
+    try {
+      current = await get('/api/config');
+    } catch (err) {
+      toast('Kunde inte hämta inställningarna: ' + err.message, true);
+      return;
+    }
     for (const k of CFG_FIELDS) form.elements[k].value = current[k] ?? '';
     for (const k of CFG_NUMS) form.elements[k].value = current[k] ?? '';
     for (const k of CFG_BOOLS) form.elements[k].checked = !!current[k];
