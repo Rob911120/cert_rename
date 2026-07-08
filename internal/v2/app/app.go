@@ -160,9 +160,11 @@ func normalizeOrderNumber(s string) string {
 
 // ConfirmLink kopplar ett cert till en orderrad eller ett fritt B-nummer som
 // BEKRÄFTAD länk. Finns redan en länk på nyckeln återupplivas/bekräftas den i
-// stället för att dubblera. deliveryRowID=0 = fri koppling på enbart B-nummer
-// (raden finns inte i Monitor-fönstret än); anges rad hämtas ordernumret
-// auktoritativt från raden.
+// stället för att dubblera. deliveryRowID=0 = fri koppling på enbart B-nummer;
+// finns B-numrets rader redan i DB bekräftas mot dem i stället (en länk per
+// rad) — en fri länk syns inte under någon rad i översikten och certet skulle
+// annars försvinna ur UI:t. Anges rad hämtas ordernumret auktoritativt (och
+// normaliserat) från raden.
 func (a *App) ConfirmLink(ctx context.Context, certID, deliveryRowID int64, orderNumber, source string) (*domain.Link, error) {
 	orderNumber = normalizeOrderNumber(orderNumber)
 	var link *domain.Link
@@ -179,40 +181,41 @@ func (a *App) ConfirmLink(ctx context.Context, certID, deliveryRowID int64, orde
 			if err != nil {
 				return fmt.Errorf("orderrad %d: %w", deliveryRowID, err)
 			}
-			orderNumber = row.OrderNumber
+			orderNumber = normalizeOrderNumber(row.OrderNumber)
 		}
 		if orderNumber == "" {
 			return fmt.Errorf("varken orderrad eller B-nummer angivet")
 		}
-		existing, err := q.GetLinkByKey(ctx, certID, deliveryRowID, orderNumber)
-		switch {
-		case err == nil:
-			if existing.Status == domain.LinkBekraftad {
-				link = existing // no-op: redan bekräftad
-				return nil
-			}
-			if !domain.LinkCanTransition(existing.Status, domain.LinkBekraftad) {
-				return domain.ErrTransition
-			}
-			if err := q.UpdateLinkStatus(ctx, existing.ID, domain.LinkBekraftad, source, a.ts()); err != nil {
+		targets := []int64{deliveryRowID}
+		if deliveryRowID == 0 {
+			rows, err := q.RowsByOrderNumber(ctx, orderNumber)
+			if err != nil {
 				return err
 			}
-			existing.Status = domain.LinkBekraftad
-			existing.MatchSource = source
-			link = existing
-			return nil
-		case err == domain.ErrNotFound:
-			now := a.ts()
-			link = &domain.Link{
-				CertID: certID, DeliveryRowID: deliveryRowID, OrderNumber: orderNumber,
-				Status: domain.LinkBekraftad, MatchSource: source,
-				CreatedAt: now, UpdatedAt: now,
+			if len(rows) > 0 {
+				targets = targets[:0]
+				for _, r := range rows {
+					targets = append(targets, r.DeliveryRowID)
+				}
 			}
-			_, err := q.InsertLink(ctx, link)
-			return err
-		default:
-			return err
 		}
+		for _, rowID := range targets {
+			if rowID != 0 {
+				// En äldre FRI länk på samma B-nummer pekas om till raden i
+				// stället för att lämnas osynlig bredvid den nya.
+				if _, err := a.upgradeFreeLink(ctx, q, certID, rowID, orderNumber); err != nil {
+					return err
+				}
+			}
+			l, err := a.confirmOne(ctx, q, certID, rowID, orderNumber, source)
+			if err != nil {
+				return err
+			}
+			if link == nil {
+				link = l
+			}
+		}
+		return nil
 	})
 	if err != nil {
 		return nil, err
@@ -222,12 +225,68 @@ func (a *App) ConfirmLink(ctx context.Context, certID, deliveryRowID int64, orde
 	return link, nil
 }
 
+// confirmOne bekräftar (eller återupplivar) EN länknyckel inom pågående
+// transaktion — get-or-create-mönstret som ConfirmLink alltid haft.
+func (a *App) confirmOne(ctx context.Context, q *store.Q, certID, deliveryRowID int64, orderNumber, source string) (*domain.Link, error) {
+	existing, err := q.GetLinkByKey(ctx, certID, deliveryRowID, orderNumber)
+	switch {
+	case err == nil:
+		if existing.Status == domain.LinkBekraftad {
+			return existing, nil // no-op: redan bekräftad
+		}
+		if !domain.LinkCanTransition(existing.Status, domain.LinkBekraftad) {
+			return nil, domain.ErrTransition
+		}
+		if err := q.UpdateLinkStatus(ctx, existing.ID, domain.LinkBekraftad, source, a.ts()); err != nil {
+			return nil, err
+		}
+		existing.Status = domain.LinkBekraftad
+		existing.MatchSource = source
+		return existing, nil
+	case err == domain.ErrNotFound:
+		now := a.ts()
+		l := &domain.Link{
+			CertID: certID, DeliveryRowID: deliveryRowID, OrderNumber: orderNumber,
+			Status: domain.LinkBekraftad, MatchSource: source,
+			CreatedAt: now, UpdatedAt: now,
+		}
+		_, err := q.InsertLink(ctx, l)
+		return l, err
+	default:
+		return nil, err
+	}
+}
+
+// upgradeFreeLink pekar om en FRI länk (delivery_row_id=0) till en riktig rad
+// när raden nu finns i DB — ordernumret bar kopplingen tills dess (se
+// domain.Link). Robs beslut (bekräftad/avfärdad) följer med länken oförändrat.
+// No-op om ingen fri länk finns eller om målnyckeln redan är upptagen.
+func (a *App) upgradeFreeLink(ctx context.Context, q *store.Q, certID, rowID int64, orderNumber string) (bool, error) {
+	free, err := q.GetLinkByKey(ctx, certID, 0, orderNumber)
+	if err == domain.ErrNotFound {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if _, err := q.GetLinkByKey(ctx, certID, rowID, orderNumber); err == nil {
+		return false, nil // radlänk finns redan — låt den fria ligga
+	} else if err != domain.ErrNotFound {
+		return false, err
+	}
+	if err := q.UpdateLinkDeliveryRow(ctx, free.ID, rowID, a.ts()); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // SuggestLink lägger ett FÖRSLAG (foreslagen) från intag/sync. Rör aldrig en
 // befintlig länk — Rob:s beslut (bekraftad/avfardad) skrivs inte över av
 // automatiken. Returnerar nil, nil om länken redan fanns.
 func (a *App) SuggestLink(ctx context.Context, certID, deliveryRowID int64, orderNumber, source string) (*domain.Link, error) {
 	orderNumber = normalizeOrderNumber(orderNumber)
 	var link *domain.Link
+	var upgradedFree bool
 	err := a.Repo.Tx(ctx, func(q *store.Q) error {
 		c, err := q.GetCert(ctx, certID)
 		if err != nil {
@@ -241,6 +300,16 @@ func (a *App) SuggestLink(ctx context.Context, certID, deliveryRowID int64, orde
 		} else if err != domain.ErrNotFound {
 			return err
 		}
+		// Raden har dykt upp för ett B-nummer som redan bär en FRI länk →
+		// peka om den (Robs beslut följer med) i stället för ett nytt förslag.
+		if deliveryRowID != 0 {
+			if upgraded, err := a.upgradeFreeLink(ctx, q, certID, deliveryRowID, orderNumber); err != nil {
+				return err
+			} else if upgraded {
+				upgradedFree = true
+				return nil
+			}
+		}
 		now := a.ts()
 		link = &domain.Link{
 			CertID: certID, DeliveryRowID: deliveryRowID, OrderNumber: orderNumber,
@@ -253,7 +322,10 @@ func (a *App) SuggestLink(ctx context.Context, certID, deliveryRowID int64, orde
 	if err != nil {
 		return nil, err
 	}
-	if link != nil {
+	if upgradedFree {
+		a.Notify.Logf("🔗 cert %d: fri koppling %s pekades om till orderraden", certID, orderNumber)
+	}
+	if link != nil || upgradedFree {
 		a.Notify.OverviewChanged()
 	}
 	return link, nil

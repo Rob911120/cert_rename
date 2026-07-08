@@ -117,6 +117,74 @@ func TestConfirmedLinkChangesName(t *testing.T) {
 	}
 }
 
+// En "fri" koppling (inget delivery_row_id) ska bekräftas mot B-numrets
+// befintliga rader när de finns i DB — en fri länk (rowID=0) syns inte under
+// någon rad i översikten och certet skulle annars försvinna ur UI:t.
+func TestConfirmLinkFreeBindsToExistingRows(t *testing.T) {
+	a, _, cfg := testApp(t)
+	c := seedCert(t, a, cfg)
+	ctx := context.Background()
+
+	for _, rowID := range []int64{71, 72} {
+		if err := a.Repo.UpsertOrderRow(ctx, &domain.OrderRow{
+			DeliveryRowID: rowID, OrderNumber: "B128293", PartNumber: "30-1",
+		}, "t"); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Fri koppling (som UI:ts "🔗 Koppla"-knapp) — små bokstäver normaliseras.
+	if _, err := a.ConfirmLink(ctx, c.ID, 0, "b128293", "manual"); err != nil {
+		t.Fatal(err)
+	}
+	links, _ := a.Repo.ListLinksForCert(ctx, c.ID)
+	if len(links) != 2 {
+		t.Fatalf("länkar = %d, vill ha 2 (en per rad)", len(links))
+	}
+	for _, l := range links {
+		if l.DeliveryRowID == 0 || l.Status != domain.LinkBekraftad || l.OrderNumber != "B128293" {
+			t.Errorf("fri koppling band inte till rad: %+v", l)
+		}
+	}
+}
+
+// Finns B-numrets rad INTE i DB skapas en fri länk — och när raden sedan dyker
+// upp (Monitor-sync → förslagspass) ska den fria länken pekas om till raden,
+// inte dubbleras som ett nytt förslag Rob måste bekräfta om.
+func TestSuggestLinkUpgradesFreeLink(t *testing.T) {
+	a, _, cfg := testApp(t)
+	c := seedCert(t, a, cfg)
+	ctx := context.Background()
+
+	if _, err := a.ConfirmLink(ctx, c.ID, 0, "B127575", "manual"); err != nil {
+		t.Fatal(err)
+	}
+	links, _ := a.Repo.ListLinksForCert(ctx, c.ID)
+	if len(links) != 1 || links[0].DeliveryRowID != 0 {
+		t.Fatalf("förväntade en fri länk: %+v", links)
+	}
+
+	// Raden dyker upp i nästa sync → förslagspasset körs.
+	if err := a.Repo.UpsertOrderRow(ctx, &domain.OrderRow{
+		DeliveryRowID: 81, OrderNumber: "B127575", PartNumber: "30-2",
+	}, "t"); err != nil {
+		t.Fatal(err)
+	}
+	if l, err := a.SuggestLink(ctx, c.ID, 81, "B127575", "auto_b_number"); err != nil {
+		t.Fatal(err)
+	} else if l != nil {
+		t.Errorf("uppgradering ska inte skapa nytt förslag, fick %+v", l)
+	}
+
+	links, _ = a.Repo.ListLinksForCert(ctx, c.ID)
+	if len(links) != 1 {
+		t.Fatalf("länkar = %d, vill ha 1 (ompekad, inte dubblerad)", len(links))
+	}
+	if links[0].DeliveryRowID != 81 || links[0].Status != domain.LinkBekraftad {
+		t.Errorf("fri länk pekades inte om med bevarat beslut: %+v", links[0])
+	}
+}
+
 func TestSaveCertIdempotent(t *testing.T) {
 	a, _, cfg := testApp(t)
 	c := seedCert(t, a, cfg)

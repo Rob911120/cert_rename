@@ -65,6 +65,10 @@ function unlinkedCard(c) {
               data-order="${esc(s.order_number)}" title="Bekräfta">✓</button>
       <button data-action="reject-link" data-link="${s.link_id}" title="Avvisa">✕</button>
     </span>`).join('');
+  // Fria bekräftade kopplingar (B-nummer utan rad i Monitor-fönstret ännu):
+  // certet är kopplat och sparbart härifrån; raden tar över när den dyker upp.
+  const free = (c.free_orders || []).map((o) => `
+    <span class="chip">🔗 ${esc(o)} <span class="muted small">bekräftad — utanför Monitor-fönstret</span></span>`).join('');
   return `
   <div class="card">
     <div class="origname">📄 <a href="/api/pdf?cert_id=${c.id}" target="_blank"
@@ -78,6 +82,7 @@ function unlinkedCard(c) {
     ${certQualityWarnings(c)}
     ${certExtraLine(c)}
     ${certGetingeBadges(c)}
+    ${free}
     ${sugg}
     <div class="inline-form">
       <input type="text" placeholder="B-nummer, t.ex. B127575" data-linkinput="${c.id}"

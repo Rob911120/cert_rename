@@ -179,6 +179,10 @@ type suggestionJSON struct {
 type unlinkedJSON struct {
 	certJSON
 	Suggestions []suggestionJSON `json:"suggestions"`
+	// FreeOrders: bekräftade FRIA kopplingar (delivery_row_id=0) — B-nummer
+	// vars rad (ännu) inte finns i DB. Certet visas kvar i "Okopplade" med
+	// chip + Spara så det aldrig blir osynligt/osparbart.
+	FreeOrders []string `json:"free_orders"`
 }
 
 type overviewJSON struct {
@@ -411,10 +415,28 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 	resp.UnmatchedCerts = []unlinkedJSON{}
 	for _, c := range living {
 		view := getView(c.ID)
-		if view == nil || len(view.ConfirmedOrders) > 0 {
+		if view == nil {
 			continue
 		}
-		u := unlinkedJSON{certJSON: s.certJSON(ctx, view), Suggestions: []suggestionJSON{}}
+		// Radbundna bekräftade länkar → certet syns under sin orderrad. FRIA
+		// bekräftade länkar (rowID=0) syns inte där — certet måste stanna här,
+		// annars försvinner det ur UI:t och kan aldrig sparas.
+		hasRowConfirmed := false
+		freeOrders := []string{}
+		for _, l := range view.Links {
+			if l.Status != domain.LinkBekraftad {
+				continue
+			}
+			if l.DeliveryRowID != 0 {
+				hasRowConfirmed = true
+			} else {
+				freeOrders = append(freeOrders, l.OrderNumber)
+			}
+		}
+		if hasRowConfirmed {
+			continue
+		}
+		u := unlinkedJSON{certJSON: s.certJSON(ctx, view), Suggestions: []suggestionJSON{}, FreeOrders: freeOrders}
 		for _, l := range view.Links {
 			if l.Status != domain.LinkForeslagen {
 				continue
@@ -430,9 +452,10 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 			}
 			u.Suggestions = append(u.Suggestions, sug)
 		}
-		// Har certet auto-förslag att bekräfta → "Okopplade cert". Inga förslag alls
-		// → omatchat, lyfts till "Att göra" så operatören kan ange B-nummer.
-		if len(u.Suggestions) > 0 {
+		// Har certet auto-förslag att bekräfta eller en fri koppling → "Okopplade
+		// cert". Inga förslag alls → omatchat, lyfts till "Att göra" så
+		// operatören kan ange B-nummer.
+		if len(u.Suggestions) > 0 || len(u.FreeOrders) > 0 {
 			resp.UnlinkedCerts = append(resp.UnlinkedCerts, u)
 		} else {
 			resp.UnmatchedCerts = append(resp.UnmatchedCerts, u)

@@ -588,6 +588,15 @@ func (q *Q) UpdateLinkStatus(ctx context.Context, id int64, status domain.LinkSt
 	return oneRow(res, err)
 }
 
+// UpdateLinkDeliveryRow pekar om en länk till en (ny)funnen orderrad — används
+// när en fri B-nummerkoppling (delivery_row_id=0) uppgraderas till radnivå.
+func (q *Q) UpdateLinkDeliveryRow(ctx context.Context, id, deliveryRowID int64, updatedAt string) error {
+	res, err := q.db.ExecContext(ctx,
+		`UPDATE links SET delivery_row_id=?, updated_at=? WHERE id = ?`,
+		deliveryRowID, updatedAt, id)
+	return oneRow(res, err)
+}
+
 // UpdateLinkVerdict skriver AI-parbedömningen på länken.
 func (q *Q) UpdateLinkVerdict(ctx context.Context, l *domain.Link) error {
 	res, err := q.db.ExecContext(ctx, `UPDATE links SET

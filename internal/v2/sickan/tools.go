@@ -169,6 +169,9 @@ func (tb *Toolbox) listOverview() (string, error) {
 		Material         string   `json:"material"`
 		BNumbers         []string `json:"b_numbers"`
 		ProposedFilename string   `json:"proposed_filename"`
+		// FreeOrders: bekräftade fria kopplingar (B-nummer utan rad i DB) —
+		// certet är kopplat men syns inte under någon orderrad ovan.
+		FreeOrders []string `json:"free_orders,omitempty"`
 	}
 	living, err := tb.App.Repo.ListCerts(ctx, domain.CertMottagen)
 	if err != nil {
@@ -176,15 +179,29 @@ func (tb *Toolbox) listOverview() (string, error) {
 	}
 	var unlinked []unlinkedView
 	for _, c := range living {
-		confirmed, _ := tb.App.Repo.ConfirmedOrderNumbers(ctx, c.ID)
-		if len(confirmed) > 0 {
-			continue
+		certLinks, _ := tb.App.Repo.ListLinksForCert(ctx, c.ID)
+		hasRowConfirmed := false
+		var freeOrders []string
+		for _, l := range certLinks {
+			if l.Status != domain.LinkBekraftad {
+				continue
+			}
+			if l.DeliveryRowID != 0 {
+				hasRowConfirmed = true
+			} else {
+				freeOrders = append(freeOrders, l.OrderNumber)
+			}
 		}
+		if hasRowConfirmed {
+			continue // syns under sin orderrad ovan
+		}
+		confirmed, _ := tb.App.Repo.ConfirmedOrderNumbers(ctx, c.ID)
 		unlinked = append(unlinked, unlinkedView{
 			CertID: c.ID, OriginalFilename: c.OriginalFilename,
 			Charge: c.EffectiveCharge(), Material: c.EffectiveMaterial(),
 			BNumbers:         c.EffectiveBNumbers(),
-			ProposedFilename: domain.ProposedFilename(c, nil),
+			ProposedFilename: domain.ProposedFilename(c, confirmed),
+			FreeOrders:       freeOrders,
 		})
 	}
 	out, _ := json.Marshal(map[string]any{"order_rows": outRows, "unlinked_certs": unlinked})
