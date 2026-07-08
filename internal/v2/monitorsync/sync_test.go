@@ -28,6 +28,10 @@ type fakeERP struct {
 	plainRowsCalls int
 	plainPOCalls   int
 	plainPartCalls int
+
+	// poErr: order-id → fel för BÅDE bas- och Full-uppslaget (transient
+	// Monitor-miss) — testar att radens befintliga DB-data lämnas orörd.
+	poErr map[monitor.ID]error
 }
 
 // Bas-varianterna (delas med V1) — räknas så fallback-testet kan bevisa att de anropas.
@@ -37,6 +41,9 @@ func (f *fakeERP) GetUpcomingOrderRows(ctx context.Context, from, to time.Time) 
 }
 func (f *fakeERP) GetPurchaseOrder(ctx context.Context, id monitor.ID) (*monitor.PurchaseOrder, error) {
 	f.plainPOCalls++
+	if err := f.poErr[id]; err != nil {
+		return nil, err
+	}
 	return f.orders[id], nil
 }
 func (f *fakeERP) GetSupplier(ctx context.Context, id monitor.ID) (*monitor.Supplier, error) {
@@ -58,6 +65,9 @@ func (f *fakeERP) GetUpcomingOrderRowsFull(ctx context.Context, from, to time.Ti
 	return f.rows, monitor.UpcomingFetchStats{Fetched: len(f.rows)}, nil
 }
 func (f *fakeERP) GetPurchaseOrderFull(ctx context.Context, id monitor.ID) (*monitor.PurchaseOrder, error) {
+	if err := f.poErr[id]; err != nil {
+		return nil, err
+	}
 	if f.fullErr != nil {
 		return nil, f.fullErr
 	}
@@ -231,6 +241,48 @@ func TestRefreshFallsBackWhenFullQueriesFail(t *testing.T) {
 	}
 	if row.PartNumber != "40-202-002" || row.ExtraDescription != "Plåt S355" {
 		t.Errorf("artikelidentiteten tappades vid fallback: %+v", row)
+	}
+}
+
+// En TRANSIENT order-/leverantörsmiss (både Full- och bas-uppslag felar) får
+// aldrig blanka order_number/supplier_name i DB — radens befintliga data ska
+// lämnas orörd tills nästa lyckade sync.
+func TestRefreshKeepsRowDataWhenOrderLookupFails(t *testing.T) {
+	erp := &fakeERP{
+		rows: []monitor.PurchaseOrderRow{
+			mkRow(301, 3, 33, part(33, "50-303-003", "Plåt S355"), "2026-07-10"),
+		},
+		orders: map[monitor.ID]*monitor.PurchaseOrder{3: {OrderNumber: "B127196", BusinessContactId: 7}},
+		sups:   map[monitor.ID]*monitor.Supplier{7: {Name: "Tibnor"}},
+	}
+	s := testSync(t, erp, nil)
+	ctx := context.Background()
+
+	if _, err := s.Refresh(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	// Nästa sync: orderuppslaget felar transient.
+	erp.poErr = map[monitor.ID]error{3: errors.New("503 Service Unavailable")}
+	if _, err := s.Refresh(ctx); err != nil {
+		t.Fatalf("Refresh ska inte hard-faila på transient orderuppslag: %v", err)
+	}
+	row, err := s.App.Repo.GetOrderRow(ctx, 301)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row.OrderNumber != "B127196" || row.SupplierName != "Tibnor" {
+		t.Errorf("order_number/supplier_name blankades av transient miss: %+v", row)
+	}
+
+	// När uppslaget fungerar igen återkommer raden i fönstret.
+	erp.poErr = nil
+	if _, err := s.Refresh(ctx); err != nil {
+		t.Fatal(err)
+	}
+	row, _ = s.App.Repo.GetOrderRow(ctx, 301)
+	if !row.InMonitor || row.OrderNumber != "B127196" {
+		t.Errorf("raden återhämtade sig inte efter transient miss: %+v", row)
 	}
 }
 

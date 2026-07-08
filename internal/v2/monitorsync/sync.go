@@ -75,15 +75,23 @@ func (s *Sync) Refresh(ctx context.Context) (int, error) {
 	n.Logf("📦 Monitor: %d öppna rader (datum %s–%s) → %d i fönstret → %d med artikel",
 		stats.Fetched, dashIfEmpty(stats.MinDate), dashIfEmpty(stats.MaxDate), len(windowRows), len(rows))
 
-	orders := s.resolveOrders(ctx, rows)
+	orders, failedOrders := s.resolveOrders(ctx, rows)
 	parts := s.fetchMissingParts(ctx, rows)
 
 	out := make([]*domain.OrderRow, 0, len(rows))
+	skipped := 0
 	for _, row := range rows {
 		if ctx.Err() != nil {
 			return len(out), ctx.Err()
 		}
+		if failedOrders[row.ParentOrderId] {
+			skipped++ // orderuppslaget felade — rör inte radens DB-data denna sync
+			continue
+		}
 		out = append(out, buildOrderRow(row, orders, parts))
+	}
+	if skipped > 0 {
+		n.Logf("⚠️  %d rader hoppades över (order-/leverantörsuppslag felade) — befintlig data behålls", skipped)
 	}
 	if err := s.App.SyncOrderRows(ctx, out); err != nil {
 		return len(out), fmt.Errorf("synka order_rows: %w", err)
@@ -114,8 +122,13 @@ type orderInfo struct {
 }
 
 // resolveOrders hämtar ordernummer + leverantör per unik order (en gång).
-func (s *Sync) resolveOrders(ctx context.Context, rows []monitor.PurchaseOrderRow) map[monitor.ID]orderInfo {
+// failed innehåller order vars uppslag FELADE (transport-/API-fel) — deras
+// rader ska inte upsertas alls: en tom orderInfo skulle annars skriva över
+// order_number/supplier_name med '' i DB och slå ut gruppering och
+// B-nummer-matchning tills nästa lyckade sync.
+func (s *Sync) resolveOrders(ctx context.Context, rows []monitor.PurchaseOrderRow) (map[monitor.ID]orderInfo, map[monitor.ID]bool) {
 	infos := map[monitor.ID]orderInfo{}
+	failed := map[monitor.ID]bool{}
 	for _, row := range rows {
 		id := row.ParentOrderId
 		if id == 0 {
@@ -124,27 +137,39 @@ func (s *Sync) resolveOrders(ctx context.Context, rows []monitor.PurchaseOrderRo
 		if _, ok := infos[id]; ok {
 			continue
 		}
+		if failed[id] {
+			continue
+		}
 		if ctx.Err() != nil {
-			return infos
+			return infos, failed
 		}
 		info := orderInfo{}
 		po, err := s.purchaseOrder(ctx, id)
 		if err != nil {
-			s.App.Notify.Logf("⚠️  kunde inte hämta order %d: %v", id, err)
-		} else if po != nil {
+			s.App.Notify.Logf("⚠️  kunde inte hämta order %d — radens befintliga data lämnas orörd: %v", id, err)
+			failed[id] = true
+			continue
+		}
+		if po != nil {
 			info.OrderNumber = po.OrderNumber
 			info.GoodsLabel = po.GoodsLabel
 			info.BusinessContactOrderNumber = po.BusinessContactOrderNumber
 			info.ExternalComment = commentText(po.ExternalComment)
 			if po.BusinessContactId != 0 {
-				if sup, serr := s.ERP.GetSupplier(ctx, po.BusinessContactId); serr == nil && sup != nil {
+				sup, serr := s.ERP.GetSupplier(ctx, po.BusinessContactId)
+				if serr != nil {
+					s.App.Notify.Logf("⚠️  kunde inte hämta leverantör för order %d — radens befintliga data lämnas orörd: %v", id, serr)
+					failed[id] = true
+					continue
+				}
+				if sup != nil {
 					info.SupplierName = supplierDisplay(sup)
 				}
 			}
 		}
 		infos[id] = info
 	}
-	return infos
+	return infos, failed
 }
 
 // fetchMissingParts batch-hämtar artiklar för rader där inline-$expand inte
