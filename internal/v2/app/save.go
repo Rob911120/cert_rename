@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"cert-renamer/internal/v2/cert"
 	"cert-renamer/internal/v2/domain"
@@ -30,6 +31,13 @@ type SaveResult struct {
 // Valideringsfel (cert.Validate) är VARNINGAR: utan confirm returneras de som
 // domain.ValidationWarnings (→ 422) så Rob kan välja "Spara ändå".
 func (a *App) SaveCert(ctx context.Context, certID int64, confirm bool) (*SaveResult, error) {
+	// Single-flight per cert: ett andra (dubbelklickat) Spara väntar in det
+	// första och blir sedan idempotent no-op via status-checken nedan — i
+	// stället för att kapplöpa mot en halvskriven utfil och skapa _2-dubbletter.
+	mu, _ := a.saveLocks.LoadOrStore(certID, &sync.Mutex{})
+	mu.(*sync.Mutex).Lock()
+	defer mu.(*sync.Mutex).Unlock()
+
 	c, err := a.Repo.GetCert(ctx, certID)
 	if err != nil {
 		return nil, err

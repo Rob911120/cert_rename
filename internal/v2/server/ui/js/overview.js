@@ -601,7 +601,11 @@ document.addEventListener('click', async (e) => {
   } else if (action === 'archive-cert') {
     await act(() => post('/api/cert/archive', { cert_id: el.dataset.cert }), 'Arkiverat');
   } else if (action === 'save-cert') {
-    await saveCert(el.dataset.cert);
+    // Dubbelklicksskydd: servern har single-flight, men knappen ska inte
+    // ens skicka två anrop.
+    if (el.disabled) return;
+    el.disabled = true;
+    try { await saveCert(el.dataset.cert); } finally { el.disabled = false; }
   } else if (action === 'clear-override') {
     await act(() => post('/api/cert/name', { cert_id: el.dataset.cert, name: '' }), 'Tillbaka till beräknat namn');
   } else if (action === 'mark-delivered') {

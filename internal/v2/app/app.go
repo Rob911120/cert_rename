@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"cert-renamer/internal/v2/domain"
@@ -35,6 +36,11 @@ type App struct {
 	Config func() store.Config
 	Now    func() time.Time
 	Notify Notifier
+
+	// saveLocks serialiserar Spara per cert (cert-ID → *sync.Mutex): två
+	// samtidiga SaveCert (dubbelklick) kan annars läsa varandras halvskrivna
+	// utfil och skapa en _2-dubblett med fel svarsnamn.
+	saveLocks sync.Map
 }
 
 func New(repo *store.Repository, cfg func() store.Config, now func() time.Time, notify Notifier) *App {
