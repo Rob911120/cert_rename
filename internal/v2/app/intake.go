@@ -224,6 +224,17 @@ func (a *App) EmailFinished(ctx context.Context, id int64, status, errMsg string
 	}
 }
 
+// AckEmailErrors kvitterar alla nuvarande intagsfel (✕ på UI-bannern): de
+// göms ur overviewn men filerna ligger kvar i inkorgen och skippas
+// fortfarande av intaget. Nya fel blir nya rader och syns alltid.
+func (a *App) AckEmailErrors(ctx context.Context) error {
+	if err := a.Repo.AckEmailErrors(ctx); err != nil {
+		return err
+	}
+	a.Notify.OverviewChanged()
+	return nil
+}
+
 // LatestEmailStatus används av intaget för att hoppa över .eml-filer som
 // redan slutat i fel (de ligger kvar i inkorgen tills Rob agerar) — utan
 // mapp-koreografi och utan att bränna AI-anrop i loop. Nyckeln är filnamn +

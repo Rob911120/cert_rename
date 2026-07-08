@@ -129,7 +129,14 @@ input:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent)
 .banner {
   background: var(--bad-soft); color: var(--bad); border-bottom: 1px solid var(--border);
   padding: 8px clamp(12px, 4vw, 48px); font-size: 13px; white-space: pre-line;
+  display: flex; align-items: flex-start; gap: 10px;
 }
+.banner-text { flex: 1; min-width: 0; }
+.banner-close {
+  background: none; border: none; color: inherit; cursor: pointer;
+  font-size: 14px; line-height: 1; padding: 2px 4px; flex-shrink: 0;
+}
+.banner-close:hover { opacity: .65; }
 .toasts { position: fixed; bottom: 46px; right: 18px; display: flex; flex-direction: column; gap: 8px; z-index: 50; }
 .toast {
   background: var(--panel); border: 1px solid var(--border); border-left: 4px solid var(--accent);

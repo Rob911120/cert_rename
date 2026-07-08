@@ -694,10 +694,11 @@ func (q *Q) LatestEmailStatus(ctx context.Context, filename, fileHash string) (s
 	return s, err
 }
 
-// ListEmailErrors returnerar intagsfel för UI-bannern.
+// ListEmailErrors returnerar okvitterade intagsfel för UI-bannern.
 func (q *Q) ListEmailErrors(ctx context.Context) ([]string, error) {
 	rows, err := q.db.QueryContext(ctx,
-		`SELECT filename || ': ' || error_message FROM emails WHERE status = 'error' ORDER BY id DESC LIMIT 20`)
+		`SELECT filename || ': ' || error_message FROM emails
+		 WHERE status = 'error' AND error_acked = 0 ORDER BY id DESC LIMIT 20`)
 	if err != nil {
 		return nil, err
 	}
@@ -711,6 +712,15 @@ func (q *Q) ListEmailErrors(ctx context.Context) ([]string, error) {
 		out = append(out, s)
 	}
 	return out, rows.Err()
+}
+
+// AckEmailErrors kvitterar alla nuvarande intagsfel så bannern töms. Rör inte
+// status: fel-skippet i intaget läser status='error' och ska fortsätta skippa
+// den kvitterade filen så länge den ligger kvar i inkorgen.
+func (q *Q) AckEmailErrors(ctx context.Context) error {
+	_, err := q.db.ExecContext(ctx,
+		`UPDATE emails SET error_acked = 1 WHERE status = 'error' AND error_acked = 0`)
+	return err
 }
 
 // MatchVerdict är den cachade AI-parbedömningen.

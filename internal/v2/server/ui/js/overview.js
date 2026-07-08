@@ -35,6 +35,13 @@ function fmtLocal(ts) {
 // Init
 // ---------------------------------------------------------------------------
 
+// pendingReload: en omrendering som sköts upp för att användaren höll på att
+// skriva i ett fält (omrender kastar all pågående inmatning). Körs i kapp vid
+// focusout. Deklareras FÖRE init-anropet av load() nedan — annars dör första
+// renderingen i TDZ ("Cannot access 'pendingReload' before initialization")
+// och sidan förblir tom tills första SSE-pingen.
+let pendingReload = false;
+
 initShell();
 initSickan();
 onEvent('overview', debounce(load, 250));
@@ -43,11 +50,6 @@ onEvent('overview', debounce(load, 250));
 onEvent('sse-open', ({ reconnect }) => { if (reconnect) load(); });
 connectSSE();
 load();
-
-// pendingReload: en omrendering som sköts upp för att användaren höll på att
-// skriva i ett fält (omrender kastar all pågående inmatning). Körs i kapp vid
-// focusout.
-let pendingReload = false;
 
 function overviewHasFocusedInput() {
   const a = document.activeElement;
@@ -78,7 +80,10 @@ async function load() {
 function renderBanner() {
   const b = $('banner');
   if (!ov.errors.length) { b.classList.add('hidden'); return; }
-  b.textContent = '⚠️ Intagsfel (ligger kvar i inkorgen): ' + ov.errors.join(' · ');
+  b.innerHTML = `
+    <span class="banner-text">⚠️ Intagsfel (ligger kvar i inkorgen): ${esc(ov.errors.join(' · '))}</span>
+    <button class="banner-close" data-action="ack-errors"
+            title="Kvittera — göm de här felen (nya fel visas fortfarande)">✕</button>`;
   b.classList.remove('hidden');
 }
 
@@ -649,6 +654,10 @@ document.addEventListener('click', async (e) => {
       return;
     }
     await act(() => post('/api/link', { cert_id: el.dataset.cert, order_number: bnr }), 'Kopplad till ' + bnr.toUpperCase());
+  } else if (action === 'ack-errors') {
+    // Göm direkt (kvitteringen känns omedelbar); SSE-refetchen bekräftar.
+    await act(() => post('/api/errors/ack'), 'Intagsfel kvitterade');
+    $('banner').classList.add('hidden');
   } else if (action === 'archive-cert') {
     await act(() => post('/api/cert/archive', { cert_id: el.dataset.cert }), 'Arkiverat');
   } else if (action === 'save-cert') {

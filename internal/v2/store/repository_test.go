@@ -394,3 +394,40 @@ func TestStoredName(t *testing.T) {
 		t.Errorf("tomt originalnamn: %q", got)
 	}
 }
+
+// TestAckEmailErrors: kvitteringen (✕ på UI-bannern) gömmer nuvarande fel ur
+// ListEmailErrors men rör INTE status — intagets fel-skip ska fortsätta skippa
+// den kvitterade filen. Nya fel efter kvitteringen syns alltid.
+func TestAckEmailErrors(t *testing.T) {
+	repo := testRepo(t)
+	ctx := context.Background()
+
+	if _, err := repo.InsertEmail(ctx, "trasig.eml", "", "", "", "", "error",
+		"parse error", "hash1", "2026-07-08T08:00:00Z"); err != nil {
+		t.Fatal(err)
+	}
+	if errs, _ := repo.ListEmailErrors(ctx); len(errs) != 1 {
+		t.Fatalf("före kvittering: %d fel, vill ha 1", len(errs))
+	}
+
+	if err := repo.AckEmailErrors(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if errs, _ := repo.ListEmailErrors(ctx); len(errs) != 0 {
+		t.Errorf("efter kvittering: %d fel, vill ha 0", len(errs))
+	}
+	// Skip-nyckeln gäller fortfarande — filen får inte behandlas om.
+	if s, _ := repo.LatestEmailStatus(ctx, "trasig.eml", "hash1"); s != "error" {
+		t.Errorf("status efter kvittering = %q, vill ha error", s)
+	}
+
+	// Ett NYTT fel efter kvitteringen ska synas.
+	if _, err := repo.InsertEmail(ctx, "ny.eml", "", "", "", "", "error",
+		"annat fel", "hash2", "2026-07-08T09:00:00Z"); err != nil {
+		t.Fatal(err)
+	}
+	errs, _ := repo.ListEmailErrors(ctx)
+	if len(errs) != 1 || errs[0] != "ny.eml: annat fel" {
+		t.Errorf("nytt fel efter kvittering: %v", errs)
+	}
+}

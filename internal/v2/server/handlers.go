@@ -244,6 +244,16 @@ func (s *Server) handleNoteDelete(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]bool{"ok": true})
 }
 
+// handleErrorsAck kvitterar intagsfelen i bannern (✕): de göms ur overviewn
+// men filerna ligger kvar i inkorgen och skippas fortfarande av intaget.
+func (s *Server) handleErrorsAck(w http.ResponseWriter, r *http.Request) {
+	if err := s.App.AckEmailErrors(r.Context()); err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, map[string]bool{"ok": true})
+}
+
 func (s *Server) handleTasksList(w http.ResponseWriter, r *http.Request) {
 	tasks, err := s.Repo.ListTasks(r.Context(), r.URL.Query().Get("status"))
 	if err != nil {

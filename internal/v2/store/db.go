@@ -282,6 +282,13 @@ CREATE TABLE ai_requirements_cache (
 	// som ett gammalt felmejl ska inte skippas för alltid. Gamla rader får ''
 	// och matchar därmed aldrig en riktig hash.
 	`ALTER TABLE emails ADD COLUMN file_hash TEXT NOT NULL DEFAULT '';`,
+
+	// 007 — emails.error_acked: kvitterade intagsfel. UI-bannern visar bara
+	// okvitterade fel; ✕ på bannern sätter error_acked=1 på dagens felrader så
+	// bannern försvinner när Rob läst den. status rörs INTE — intagets fel-skip
+	// läser status='error' och ska fortsätta skippa filen. Nya fel blir nya
+	// rader (error_acked=0) och syns alltid.
+	`ALTER TABLE emails ADD COLUMN error_acked INTEGER NOT NULL DEFAULT 0;`,
 }
 
 // openDB försöker öppna databasen i WAL-läge (bäst för samtidiga läsningar under
