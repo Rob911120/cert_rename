@@ -238,6 +238,37 @@ func TestOrderRowUpsertPreservesLocalBookkeeping(t *testing.T) {
 	}
 }
 
+func TestListSupplierNames(t *testing.T) {
+	repo := testRepo(t)
+	ctx := context.Background()
+
+	rows := []*domain.OrderRow{
+		{DeliveryRowID: 1, OrderNumber: "B1", SupplierName: "Tibnor AB"},
+		{DeliveryRowID: 2, OrderNumber: "B2", SupplierName: "BE Group"},
+		{DeliveryRowID: 3, OrderNumber: "B3", SupplierName: "Tibnor AB"}, // dubblett
+		{DeliveryRowID: 4, OrderNumber: "B4", SupplierName: ""},          // tom utelämnas
+	}
+	for _, r := range rows {
+		if err := repo.UpsertOrderRow(ctx, r, "2026-07-01T00:00:00Z"); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	got, err := repo.ListSupplierNames(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"BE Group", "Tibnor AB"} // distinkt, sorterat, tomma bort
+	if len(got) != len(want) {
+		t.Fatalf("fel antal leverantörer: %v (vill ha %v)", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("leverantör %d: %q, vill ha %q", i, got[i], want[i])
+		}
+	}
+}
+
 // TestOrderRowCertFieldsRoundtrip täcker Task 6:s nya order_rows-fält (rå
 // kravtext + artikeldata från Monitor, inkl. hyperlinks-listan) i detalj: ett
 // satt-fall (alla fält ifyllda) och ett tomt-hyperlinks-fall (tom lista ska

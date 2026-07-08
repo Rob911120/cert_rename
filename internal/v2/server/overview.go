@@ -400,9 +400,19 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 	sort.SliceStable(groupOrder, func(i, j int) bool {
 		return groupSortKey(groups[groupOrder[i]]) < groupSortKey(groups[groupOrder[j]])
 	})
+	// Dölj leverantörer valda i inställningarna — rent vy-filter, raderna finns
+	// kvar i DB (matchar exakt supplier_name = supplierDisplay()-utdata).
+	hidden := map[string]bool{}
+	for _, name := range s.Config().HiddenSuppliers {
+		hidden[name] = true
+	}
 	resp.Orders = make([]orderGroupJSON, 0, len(groupOrder))
 	for _, key := range groupOrder {
-		resp.Orders = append(resp.Orders, *groups[key])
+		g := groups[key]
+		if hidden[g.SupplierName] {
+			continue
+		}
+		resp.Orders = append(resp.Orders, *g)
 	}
 
 	// Okopplade cert: levande utan bekräftad länk; förslag som chips.

@@ -105,6 +105,11 @@
       <label>Utmapp (sparade cert)<input name="v2_output_dir" placeholder="&lt;inbox&gt;/v2/out"></label>
     </fieldset>
     <label>Avvikelsemail till<input name="report_email" type="email" placeholder="daniel@…"></label>
+    <fieldset>
+      <legend>Dölj leverantörer</legend>
+      <div class="muted small">Kryssa leverantörer som inte ska visas i Inleveranser. Raderna finns kvar — det är bara ett vy-filter.</div>
+      <div id="hiddenSuppliersBox" class="supplier-list"></div>
+    </fieldset>
     <div class="dialog-actions">
       <button type="button" class="btn" id="settingsCancel">Avbryt</button>
       <button type="submit" class="btn btn-primary">Spara</button>

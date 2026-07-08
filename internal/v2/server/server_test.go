@@ -694,6 +694,64 @@ func TestOverviewHidesRowsGoneFromMonitor(t *testing.T) {
 	}
 }
 
+// TestOverviewHidesSuppliers: leverantörer i cfg.HiddenSuppliers filtreras bort
+// ur /api/overview (raderna finns kvar i DB), och /api/suppliers listar alla kända
+// leverantörer + de dolda.
+func TestOverviewHidesSuppliers(t *testing.T) {
+	s, mux, _ := testServer(t)
+	ctx := context.Background()
+
+	for _, r := range []*domain.OrderRow{
+		{DeliveryRowID: 1, OrderNumber: "O1", PartNumber: "A", SupplierName: "Tibnor AB"},
+		{DeliveryRowID: 2, OrderNumber: "O2", PartNumber: "B", SupplierName: "BE Group"},
+	} {
+		if err := s.Repo.UpsertOrderRow(ctx, r, "t"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cfg := s.Config()
+	cfg.HiddenSuppliers = []string{"Tibnor AB"}
+	s.setConfig(cfg)
+
+	var ov overviewJSON
+	rec := doJSON(t, mux, "GET", "/api/overview", nil)
+	if rec.Code != 200 {
+		t.Fatalf("overview: %d %s", rec.Code, rec.Body)
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &ov); err != nil {
+		t.Fatal(err)
+	}
+	suppliers := map[string]bool{}
+	for _, g := range ov.Orders {
+		suppliers[g.SupplierName] = true
+	}
+	if suppliers["Tibnor AB"] {
+		t.Error("dold leverantör Tibnor AB borde inte visas i översikten")
+	}
+	if !suppliers["BE Group"] {
+		t.Error("ej dold leverantör BE Group borde visas")
+	}
+
+	// /api/suppliers listar alla kända + de dolda.
+	rec = doJSON(t, mux, "GET", "/api/suppliers", nil)
+	if rec.Code != 200 {
+		t.Fatalf("suppliers: %d %s", rec.Code, rec.Body)
+	}
+	var sup struct {
+		All    []string `json:"all"`
+		Hidden []string `json:"hidden"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &sup); err != nil {
+		t.Fatal(err)
+	}
+	if len(sup.All) != 2 {
+		t.Errorf("all: %v, vill ha båda leverantörerna", sup.All)
+	}
+	if len(sup.Hidden) != 1 || sup.Hidden[0] != "Tibnor AB" {
+		t.Errorf("hidden: %v, vill ha [Tibnor AB]", sup.Hidden)
+	}
+}
+
 // seedCertB lägger ett cert med distinkt innehåll (unik hash) och givna B-nummer.
 func seedCertB(t *testing.T, s *Server, cfg store.Config, tag string, bnums []string) *domain.Cert {
 	t.Helper()

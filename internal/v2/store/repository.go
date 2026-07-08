@@ -658,6 +658,28 @@ func (q *Q) ConfirmedOrderNumbers(ctx context.Context, certID int64) ([]string, 
 	return out, rows.Err()
 }
 
+// ListSupplierNames returnerar de distinkta leverantörsnamnen över alla kända
+// orderrader (tomma utelämnas), sorterade. Underlag till "dölj leverantör"-listan
+// i inställningarna — inkluderar även redan dolda leverantörer (filtret ligger i
+// vyn, raderna finns kvar i DB).
+func (q *Q) ListSupplierNames(ctx context.Context) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx,
+		`SELECT DISTINCT supplier_name FROM order_rows WHERE supplier_name != '' ORDER BY supplier_name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var s string
+		if err := rows.Scan(&s); err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
 // ---------------------------------------------------------------------------
 // Emails (intags-audit), AI-cache, app_state, ai_calls
 // ---------------------------------------------------------------------------

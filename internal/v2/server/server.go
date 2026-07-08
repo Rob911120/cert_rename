@@ -337,6 +337,7 @@ func NewMux(s *Server) *http.ServeMux {
 	mux.HandleFunc("GET /api/config", s.handleConfigGet)
 	mux.HandleFunc("POST /api/config", s.handleConfigPost)
 	mux.HandleFunc("GET /api/costs", s.handleCosts)
+	mux.HandleFunc("GET /api/suppliers", s.handleSuppliers)
 
 	mux.HandleFunc("GET /api/overview", s.handleOverview)
 	mux.HandleFunc("POST /api/errors/ack", s.handleErrorsAck)

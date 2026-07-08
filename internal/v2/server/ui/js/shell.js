@@ -127,6 +127,7 @@ function initSettings() {
     for (const k of CFG_BOOLS) form.elements[k].checked = !!current[k];
     const urlDisp = document.getElementById('monitorUrlDisplay');
     if (urlDisp) urlDisp.textContent = current.monitor_url || '—';
+    renderSupplierChecklist(current.hidden_suppliers || []);
     dlg.showModal();
   });
   document.getElementById('settingsCancel').addEventListener('click', () => dlg.close());
@@ -142,8 +143,55 @@ function initSettings() {
     for (const k of CFG_FIELDS) cfg[k] = form.elements[k].value.trim();
     for (const k of CFG_NUMS) cfg[k] = parseInt(form.elements[k].value, 10) || 0;
     for (const k of CFG_BOOLS) cfg[k] = form.elements[k].checked;
+    // Bara om listan faktiskt laddades — annars behåll current.hidden_suppliers
+    // (spread ovan) så ett spar inte råkar tömma listan vid ett laddningsfel.
+    const hs = collectHiddenSuppliers();
+    if (hs !== null) cfg.hidden_suppliers = hs;
     await act(() => post('/api/config', cfg), 'Inställningar sparade');
   });
+}
+
+// renderSupplierChecklist ritar en kryssruta per känd leverantör (ikryssad =
+// dold). Kandidatlistan hämtas färskt så nytillkomna leverantörer syns direkt;
+// redan dolda tas alltid med även om de saknas i orderraderna just nu.
+async function renderSupplierChecklist(hidden) {
+  const box = document.getElementById('hiddenSuppliersBox');
+  if (!box) return;
+  const hiddenSet = new Set(hidden);
+  delete box.dataset.loaded;
+  box.textContent = 'Laddar…';
+  let data;
+  try {
+    data = await get('/api/suppliers');
+  } catch {
+    box.textContent = 'Kunde inte hämta leverantörer.';
+    return;
+  }
+  box.dataset.loaded = '1';
+  const names = [...new Set([...(data.all || []), ...hidden])].sort((a, b) => a.localeCompare(b, 'sv'));
+  if (!names.length) {
+    box.textContent = 'Inga leverantörer ännu.';
+    return;
+  }
+  box.innerHTML = '';
+  for (const name of names) {
+    const lbl = document.createElement('label');
+    lbl.className = 'check';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.dataset.supplier = name;
+    cb.checked = hiddenSet.has(name);
+    lbl.append(cb, document.createTextNode(' ' + name));
+    box.appendChild(lbl);
+  }
+}
+
+// collectHiddenSuppliers läser de ikryssade leverantörerna ur listan. Returnerar
+// null om listan inte laddades (så anroparen kan behålla befintligt värde).
+function collectHiddenSuppliers() {
+  const box = document.getElementById('hiddenSuppliersBox');
+  if (!box || box.dataset.loaded !== '1') return null;
+  return [...box.querySelectorAll('input[type="checkbox"]:checked')].map((cb) => cb.dataset.supplier);
 }
 
 // --- Drag-drop-upload -----------------------------------------------------------
