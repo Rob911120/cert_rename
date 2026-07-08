@@ -10,6 +10,7 @@ import { initSickan } from './sickan.js';
 const $ = (id) => document.getElementById(id);
 const openOrders = new Set();
 const openRows = new Set(); // utfällda artikelrader (per delivery_row_id, som sträng)
+const collapsedCats = new Set(); // ihopfällda kategorier (per CATS-nyckel)
 let ov = null; // senaste overview-svaret
 let orderQuery = ''; // fritextfiltret från toppbarens sökruta (rå, trimmas i renderOrders)
 
@@ -179,8 +180,12 @@ function renderOrders() {
   for (const [key, label] of CATS) {
     if (!byCat[key].length) continue;
     shown += byCat[key].length;
-    html += `<div class="cat-head">${label}</div>`;
-    html += byCat[key].map(orderCard).join('');
+    // En aktiv sökning tvingar kategorin öppen (som sektionen nedan) så den sökta
+    // ordern alltid syns utfälld, oavsett användarens infäll-läge.
+    const catOpen = q ? true : !collapsedCats.has(key);
+    html += `<div class="cat-head ${catOpen ? 'open' : ''}" data-action="toggle-cat" data-cat="${key}">
+      <span class="chev">▶</span>${label} <span class="muted small">(${byCat[key].length})</span></div>`;
+    html += `<div class="cat-body${catOpen ? '' : ' hidden'}">${byCat[key].map(orderCard).join('')}</div>`;
   }
   $('ordersList').innerHTML = html;
   $('ordersCount').textContent = q ? `${shown}/${ov.orders.length}` : (shown ? `(${shown})` : '');
@@ -199,6 +204,18 @@ function renderOrders() {
 // idag/Kommande fast Monitor rapporterar dem som mottagna.
 function rowDone(r) {
   return r.delivered || !r.in_monitor;
+}
+
+// collapseCategory rensar öppet-läget för alla ordrar (och deras rader) som just
+// nu ligger i kategorin `key`, så att en ihopfälld kategori öppnas med allt hopfällt.
+function collapseCategory(key) {
+  if (!ov) return;
+  const today = localToday();
+  for (const g of ov.orders) {
+    if (categorize(g, today) !== key) continue;
+    openOrders.delete(g.order_number);
+    for (const r of g.rows) openRows.delete(String(r.delivery_row_id));
+  }
 }
 
 // categorize: null = göm (allt levererat och alla cert sparade — klar).
@@ -638,7 +655,18 @@ document.addEventListener('click', async (e) => {
   if (!el) return;
   const action = el.dataset.action;
 
-  if (action === 'toggle-order') {
+  if (action === 'toggle-cat') {
+    const key = el.dataset.cat;
+    if (collapsedCats.has(key)) {
+      collapsedCats.delete(key);
+    } else {
+      collapsedCats.add(key);
+      // Fäll även in kategorins ordrar/rader så de är hopfällda när kategorin
+      // öppnas igen ("fäller jag in gruppen ska alla ordrar också fällas in").
+      collapseCategory(key);
+    }
+    renderOrders();
+  } else if (action === 'toggle-order') {
     const key = el.dataset.order;
     openOrders.has(key) ? openOrders.delete(key) : openOrders.add(key);
     renderOrders();
@@ -650,6 +678,10 @@ document.addEventListener('click', async (e) => {
     navigator.clipboard?.writeText(el.textContent.trim());
     toast('Kopierat: ' + el.textContent.trim());
   } else if (action === 'confirm-suggestion') {
+    // Fäll ut målordern + raden så det nykopplade certet syns direkt under sin
+    // order (annars "försvinner" det bara ur Okopplade när ordern är ihopfälld).
+    if (el.dataset.order) openOrders.add(el.dataset.order);
+    if (el.dataset.row && el.dataset.row !== '0') openRows.add(el.dataset.row);
     await act(() => post('/api/link', {
       cert_id: el.dataset.cert, delivery_row_id: el.dataset.row, order_number: el.dataset.order,
     }), 'Koppling bekräftad');

@@ -456,7 +456,28 @@ func (s *Server) handleConfigPost(w http.ResponseWriter, r *http.Request) {
 	if cfg.ApiKey != prev.ApiKey && s.workerRunning() {
 		s.Logf("ℹ️  API-nyckeln byttes — stoppa och starta intaget (▶) för att den nya ska användas")
 	}
+	// Dolda leverantörer m.fl. vy-påverkande fält: pinga så alla klienter
+	// refetchar översikten med det nya filtret (act() laddar inte om själv).
+	s.OverviewChanged()
 	writeJSON(w, cfg)
+}
+
+// handleSuppliers listar alla kända leverantörsnamn plus de som just nu är dolda,
+// som underlag till "dölj leverantör"-listan i inställningarna.
+func (s *Server) handleSuppliers(w http.ResponseWriter, r *http.Request) {
+	all, err := s.Repo.ListSupplierNames(r.Context())
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if all == nil {
+		all = []string{}
+	}
+	hidden := s.Config().HiddenSuppliers
+	if hidden == nil {
+		hidden = []string{}
+	}
+	writeJSON(w, map[string]any{"all": all, "hidden": hidden})
 }
 
 func (s *Server) handleCosts(w http.ResponseWriter, r *http.Request) {
