@@ -5,8 +5,10 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"testing"
+	"unicode/utf8"
 )
 
 func Test_WriteUniqueFile_RaceSafe(t *testing.T) {
@@ -93,6 +95,37 @@ func Test_WriteUniqueFile_SuffixOnExisting(t *testing.T) {
 	gotSecond, _ := os.ReadFile(second)
 	if string(gotSecond) != "två" {
 		t.Fatalf("andra filens innehåll = %q, vill ha två", string(gotSecond))
+	}
+}
+
+func Test_StoredName_ExtremeFilenames(t *testing.T) {
+	hash := "abcdef0123456789"
+	cases := []struct {
+		name     string
+		original string
+	}{
+		{"normalt", "certifikat.pdf"},
+		{"tomt", ""},
+		{"bara punkt", "."},
+		{"långt namn", strings.Repeat("a", 300) + ".pdf"},
+		{"lång ändelse", "b." + strings.Repeat("x", 130)}, // panikade förr: 120-len(ext) < 0
+		{"långt med åäö", strings.Repeat("å", 200) + ".pdf"},
+		{"åäö vid klippgränsen", strings.Repeat("x", 115) + "åäö.pdf"},
+		{"reserverade tecken", `rapport<>:"|?*.pdf`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := StoredName(hash, tc.original) // får aldrig panika
+			if len(got) == 0 || !strings.HasPrefix(got, hash[:12]+"__") {
+				t.Fatalf("StoredName = %q, saknar hashprefix", got)
+			}
+			if base := strings.TrimPrefix(got, hash[:12]+"__"); len(base) > 120 {
+				t.Fatalf("basnamnet är %d byte (>120): %q", len(base), base)
+			}
+			if !utf8.ValidString(got) {
+				t.Fatalf("StoredName gav ogiltig UTF-8: %q", got)
+			}
+		})
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode/utf8"
 )
 
 // StoreDir är certlagret: stabila, aldrig omdöpta original.
@@ -55,15 +56,33 @@ func StoredName(pdfHash, originalFilename string) string {
 		base = "cert.pdf"
 	}
 	// Håll lagernamnet hanterligt även för absurt långa mailbilagenamn.
-	if len(base) > 120 {
+	// Klipp på UTF-8-säker gräns (å/ä/ö får inte delas), och behandla en
+	// "ändelse" längre än halva budgeten som icke-ändelse — annars blir
+	// byteräkningen negativ och slajsningen panikar.
+	const maxBase = 120
+	if len(base) > maxBase {
 		ext := filepath.Ext(base)
-		base = base[:120-len(ext)] + ext
+		if len(ext) > maxBase/2 {
+			ext = ""
+		}
+		base = truncateUTF8(strings.TrimSuffix(base, ext), maxBase-len(ext)) + ext
 	}
 	prefix := pdfHash
 	if len(prefix) > 12 {
 		prefix = prefix[:12]
 	}
 	return prefix + "__" + base
+}
+
+// truncateUTF8 klipper s till högst max byte utan att dela en UTF-8-sekvens.
+func truncateUTF8(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	for max > 0 && !utf8.RuneStart(s[max]) {
+		max--
+	}
+	return s[:max]
 }
 
 // WriteStoreFile skriver PDF:en till certlagret under sitt stabila namn.
