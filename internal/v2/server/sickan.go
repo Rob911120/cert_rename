@@ -20,6 +20,8 @@ import (
 type sickanSession struct {
 	History []anthropic.MessageParam
 	Model   string
+	busy    bool // ett meddelande körs — parallella streams skulle tappa varandras turer
+	gen     int  // ökas vid reset: en körning från före reseten får inte skriva tillbaka historiken
 }
 
 type sickanSessions struct {
@@ -44,10 +46,34 @@ func (ss *sickanSessions) get(id string) ([]anthropic.MessageParam, string) {
 	return e.History, e.Model
 }
 
-func (ss *sickanSessions) set(id string, h []anthropic.MessageParam) {
+// tryAcquire markerar sessionen upptagen och returnerar dess generation.
+// false om ett meddelande redan körs (get→Run→set utan spärr skulle annars
+// tappa den ena turens historik — sist skriven vinner).
+func (ss *sickanSessions) tryAcquire(id string) (int, bool) {
 	ss.mu.Lock()
 	defer ss.mu.Unlock()
-	ss.entry(id).History = h
+	e := ss.entry(id)
+	if e.busy {
+		return 0, false
+	}
+	e.busy = true
+	return e.gen, true
+}
+
+func (ss *sickanSessions) release(id string) {
+	ss.mu.Lock()
+	defer ss.mu.Unlock()
+	ss.entry(id).busy = false
+}
+
+// set skriver tillbaka historiken — men bara om ingen reset skett under
+// körningen (generationen stämmer), annars vore reseten tyst ogjord.
+func (ss *sickanSessions) set(id string, h []anthropic.MessageParam, gen int) {
+	ss.mu.Lock()
+	defer ss.mu.Unlock()
+	if e := ss.entry(id); e.gen == gen {
+		e.History = h
+	}
 }
 
 func (ss *sickanSessions) setModel(id, model string) {
@@ -61,6 +87,7 @@ func (ss *sickanSessions) clear(id string) {
 	defer ss.mu.Unlock()
 	if e, ok := ss.s[id]; ok {
 		e.History = nil
+		e.gen++
 	}
 }
 
@@ -158,6 +185,13 @@ func (s *Server) handleSickanStream(w http.ResponseWriter, r *http.Request) {
 		flusher.Flush()
 	}
 
+	gen, ok := s.sickanSess.tryAcquire(body.Session)
+	if !ok {
+		http.Error(w, "Sickan arbetar redan med ett meddelande — vänta tills det är klart", http.StatusConflict)
+		return
+	}
+	defer s.sickanSess.release(body.Session)
+
 	if body.Model != "" && ai.ChatCostKey(body.Model) != "" {
 		s.persistSickanModel(body.Session, body.Model)
 	} else if cfg.SickanModel != "" {
@@ -186,7 +220,7 @@ func (s *Server) handleSickanStream(w http.ResponseWriter, r *http.Request) {
 		emit(sickan.Event{Kind: "error", Data: err.Error()})
 	}
 	updated = sickan.CompactHistory(updated, 1)
-	s.sickanSess.set(body.Session, updated)
+	s.sickanSess.set(body.Session, updated, gen)
 }
 
 // jsonEscape: SSE skiljer händelser med "\n\n" — datat skickas därför som

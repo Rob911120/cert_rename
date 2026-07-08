@@ -262,17 +262,11 @@ func (s *Server) handleTaskAdd(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &req) {
 		return
 	}
-	if strings.TrimSpace(req.Text) == "" {
-		http.Error(w, "tom task", http.StatusBadRequest)
-		return
-	}
-	t := &store.Task{Text: req.Text, DueDate: req.DueDate, OrderNumber: req.OrderNumber,
-		Source: "rob", CreatedAt: nowRFC3339()}
-	if _, err := s.Repo.AddTask(r.Context(), t); err != nil {
+	t, err := s.App.AddTask(r.Context(), req.Text, req.DueDate, req.OrderNumber, "rob")
+	if err != nil {
 		writeError(w, err)
 		return
 	}
-	s.OverviewChanged()
 	writeJSON(w, t)
 }
 
@@ -283,11 +277,10 @@ func (s *Server) handleTaskDone(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &req) {
 		return
 	}
-	if err := s.Repo.CompleteTask(r.Context(), int64(req.ID), nowRFC3339()); err != nil {
+	if err := s.App.CompleteTask(r.Context(), int64(req.ID)); err != nil {
 		writeError(w, err)
 		return
 	}
-	s.OverviewChanged()
 	writeJSON(w, map[string]bool{"ok": true})
 }
 
@@ -298,11 +291,10 @@ func (s *Server) handleTaskDelete(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &req) {
 		return
 	}
-	if err := s.Repo.DeleteTask(r.Context(), int64(req.ID)); err != nil {
+	if err := s.App.DeleteTask(r.Context(), int64(req.ID)); err != nil {
 		writeError(w, err)
 		return
 	}
-	s.OverviewChanged()
 	writeJSON(w, map[string]bool{"ok": true})
 }
 

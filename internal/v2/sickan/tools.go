@@ -226,14 +226,15 @@ func (tb *Toolbox) getCert(input json.RawMessage) (string, error) {
 		"cert_id": c.ID, "status": string(c.Status),
 		"original_filename": c.OriginalFilename,
 		"raw": map[string]any{"charge": c.Charge, "material": c.Material, "cert_type": c.CertType,
-			"product_form": c.ProductForm, "dimensions": c.Dimensions, "b_numbers": c.BNumbers,
-			"confidence": c.Confidence, "issues": c.Issues},
+			"product_form": c.ProductForm, "product_code": c.ProductCode, "dimensions": c.Dimensions,
+			"b_numbers": c.BNumbers, "confidence": c.Confidence, "issues": c.Issues},
 		"corrected": map[string]any{"charge": c.CorrectedCharge, "material": c.CorrectedMaterial,
 			"cert_type": c.CorrectedCertType, "product_form": c.CorrectedProductForm,
 			"dimensions": c.CorrectedDimensions, "b_numbers": c.CorrectedBNumbers},
 		"effective": map[string]any{"charge": c.EffectiveCharge(), "material": c.EffectiveMaterial(),
 			"cert_type": c.EffectiveCertType(), "product_form": c.EffectiveProductForm(),
-			"dimensions": c.EffectiveDimensions(), "b_numbers": c.EffectiveBNumbers()},
+			"product_code": c.EffectiveProductCode(), "dimensions": c.EffectiveDimensions(),
+			"b_numbers": c.EffectiveBNumbers()},
 		"name_override": c.NameOverride, "proposed_filename": view.ProposedFilename,
 		"final_filename": c.FinalFilename, "links": view.Links,
 		"correction_log": c.CorrectionLog,
@@ -673,12 +674,9 @@ func (tb *Toolbox) rememberRule(input json.RawMessage) (string, error) {
 	if err := json.Unmarshal(input, &args); err != nil {
 		return "", err
 	}
-	if strings.TrimSpace(args.Text) == "" {
-		return "", fmt.Errorf("tom regel")
-	}
 	ctx, cancel := bg()
 	defer cancel()
-	if _, err := tb.App.Repo.AddRule(ctx, args.Text, "sickan", time.Now().UTC().Format(time.RFC3339)); err != nil {
+	if err := tb.App.AddRule(ctx, args.Text, "sickan"); err != nil {
 		return "", err
 	}
 	return `{"ok":true,"note":"regeln är sparad och aktiv från nästa meddelande"}`, nil
@@ -704,17 +702,12 @@ func (tb *Toolbox) addTask(input json.RawMessage) (string, error) {
 	if err := json.Unmarshal(input, &args); err != nil {
 		return "", err
 	}
-	if strings.TrimSpace(args.Text) == "" {
-		return "", fmt.Errorf("tom task")
-	}
 	ctx, cancel := bg()
 	defer cancel()
-	t := &store.Task{Text: args.Text, DueDate: args.DueDate, OrderNumber: args.OrderNumber,
-		Source: "sickan", CreatedAt: time.Now().UTC().Format(time.RFC3339)}
-	if _, err := tb.App.Repo.AddTask(ctx, t); err != nil {
+	t, err := tb.App.AddTask(ctx, args.Text, args.DueDate, args.OrderNumber, "sickan")
+	if err != nil {
 		return "", err
 	}
-	tb.App.Notify.OverviewChanged()
 	out, _ := json.Marshal(map[string]any{"ok": true, "id": t.ID})
 	return string(out), nil
 }
@@ -739,9 +732,8 @@ func (tb *Toolbox) completeTask(input json.RawMessage) (string, error) {
 	}
 	ctx, cancel := bg()
 	defer cancel()
-	if err := tb.App.Repo.CompleteTask(ctx, args.ID, time.Now().UTC().Format(time.RFC3339)); err != nil {
+	if err := tb.App.CompleteTask(ctx, args.ID); err != nil {
 		return "", err
 	}
-	tb.App.Notify.OverviewChanged()
 	return `{"ok":true}`, nil
 }

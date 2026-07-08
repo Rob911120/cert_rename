@@ -157,6 +157,7 @@ func streamOnce(
 		Tools:     tools,
 		Messages:  history,
 	})
+	defer stream.Close() // även på Accumulate-felvägen — annars läcker anslutningen
 	msg := anthropic.Message{}
 	var emitted bool
 	for stream.Next() {

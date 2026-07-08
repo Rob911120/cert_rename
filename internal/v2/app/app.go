@@ -439,3 +439,52 @@ func (a *App) DeleteNote(ctx context.Context, id int64) error {
 	a.Notify.OverviewChanged()
 	return nil
 }
+
+// ---------------------------------------------------------------------------
+// Mutatorer — tasks & regler (Sickans/Robs delade minne). Genomstick så att
+// HTTP-handlers och Sickan-verktyg inte skriver via Repo direkt
+// (arkitekturregel 1) — klocka och SSE-ping följer med gratis.
+// ---------------------------------------------------------------------------
+
+// AddTask lägger en att-göra-punkt.
+func (a *App) AddTask(ctx context.Context, text, dueDate, orderNumber, source string) (*store.Task, error) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return nil, fmt.Errorf("%w: tom task", domain.ErrInvalid)
+	}
+	t := &store.Task{Text: text, DueDate: dueDate, OrderNumber: orderNumber,
+		Source: source, CreatedAt: a.ts()}
+	if _, err := a.Repo.AddTask(ctx, t); err != nil {
+		return nil, err
+	}
+	a.Notify.OverviewChanged()
+	return t, nil
+}
+
+// CompleteTask bockar av en task.
+func (a *App) CompleteTask(ctx context.Context, id int64) error {
+	if err := a.Repo.CompleteTask(ctx, id, a.ts()); err != nil {
+		return err
+	}
+	a.Notify.OverviewChanged()
+	return nil
+}
+
+// DeleteTask tar bort en task.
+func (a *App) DeleteTask(ctx context.Context, id int64) error {
+	if err := a.Repo.DeleteTask(ctx, id); err != nil {
+		return err
+	}
+	a.Notify.OverviewChanged()
+	return nil
+}
+
+// AddRule sparar en lärd agentregel.
+func (a *App) AddRule(ctx context.Context, text, source string) error {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return fmt.Errorf("%w: tom regel", domain.ErrInvalid)
+	}
+	_, err := a.Repo.AddRule(ctx, text, source, a.ts())
+	return err
+}
