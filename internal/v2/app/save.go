@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"cert-renamer/internal/v2/cert"
@@ -127,19 +128,28 @@ func (a *App) MarkImportedSaved(ctx context.Context, certID int64, finalFilename
 }
 
 // placeOutputFile lägger certbytes i utmappen under önskat namn.
-// Kraschåterhämtning: finns målet redan och tillhör SAMMA cert (via inbäddad
-// metadata-hash eller rå byteshash) återanvänds det; annars får
-// WriteUniqueFile lösa äkta namnkollisioner med _2-suffix.
+// Kraschåterhämtning: finns en befintlig fil som tillhör SAMMA cert (via
+// inbäddad metadata-hash eller rå byteshash) återanvänds den — även
+// _2/_3-suffixvarianter, så ett kraschat kollisionsspar inte dubbleras vidare
+// till nästa suffix. Annars får WriteUniqueFile lösa äkta namnkollisioner.
 func (a *App) placeOutputFile(outDir, name string, data []byte, pdfHash string) (string, error) {
-	target := filepath.Join(outDir, name)
-	if _, err := os.Stat(target); err == nil {
-		if m, ok := store.ReadMetadata(target); ok && m.Hash == pdfHash {
-			return target, nil // färdig utfil från tidigare (avbrutet) spar
+	ext := filepath.Ext(name)
+	base := strings.TrimSuffix(name, ext)
+	for i := 1; i < 100; i++ {
+		candidate := filepath.Join(outDir, name)
+		if i > 1 {
+			candidate = filepath.Join(outDir, fmt.Sprintf("%s_%d%s", base, i, ext))
 		}
-		if b, err := os.ReadFile(target); err == nil && store.HashPDF(b) == pdfHash {
-			return target, nil // kopierad men aldrig inbäddad — återanvänd och bädda om
+		if _, err := os.Stat(candidate); err != nil {
+			break // första luckan — inga fler befintliga varianter att pröva
 		}
-		// Annat cert med samma namn — äkta kollision, låt suffixen lösa det.
+		if m, ok := store.ReadMetadata(candidate); ok && m.Hash == pdfHash {
+			return candidate, nil // färdig utfil från tidigare (avbrutet) spar
+		}
+		if b, err := os.ReadFile(candidate); err == nil && store.HashPDF(b) == pdfHash {
+			return candidate, nil // kopierad men aldrig inbäddad — återanvänd och bädda om
+		}
+		// Annat cert med samma namn — pröva nästa suffixvariant.
 	}
 	return store.WriteUniqueFile(outDir, name, data)
 }

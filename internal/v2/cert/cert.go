@@ -130,7 +130,10 @@ func Validate(ext *Extraction, bNums []string) []string {
 // whitespace tas bort och X normaliseras till lowercase x.
 func BuildFilename(ext *Extraction, bNums []string) string {
 	dims := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(ext.Dimensions), " ", ""))
-	parts := []string{ext.Charge}
+	var parts []string
+	if c := strings.TrimSpace(ext.Charge); c != "" {
+		parts = append(parts, c)
+	}
 	form := strings.TrimSpace(ext.ProductCode)
 	if form == "" {
 		form = strings.TrimSpace(ext.ProductForm)
@@ -138,8 +141,18 @@ func BuildFilename(ext *Extraction, bNums []string) string {
 	if form != "" && !strings.EqualFold(form, "okänt") {
 		parts = append(parts, asciiFold.Replace(form))
 	}
-	parts = append(parts, dims, ext.Material)
+	// Tomma segment utelämnas (validering varnar redan om luckorna) — annars
+	// får namnet inledande streck eller "--"-runs.
+	if dims != "" {
+		parts = append(parts, dims)
+	}
+	if m := strings.TrimSpace(ext.Material); m != "" {
+		parts = append(parts, m)
+	}
 	parts = append(parts, bNums...)
 	name := slashToDash.Replace(strings.Join(parts, "-"))
+	if name == "" {
+		name = "cert"
+	}
 	return pathSafe.Replace(name) + ".pdf"
 }

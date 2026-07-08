@@ -55,9 +55,19 @@ func (a *App) IngestCert(ctx context.Context, in IngestInput) (*domain.Cert, boo
 	cfg := a.Config()
 	storedName := store.StoredName(hash, in.OriginalFilename)
 	storePath := store.StorePath(cfg, storedName)
-	if b, err := os.ReadFile(storePath); err == nil && store.HashPDF(b) == hash {
-		// Lagerfil från tidigare avbrutet intag — återanvänd.
-	} else {
+	reuse := false
+	if b, err := os.ReadFile(storePath); err == nil {
+		if store.HashPDF(b) == hash {
+			reuse = true // lagerfil från tidigare avbrutet intag — återanvänd
+		} else if m, ok := store.ReadMetadata(storePath); ok && m.Hash == hash {
+			// V1-import (HashOverride): filbytes ≠ originalhash eftersom V1
+			// bäddade in metadata — men metadatan bär originalhashen. Utan
+			// den här vägen dubbleras lagerfilen (_2) vid varje avbruten
+			// importomkörning.
+			reuse = true
+		}
+	}
+	if !reuse {
 		p, err := store.WriteStoreFile(cfg, storedName, in.Data)
 		if err != nil {
 			return nil, false, err
@@ -140,6 +150,12 @@ func (a *App) IngestCert(ctx context.Context, in IngestInput) (*domain.Cert, boo
 		ReceivedAt: a.ts(),
 	}
 	if _, err := a.Repo.InsertCert(ctx, c); err != nil {
+		// Samtidig ingest av samma PDF kan ha hunnit före mellan dedupe-checken
+		// ovan och insert:en (UNIQUE på pdf_hash) — behandla som dublett i
+		// stället för att bubbla ett rått SQLite-fel.
+		if existing, gerr := a.Repo.GetCertByHash(ctx, hash); gerr == nil {
+			return existing, true, nil
+		}
 		return nil, false, err
 	}
 	a.Notify.Logf("📥 cert mottaget: %s (charge %s, %s)", in.OriginalFilename, ext.Charge, ext.Material)

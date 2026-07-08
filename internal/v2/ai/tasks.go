@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/anthropics/anthropic-sdk-go"
 
@@ -39,6 +40,19 @@ func callTool[T any](ctx context.Context, client *anthropic.Client, params anthr
 		}
 	}
 	return nil, resp.Usage, fmt.Errorf("inget tool_use-svar från Claude")
+}
+
+// truncateBody kapar mailkroppen till MaxBodyBytes på en runegräns —
+// byteslicing kunde annars klippa mitt i å/ä/ö och skicka trasig UTF-8.
+func truncateBody(body string) string {
+	if len(body) <= eml.MaxBodyBytes {
+		return body
+	}
+	cut := eml.MaxBodyBytes
+	for cut > 0 && !utf8.RuneStart(body[cut]) {
+		cut--
+	}
+	return body[:cut] + "\n[trunkerad]"
 }
 
 // Extract anropar sonnet med en PDF + email-context och returnerar extraherade fält.
@@ -82,10 +96,7 @@ func Classify(ctx context.Context, log Logger, client *anthropic.Client, c *eml.
 	for _, a := range c.Attachments {
 		attNames = append(attNames, a.Filename)
 	}
-	body := c.Body
-	if len(body) > eml.MaxBodyBytes {
-		body = body[:eml.MaxBodyBytes] + "\n[trunkerad]"
-	}
+	body := truncateBody(c.Body)
 	userText := fmt.Sprintf("Subject: %s\nFrom: %s\nDate: %s\nBilagor: %s\n\nBody:\n%s",
 		c.Subject, c.From, c.Date, strings.Join(attNames, ", "), body)
 	return logAICall(log, "haiku Classify",
@@ -142,10 +153,7 @@ func ClassifyMailCategory(ctx context.Context, log Logger, client *anthropic.Cli
 	for _, a := range c.Attachments {
 		attNames = append(attNames, a.Filename)
 	}
-	body := c.Body
-	if len(body) > eml.MaxBodyBytes {
-		body = body[:eml.MaxBodyBytes] + "\n[trunkerad]"
-	}
+	body := truncateBody(c.Body)
 	userText := fmt.Sprintf("Subject: %s\nFrom: %s\nDate: %s\nBilagor: %s\n\nBody:\n%s",
 		c.Subject, c.From, c.Date, strings.Join(attNames, ", "), body)
 	return logAICall(log, "haiku ClassifyMailCategory",

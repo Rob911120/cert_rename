@@ -228,7 +228,9 @@ func (c *Client) getUpcomingOrderRows(ctx context.Context, from, to time.Time, e
 	out := make([]PurchaseOrderRow, 0, len(rows))
 	for _, r := range rows {
 		d := dateOnly(r.DeliveryDate)
-		if d != "" { // spåra datumspann över ALLA hämtade rader (för diagnostik)
+		// Spåra datumspann över ALLA hämtade rader (för diagnostik) — .NET:s
+		// nolldatum 0001-01-01 är "inget datum" och ska inte korrumpera MinDate.
+		if d != "" && d != "0001-01-01" {
 			if stats.MinDate == "" || d < stats.MinDate {
 				stats.MinDate = d
 			}

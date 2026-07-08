@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"cert-renamer/internal/v2/domain"
-	"cert-renamer/internal/v2/monitor"
 )
 
 // SuggestAll kör förslagspasset för alla levande cert. Grundmatchningen är
@@ -54,8 +53,11 @@ func (s *Sync) suggestForCert(ctx context.Context, c *domain.Cert) error {
 }
 
 // refineByCharge slår upp certets charge i Monitors ProductRecords och
-// behåller de rader vars artikel förekommer där. Tom slice = kunde inte
-// förfinas (behåll alla kandidater).
+// behåller de rader vars (order, artikel) förekommer där — matchningen sker
+// via (PurchaseOrderId, PartId) precis som ProductRecord-dokumentationen
+// säger; enbart PartId skulle godta en artikel-träff från en ANNAN order.
+// Records utan PurchaseOrderId matchar på artikel enbart. Tom slice = kunde
+// inte förfinas (behåll alla kandidater).
 func (s *Sync) refineByCharge(ctx context.Context, c *domain.Cert, rows []*domain.OrderRow) []*domain.OrderRow {
 	charge := c.EffectiveCharge()
 	if charge == "" {
@@ -65,13 +67,14 @@ func (s *Sync) refineByCharge(ctx context.Context, c *domain.Cert, rows []*domai
 	if err != nil || len(recs) == 0 {
 		return nil
 	}
-	partIDs := make(map[monitor.ID]bool, len(recs))
+	type key struct{ part, po int64 }
+	keys := make(map[key]bool, len(recs))
 	for _, r := range recs {
-		partIDs[r.PartId] = true
+		keys[key{int64(r.PartId), int64(r.PurchaseOrderId)}] = true
 	}
 	var matched []*domain.OrderRow
 	for _, row := range rows {
-		if partIDs[monitor.ID(row.PartID)] {
+		if keys[key{row.PartID, row.PurchaseOrderID}] || keys[key{row.PartID, 0}] {
 			matched = append(matched, row)
 		}
 	}
