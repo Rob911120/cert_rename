@@ -87,6 +87,13 @@ func importOne(ctx context.Context, a *app.App, path string, saved bool, st *Sta
 	if original == "" {
 		original = filepath.Base(path)
 	}
+	// Bara approved/ var validerad av V1 — queue/-cert kan vara vad som helst
+	// (2.2, avvisade, ogranskade) och får INTE stämplas som verifierade
+	// 3.1-cert. De importeras med tom certtyp ("gissa aldrig"); Rob rättar.
+	certType := ""
+	if saved {
+		certType = "3.1"
+	}
 	in := app.IngestInput{
 		OriginalFilename: original,
 		Data:             data,
@@ -95,8 +102,8 @@ func importOne(ctx context.Context, a *app.App, path string, saved bool, st *Sta
 		EmailDate:        meta.EmailDate,
 		EmailBody:        meta.EmailBody,
 		Extraction: &cert.Extraction{
-			IsEN10204_3_1:     true, // V1 släppte bara igenom validerade 3.1-cert
-			CertType:          "3.1",
+			IsEN10204_3_1:     saved, // V1 validerade bara approved/ som 3.1
+			CertType:          certType,
 			Charge:            meta.Charge,
 			Material:          meta.Material,
 			EnStandardPresent: meta.EnStandardPresent,
@@ -126,6 +133,15 @@ func importOne(ctx context.Context, a *app.App, path string, saved bool, st *Sta
 		return err
 	}
 	if dup {
+		// Reparation vid omkörning: kraschade en tidigare import mellan
+		// IngestCert och MarkImportedSaved ligger ett approved-cert kvar som
+		// levande — stämpla det nu (idempotent via övergångsguarden).
+		if saved && c.Living() {
+			if err := a.MarkImportedSaved(ctx, c.ID, filepath.Base(path), path, meta.ExtractedAt); err != nil {
+				return fmt.Errorf("reparera sparad-stämpel: %w", err)
+			}
+			a.Notify.Logf("   🔧 %s: fanns som levande — stämplad som sparad", filepath.Base(path))
+		}
 		st.Skipped++
 		return nil
 	}

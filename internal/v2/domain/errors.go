@@ -50,7 +50,13 @@ func ApplyCorrection(c *Cert, field, value, who, ts string) error {
 		old, c.CorrectedCertType = c.EffectiveCertType(), value
 	case "b_numbers":
 		old = strings.Join(c.EffectiveBNumbers(), ",")
-		c.CorrectedBNumbers = splitList(value)
+		if value == "" {
+			// Tomt värde RENSAR rättelsen (tillbaka till rå extraktion) —
+			// samma semantik som skalärfälten ovan.
+			c.CorrectedBNumbers = nil
+		} else {
+			c.CorrectedBNumbers = splitList(value)
+		}
 	default:
 		return fmt.Errorf("okänt rättelsefält %q", field)
 	}
@@ -59,7 +65,6 @@ func ApplyCorrection(c *Cert, field, value, who, ts string) error {
 }
 
 // splitList delar en kommaseparerad (eller whitespace-separerad) lista.
-// Tom sträng → tom (icke-nil) slice = "rättad till inga".
 func splitList(s string) []string {
 	fields := strings.FieldsFunc(s, func(r rune) bool {
 		return r == ',' || r == ';' || r == ' ' || r == '\n' || r == '\t'

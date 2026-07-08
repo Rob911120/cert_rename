@@ -129,7 +129,7 @@ type Cert struct {
 	CorrectedProductForm string
 	CorrectedDimensions  string
 	CorrectedCertType    string
-	CorrectedBNumbers    []string // nil = ej rättad; tom slice = rättad till "inga"
+	CorrectedBNumbers    []string // nil = ej rättad; tom slice = rättad till "inga" (nås ej via ApplyCorrection — tomt värde rensar)
 	CorrectionLog        []Correction
 
 	// Levande namn

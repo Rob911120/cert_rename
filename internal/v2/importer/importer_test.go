@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"cert-renamer/internal/v2/app"
+	"cert-renamer/internal/v2/cert"
 	"cert-renamer/internal/v2/domain"
 	"cert-renamer/internal/v2/store"
 )
@@ -95,13 +96,20 @@ func TestImportV1(t *testing.T) {
 		t.Error("importerat sparat cert ska vara fryst")
 	}
 
-	// Queue → levande
+	// Queue → levande, och ALDRIG stämplad som verifierad 3.1 (bara approved/
+	// var validerad av V1 — "gissa aldrig").
 	living, err := a.Repo.GetCertByHash(ctx, "origalhash456")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if living.Status != domain.CertMottagen {
 		t.Errorf("kö-cert ska vara levande: %s", living.Status)
+	}
+	if living.CertType != "" {
+		t.Errorf("kö-cert ska inte stämplas med certtyp: %q", living.CertType)
+	}
+	if saved.CertType != "3.1" {
+		t.Errorf("approved-cert ska stämplas 3.1: %q", saved.CertType)
 	}
 	if !living.IsLegible || !living.IsUnaltered {
 		t.Errorf("importerat cert ska få IsLegible/IsUnaltered=true: %+v", living)
@@ -118,5 +126,50 @@ func TestImportV1(t *testing.T) {
 	all, _ := a.Repo.ListCerts(ctx, "")
 	if len(all) != 2 {
 		t.Errorf("cert-rader efter om-import: %d", len(all))
+	}
+}
+
+// En import som kraschade mellan IngestCert och MarkImportedSaved lämnar ett
+// approved-cert som levande — en omkörning ska reparera (stämpla sparad), inte
+// hoppa över det som ren dublett för alltid.
+func TestImportV1RepairsInterruptedSavedImport(t *testing.T) {
+	dir := t.TempDir()
+	cfg := store.Config{InboxDir: dir}
+	db, err := store.Open(filepath.Join(dir, "v2.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	a := app.New(store.NewRepository(db), func() store.Config { return cfg },
+		func() time.Time { return time.Date(2026, 7, 3, 12, 0, 0, 0, time.UTC) }, nil)
+	ctx := context.Background()
+
+	writeV1Pdf(t, store.ApprovedDir(cfg), "87210-plat-15-S690-B127562.pdf", store.PdfMeta{
+		Charge: "87210", Material: "S690", BNumbers: []string{"B127562"},
+		OriginalFilename: "orig.pdf", ExtractedAt: "2026-06-01T10:00:00Z", Hash: "avbrutenhash",
+	})
+
+	// Simulera avbrottet: certet hann in som levande, sparad-stämpeln hann inte.
+	if _, _, err := a.IngestCert(ctx, app.IngestInput{
+		OriginalFilename: "orig.pdf", Data: []byte("x"),
+		Extraction:   &cert.Extraction{CertType: "3.1"},
+		HashOverride: "avbrutenhash",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	st, err := ImportV1(ctx, a, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Errors != 0 {
+		t.Fatalf("stats: %+v", st)
+	}
+	c, err := a.Repo.GetCertByHash(ctx, "avbrutenhash")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Status != domain.CertSparad || c.SavedAt != "2026-06-01T10:00:00Z" {
+		t.Errorf("avbruten import reparerades inte: status=%s saved_at=%q", c.Status, c.SavedAt)
 	}
 }

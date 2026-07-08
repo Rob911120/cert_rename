@@ -176,6 +176,15 @@ func TestApplyCorrection(t *testing.T) {
 		t.Errorf("CorrectedBNumbers = %v", c.CorrectedBNumbers)
 	}
 
+	// Tomt värde RENSAR b_numbers-rättelsen (nil = tillbaka till rå
+	// extraktion), samma semantik som skalärfälten.
+	if err := ApplyCorrection(c, "b_numbers", "", "rob", "t"); err != nil {
+		t.Fatal(err)
+	}
+	if c.CorrectedBNumbers != nil {
+		t.Errorf("tomt värde ska rensa rättelsen, fick %#v", c.CorrectedBNumbers)
+	}
+
 	// product_code redigeras direkt (ingen corrected-tvilling) men loggas ändå
 	c.ProductCode = "RS"
 	if err := ApplyCorrection(c, "product_code", "PL", "rob", "t2"); err != nil {
