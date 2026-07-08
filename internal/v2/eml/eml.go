@@ -11,6 +11,7 @@ import (
 	"log"
 	"mime"
 	"mime/multipart"
+	"mime/quotedprintable"
 	"net/mail"
 	"os"
 	"path/filepath"
@@ -50,11 +51,11 @@ func Parse(path string) (*Content, error) {
 		From:    decodeHeader(msg.Header.Get("From")),
 		Date:    msg.Header.Get("Date"),
 	}
+	cte := msg.Header.Get("Content-Transfer-Encoding")
 	ct := msg.Header.Get("Content-Type")
 	mediaType, params, err := mime.ParseMediaType(ct)
 	if err != nil {
-		body, _ := io.ReadAll(msg.Body)
-		out.Body = string(body)
+		out.Body = decodeBody(msg.Body, cte, "")
 		return out, nil
 	}
 	if strings.HasPrefix(mediaType, "multipart/") {
@@ -62,10 +63,31 @@ func Parse(path string) (*Content, error) {
 			return nil, err
 		}
 	} else {
-		body, _ := io.ReadAll(msg.Body)
-		out.Body = string(body)
+		// Icke-multipart: kroppen kan vara quoted-printable/base64-kodad och i
+		// annan charset än UTF-8 — utan avkodning blir svenska mejl
+		// "f=C3=B6r"-soppa och B-nummer kan brytas av mjuka radbrytningar.
+		out.Body = decodeBody(msg.Body, cte, params["charset"])
 	}
 	return out, nil
+}
+
+// decodeBody läser en mailkropp och avkodar Content-Transfer-Encoding
+// (quoted-printable/base64) samt charset till UTF-8. Fel är mjuka: den råa
+// texten är alltid bättre än ingen text.
+func decodeBody(r io.Reader, cte, charset string) string {
+	raw, _ := io.ReadAll(r)
+	switch strings.ToLower(strings.TrimSpace(cte)) {
+	case "base64":
+		clean := strings.Map(dropB64Whitespace, string(raw))
+		if b, err := base64.StdEncoding.DecodeString(clean); err == nil {
+			raw = b
+		}
+	case "quoted-printable":
+		if b, err := io.ReadAll(quotedprintable.NewReader(bytes.NewReader(raw))); err == nil || len(b) > 0 {
+			raw = b
+		}
+	}
+	return decodeCharset(raw, charset)
 }
 
 func walkParts(r io.Reader, boundary string, out *Content) error {
@@ -109,27 +131,31 @@ func walkParts(r io.Reader, boundary string, out *Content) error {
 			continue
 		}
 		if mediaType == "text/plain" && out.Body == "" {
-			out.Body = string(data)
+			out.Body = decodeCharset(data, params["charset"])
 		}
 	}
 }
 
 func readPartDecoded(p *multipart.Part) ([]byte, error) {
+	// quoted-printable avkodas transparent av mime/multipart (headern göms);
+	// base64 måste vi avkoda själva.
 	enc := strings.ToLower(p.Header.Get("Content-Transfer-Encoding"))
 	raw, err := io.ReadAll(p)
 	if err != nil {
 		return nil, err
 	}
 	if enc == "base64" {
-		clean := strings.Map(func(r rune) rune {
-			if r == '\n' || r == '\r' || r == ' ' || r == '\t' {
-				return -1
-			}
-			return r
-		}, string(raw))
+		clean := strings.Map(dropB64Whitespace, string(raw))
 		return base64.StdEncoding.DecodeString(clean)
 	}
 	return raw, nil
+}
+
+func dropB64Whitespace(r rune) rune {
+	if r == '\n' || r == '\r' || r == ' ' || r == '\t' {
+		return -1
+	}
+	return r
 }
 
 // isZipAttachment matchar zip-MIME-typer eller .zip-suffix på filnamn.
@@ -175,10 +201,55 @@ func extractPDFsFromZip(data []byte) []Attachment {
 }
 
 func decodeHeader(s string) string {
-	dec := new(mime.WordDecoder)
-	out, err := dec.DecodeHeader(s)
+	out, err := headerDecoder.DecodeHeader(s)
 	if err != nil {
 		return s
 	}
 	return out
+}
+
+// headerDecoder avkodar encoded-words (=?charset?Q?...?=) i ämnen/filnamn.
+// WordDecoder hanterar bara utf-8/iso-8859-1/us-ascii själv — svenska mejl
+// från äldre system använder ofta windows-1252, som annars lämnas som rå
+// MIME-token i UI, DB och AI-prompt.
+var headerDecoder = &mime.WordDecoder{
+	CharsetReader: func(charset string, input io.Reader) (io.Reader, error) {
+		raw, err := io.ReadAll(input)
+		if err != nil {
+			return nil, err
+		}
+		return strings.NewReader(decodeCharset(raw, charset)), nil
+	},
+}
+
+// decodeCharset konverterar mailtext till UTF-8 utifrån charset-parametern.
+// Bara de kodningar svenska mejl faktiskt använder hanteras: UTF-8/ASCII
+// passerar orört, ISO-8859-1/-15 och Windows-1252 avkodas byte-för-byte.
+// Okänd charset returneras oförändrad — rå text är bättre än ingen.
+func decodeCharset(data []byte, charset string) string {
+	switch strings.ToLower(strings.TrimSpace(charset)) {
+	case "", "utf-8", "utf8", "us-ascii", "ascii":
+		return string(data)
+	case "iso-8859-1", "iso8859-1", "latin1", "iso-8859-15", "iso8859-15", "windows-1252", "cp1252":
+		var b strings.Builder
+		b.Grow(len(data) + len(data)/2)
+		for _, c := range data {
+			if c >= 0x80 && c <= 0x9F {
+				// Windows-1252:s tryckbara område; i ren latin-1 är det
+				// (oanvända) kontrolltecken, så mappningen är säker för båda.
+				b.WriteRune(cp1252High[c-0x80])
+			} else {
+				b.WriteRune(rune(c)) // latin-1: bytevärde = kodpunkt
+			}
+		}
+		return b.String()
+	default:
+		return string(data)
+	}
+}
+
+// cp1252High är Windows-1252:s tecken för 0x80–0x9F (0xFFFD för odefinierade).
+var cp1252High = [32]rune{
+	'€', 0xFFFD, '‚', 'ƒ', '„', '…', '†', '‡', 'ˆ', '‰', 'Š', '‹', 'Œ', 0xFFFD, 'Ž', 0xFFFD,
+	0xFFFD, '‘', '’', '“', '”', '•', '–', '—', '˜', '™', 'š', '›', 'œ', 0xFFFD, 'ž', 'Ÿ',
 }

@@ -7,7 +7,10 @@ package intake
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -84,10 +87,11 @@ func (in *Intake) ProcessInboxOnce(ctx context.Context) bool {
 		if e.IsDir() || !strings.EqualFold(filepath.Ext(e.Name()), ".eml") {
 			continue
 		}
-		if in.App.LatestEmailStatus(ctx, e.Name()) == "error" {
-			continue // redan felad — vänta på Rob
+		path := filepath.Join(inbox, e.Name())
+		if in.App.LatestEmailStatus(ctx, e.Name(), fileSHA256(path)) == "error" {
+			continue // redan felad (samma innehåll) — vänta på Rob
 		}
-		emls = append(emls, filepath.Join(inbox, e.Name()))
+		emls = append(emls, path)
 	}
 	for i, path := range emls {
 		if ctx.Err() != nil {
@@ -109,7 +113,7 @@ func (in *Intake) ProcessInboxOnce(ctx context.Context) bool {
 // ProcessEml kör hela pipelinen för EN .eml-fil.
 func (in *Intake) ProcessEml(ctx context.Context, emlPath string) {
 	n := in.App.Notify
-	emailID := in.App.EmailStarted(ctx, filepath.Base(emlPath))
+	emailID := in.App.EmailStarted(ctx, filepath.Base(emlPath), fileSHA256(emlPath))
 
 	content, err := eml.Parse(emlPath)
 	if err != nil {
@@ -207,10 +211,15 @@ func (in *Intake) IngestPDF(ctx context.Context, filename string, data []byte) (
 		TokensOut:        res.TokensOut,
 		ProcessingMS:     res.DurationMS,
 	})
-	if err != nil || dup {
+	if err != nil {
 		return certID(c), dup, err
 	}
-	in.App.RecordAICall(ctx, c.ID, "extract", res.Model, res.TokensIn, res.TokensOut, res.DurationMS, true, "")
+	// Extract-anropet är redan betalt — logga det även när intaget visade sig
+	// vara en dublett, annars ljuger kostnads-/auditstatistiken.
+	in.App.RecordAICall(ctx, certID(c), "extract", res.Model, res.TokensIn, res.TokensOut, res.DurationMS, true, "")
+	if dup {
+		return certID(c), true, nil
+	}
 	if _, err := in.App.SuggestLinksByBNumber(ctx, c.ID); err != nil {
 		in.App.Notify.Logf("   ⚠️  förslagspass: %v", err)
 	}
@@ -222,6 +231,21 @@ func certID(c *domain.Cert) int64 {
 		return 0
 	}
 	return c.ID
+}
+
+// fileSHA256 är innehålls-hashen som (tillsammans med filnamnet) nycklar
+// e-postens fel-skip. Tom sträng vid läsfel — matchar då aldrig en riktig rad.
+func fileSHA256(path string) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return ""
+	}
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 // ingestAttachment extraherar och tar in EN PDF-bilaga. Ingen valideringsgrind:
@@ -255,11 +279,13 @@ func (in *Intake) ingestAttachment(ctx context.Context, content *eml.Content, at
 		n.Logf("   ❌ %s — kunde inte ta in: %v", att.Filename, err)
 		return false
 	}
+	// Extract-anropet är redan betalt — logga det även för dubbletter, annars
+	// ljuger kostnads-/auditstatistiken.
+	in.App.RecordAICall(ctx, c.ID, "extract", res.Model, res.TokensIn, res.TokensOut, res.DurationMS, true, "")
 	if dup {
 		n.Logf("   ♻️  %s — dublett (hash), hoppar över", att.Filename)
 		return true
 	}
-	in.App.RecordAICall(ctx, c.ID, "extract", res.Model, res.TokensIn, res.TokensOut, res.DurationMS, true, "")
 
 	// Förslagspasset: koppla mot kända orderrader på B-nummer.
 	if created, err := in.App.SuggestLinksByBNumber(ctx, c.ID); err != nil {

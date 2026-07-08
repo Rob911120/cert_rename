@@ -2,6 +2,7 @@ package monitorsync
 
 import (
 	"context"
+	"strings"
 
 	"cert-renamer/internal/v2/domain"
 	"cert-renamer/internal/v2/monitor"
@@ -30,7 +31,8 @@ func (s *Sync) SuggestAll(ctx context.Context) error {
 
 func (s *Sync) suggestForCert(ctx context.Context, c *domain.Cert) error {
 	for _, bn := range c.EffectiveBNumbers() {
-		rows, err := s.App.Repo.RowsByOrderNumber(ctx, bn)
+		// Normalisera som app-lagret (rättade B-nummer kan vara små bokstäver).
+		rows, err := s.App.Repo.RowsByOrderNumber(ctx, strings.ToUpper(strings.TrimSpace(bn)))
 		if err != nil {
 			return err
 		}

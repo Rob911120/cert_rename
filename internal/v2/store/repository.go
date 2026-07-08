@@ -662,11 +662,11 @@ func (q *Q) ConfirmedOrderNumbers(ctx context.Context, certID int64) ([]string, 
 // Emails (intags-audit), AI-cache, app_state, ai_calls
 // ---------------------------------------------------------------------------
 
-func (q *Q) InsertEmail(ctx context.Context, filename, subject, from, date, category, status, errMsg, now string) (int64, error) {
+func (q *Q) InsertEmail(ctx context.Context, filename, subject, from, date, category, status, errMsg, fileHash, now string) (int64, error) {
 	res, err := q.db.ExecContext(ctx, `INSERT INTO emails
-		(filename, subject, from_addr, date, mail_category, status, error_message, created_at)
-		VALUES (?,?,?,?,?,?,?,?)`,
-		filename, subject, from, date, category, status, errMsg, now)
+		(filename, subject, from_addr, date, mail_category, status, error_message, file_hash, created_at)
+		VALUES (?,?,?,?,?,?,?,?,?)`,
+		filename, subject, from, date, category, status, errMsg, fileHash, now)
 	if err != nil {
 		return 0, err
 	}
@@ -679,12 +679,15 @@ func (q *Q) UpdateEmailStatus(ctx context.Context, id int64, status, errMsg stri
 	return oneRow(res, err)
 }
 
-// LatestEmailStatus returnerar senaste status för ett .eml-filnamn (” om
-// aldrig sett) — intagets skip-nyckel för filer som slutat i fel.
-func (q *Q) LatestEmailStatus(ctx context.Context, filename string) (string, error) {
+// LatestEmailStatus returnerar senaste status för ett .eml-filnamn + dess
+// innehålls-hash (” om aldrig sett) — intagets skip-nyckel för filer som
+// slutat i fel. Hashen ingår så att en NY fil med samma namn som ett gammalt
+// felmejl inte skippas för alltid.
+func (q *Q) LatestEmailStatus(ctx context.Context, filename, fileHash string) (string, error) {
 	var s string
 	err := q.db.QueryRowContext(ctx,
-		`SELECT status FROM emails WHERE filename = ? ORDER BY id DESC LIMIT 1`, filename).Scan(&s)
+		`SELECT status FROM emails WHERE filename = ? AND file_hash = ? ORDER BY id DESC LIMIT 1`,
+		filename, fileHash).Scan(&s)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}

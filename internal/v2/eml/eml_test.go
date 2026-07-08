@@ -242,3 +242,59 @@ func Test_Parse_MixedPdfAndZip(t *testing.T) {
 		t.Errorf("filnamn matchar inte (vill ha A1.pdf+B2.pdf): %v", names)
 	}
 }
+
+// Icke-multipart mejl: quoted-printable + ISO-8859-1 ska avkodas — annars blir
+// svenska kroppar "H=E4r"-soppa och B-nummer brutna över mjuka radbrytningar
+// missas av ExtractBNumbers.
+func Test_Parse_NonMultipartQuotedPrintableLatin1(t *testing.T) {
+	raw := "From: mill@ssab.com\r\n" +
+		"To: rob@example.se\r\n" +
+		"Subject: =?windows-1252?Q?Certifikat_f=F6r_st=E5lplattor?=\r\n" +
+		"MIME-Version: 1.0\r\n" +
+		"Content-Type: text/plain; charset=iso-8859-1\r\n" +
+		"Content-Transfer-Encoding: quoted-printable\r\n" +
+		"\r\n" +
+		"H=E4rdat st=E5l f=F6r order B1273=\r\n" +
+		"40. Se bifogat certifikat.\r\n"
+	path := filepath.Join(t.TempDir(), "qp.eml")
+	if err := os.WriteFile(path, []byte(raw), 0644); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Parse(path)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if c.Subject != "Certifikat för stålplattor" {
+		t.Errorf("windows-1252-ämne avkodades inte: %q", c.Subject)
+	}
+	if want := "Härdat stål för order B127340. Se bifogat certifikat.\r\n"; c.Body != want {
+		t.Errorf("body = %q, vill ha %q", c.Body, want)
+	}
+	if got := ExtractBNumbers(c.Body); len(got) != 1 || got[0] != "B127340" {
+		t.Errorf("B-nummer över mjuk radbrytning: %v", got)
+	}
+}
+
+// Multipart text/plain i latin-1 ska konverteras till UTF-8.
+func Test_Parse_Latin1TextPart(t *testing.T) {
+	path := buildEml(t, []emlPart{{
+		contentType: "text/plain; charset=iso-8859-1",
+		data:        []byte("Best\xe4llning p\xe5 60mm pl\xe5t\n"),
+	}})
+	c, err := Parse(path)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if c.Body != "Beställning på 60mm plåt\n" {
+		t.Errorf("latin-1-body konverterades inte: %q", c.Body)
+	}
+}
+
+// B-nummer med litet b ska hittas och versaliseras — resten av appen jämför
+// ordernummer versaliserat.
+func Test_ExtractBNumbers_CaseInsensitive(t *testing.T) {
+	got := ExtractBNumbers("ordernr b127575 och B127575 samt b127576")
+	if len(got) != 2 || got[0] != "B127575" || got[1] != "B127576" {
+		t.Errorf("ExtractBNumbers = %v", got)
+	}
+}

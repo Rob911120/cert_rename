@@ -158,8 +158,9 @@ func writeSidecar(pdfPath string, meta store.PdfMeta) {
 
 // SuggestLinksByBNumber kör förslagspasset för ett cert: varje effektivt
 // B-nummer matchas mot kända orderrader → foreslagen-länkar. Rör aldrig
-// befintliga länkar (SuggestLink är no-op på beslut). Delas av intaget och
-// Monitor-syncen så matchningslogiken bara finns här.
+// befintliga länkar (SuggestLink är no-op på beslut). Används av intaget och
+// B-nummer-rättningar; Monitor-syncen har en egen variant med charge-förfining
+// (monitorsync/match.go suggestForCert) som också går via SuggestLink.
 func (a *App) SuggestLinksByBNumber(ctx context.Context, certID int64) (int, error) {
 	c, err := a.Repo.GetCert(ctx, certID)
 	if err != nil {
@@ -189,8 +190,8 @@ func (a *App) SuggestLinksByBNumber(ctx context.Context, certID int64) (int, err
 // bokföring går genom den enda skrivvägen.
 // ---------------------------------------------------------------------------
 
-func (a *App) EmailStarted(ctx context.Context, filename string) int64 {
-	id, err := a.Repo.InsertEmail(ctx, filename, "", "", "", "", "processing", "", a.ts())
+func (a *App) EmailStarted(ctx context.Context, filename, fileHash string) int64 {
+	id, err := a.Repo.InsertEmail(ctx, filename, "", "", "", "", "processing", "", fileHash, a.ts())
 	if err != nil {
 		a.Notify.Logf("⚠️  DB (email-rad): %v", err)
 		return 0
@@ -209,9 +210,10 @@ func (a *App) EmailFinished(ctx context.Context, id int64, status, errMsg string
 
 // LatestEmailStatus används av intaget för att hoppa över .eml-filer som
 // redan slutat i fel (de ligger kvar i inkorgen tills Rob agerar) — utan
-// mapp-koreografi och utan att bränna AI-anrop i loop.
-func (a *App) LatestEmailStatus(ctx context.Context, filename string) string {
-	s, err := a.Repo.LatestEmailStatus(ctx, filename)
+// mapp-koreografi och utan att bränna AI-anrop i loop. Nyckeln är filnamn +
+// innehålls-hash så en NY fil med återanvänt namn inte skippas.
+func (a *App) LatestEmailStatus(ctx context.Context, filename, fileHash string) string {
+	s, err := a.Repo.LatestEmailStatus(ctx, filename, fileHash)
 	if err != nil {
 		return ""
 	}

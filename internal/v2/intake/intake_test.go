@@ -112,6 +112,7 @@ func TestProcessEmlHappyPath(t *testing.T) {
 
 	pdf := []byte("%PDF-1.4 heat 43136\n")
 	emlPath := writeEml(t, cfg, "cert.eml", pdf)
+	emlHash := fileSHA256(emlPath) // före processning — filen raderas vid succé
 
 	// Förbered en orderrad som matchar B-numret i ämnesraden
 	if err := in.App.Repo.UpsertOrderRow(ctx, &domain.OrderRow{
@@ -159,7 +160,7 @@ func TestProcessEmlHappyPath(t *testing.T) {
 	if _, err := os.Stat(emlPath); !os.IsNotExist(err) {
 		t.Error(".eml ska tas bort efter lyckad körning")
 	}
-	if s := in.App.LatestEmailStatus(ctx, "cert.eml"); s != "completed" {
+	if s := in.App.LatestEmailStatus(ctx, "cert.eml", emlHash); s != "completed" {
 		t.Errorf("emailstatus = %q", s)
 	}
 }
@@ -172,7 +173,8 @@ func TestDuplicateIngestIsNoop(t *testing.T) {
 	pdf := []byte("%PDF-1.4 samma cert\n")
 	writeEml(t, cfg, "first.eml", pdf)
 	in.ProcessInboxOnce(ctx)
-	writeEml(t, cfg, "second.eml", pdf) // exakt samma PDF igen
+	secondPath := writeEml(t, cfg, "second.eml", pdf) // exakt samma PDF igen
+	secondHash := fileSHA256(secondPath)
 	in.ProcessInboxOnce(ctx)
 
 	certs, _ := in.App.Repo.ListCerts(ctx, "")
@@ -180,7 +182,7 @@ func TestDuplicateIngestIsNoop(t *testing.T) {
 		t.Errorf("dublett skapade extra rad: %d certs", len(certs))
 	}
 	// Båda mejlen slutade lyckat (dubletten är en ren no-op)
-	if s := in.App.LatestEmailStatus(ctx, "second.eml"); s != "completed" {
+	if s := in.App.LatestEmailStatus(ctx, "second.eml", secondHash); s != "completed" {
 		t.Errorf("dublettmejl status = %q", s)
 	}
 }
@@ -191,6 +193,7 @@ func TestNonCertCategoryIsDeleted(t *testing.T) {
 	ctx := context.Background()
 
 	emlPath := writeEml(t, cfg, "faktura.eml", []byte("%PDF fake"))
+	emlHash := fileSHA256(emlPath)
 	in.ProcessInboxOnce(ctx)
 
 	if _, err := os.Stat(emlPath); !os.IsNotExist(err) {
@@ -203,7 +206,7 @@ func TestNonCertCategoryIsDeleted(t *testing.T) {
 	if fake.extractCalls != 0 {
 		t.Error("extraktion ska inte köras för icke-cert")
 	}
-	if s := in.App.LatestEmailStatus(ctx, "faktura.eml"); s != "archived" {
+	if s := in.App.LatestEmailStatus(ctx, "faktura.eml", emlHash); s != "archived" {
 		t.Errorf("status = %q", s)
 	}
 }
@@ -214,12 +217,13 @@ func TestExtractErrorKeepsFileAndSkipsRetry(t *testing.T) {
 	ctx := context.Background()
 
 	emlPath := writeEml(t, cfg, "trasig.eml", []byte("%PDF fake"))
+	emlHash := fileSHA256(emlPath)
 	in.ProcessInboxOnce(ctx)
 
 	if _, err := os.Stat(emlPath); err != nil {
 		t.Error("felad .eml ska ligga kvar i inkorgen")
 	}
-	if s := in.App.LatestEmailStatus(ctx, "trasig.eml"); s != "error" {
+	if s := in.App.LatestEmailStatus(ctx, "trasig.eml", emlHash); s != "error" {
 		t.Errorf("status = %q", s)
 	}
 
@@ -244,18 +248,18 @@ func TestUnremovableEmlIsMarkedError(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(locked, "x"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	id := in.App.EmailStarted(ctx, "låst.eml")
+	id := in.App.EmailStarted(ctx, "låst.eml", "")
 	in.App.EmailFinished(ctx, id, "completed", "")
 	in.removeEml(ctx, id, locked)
-	if s := in.App.LatestEmailStatus(ctx, "låst.eml"); s != "error" {
+	if s := in.App.LatestEmailStatus(ctx, "låst.eml", ""); s != "error" {
 		t.Errorf("oraderbar fil: status = %q, vill ha error", s)
 	}
 
 	// Redan borta = ofarligt, statusen ska stå kvar.
-	id2 := in.App.EmailStarted(ctx, "borta.eml")
+	id2 := in.App.EmailStarted(ctx, "borta.eml", "")
 	in.App.EmailFinished(ctx, id2, "completed", "")
 	in.removeEml(ctx, id2, filepath.Join(cfg.InboxDir, "borta.eml"))
-	if s := in.App.LatestEmailStatus(ctx, "borta.eml"); s != "completed" {
+	if s := in.App.LatestEmailStatus(ctx, "borta.eml", ""); s != "completed" {
 		t.Errorf("redan raderad fil: status = %q, vill ha completed", s)
 	}
 }
@@ -267,12 +271,13 @@ func TestVerifyConflictBecomesError(t *testing.T) {
 	ctx := context.Background()
 
 	emlPath := writeEml(t, cfg, "oense.eml", []byte("%PDF fake"))
+	emlHash := fileSHA256(emlPath)
 	in.ProcessInboxOnce(ctx)
 
 	if _, err := os.Stat(emlPath); err != nil {
 		t.Error("oense-mejl ska ligga kvar")
 	}
-	if s := in.App.LatestEmailStatus(ctx, "oense.eml"); s != "error" {
+	if s := in.App.LatestEmailStatus(ctx, "oense.eml", emlHash); s != "error" {
 		t.Errorf("status = %q", s)
 	}
 

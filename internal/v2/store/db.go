@@ -276,6 +276,12 @@ CREATE TABLE ai_requirements_cache (
 	// (faller tillbaka på product_form när koden är tom). Redigerbar direkt via
 	// ApplyCorrection — medvetet ingen corrected_-tvilling (jfr name_override).
 	`ALTER TABLE certs ADD COLUMN product_code TEXT NOT NULL DEFAULT '';`,
+
+	// 006 — emails.file_hash: intagets fel-skip nycklas på filnamn +
+	// innehålls-hash i stället för bara filnamn — ett NYTT mejl som råkar heta
+	// som ett gammalt felmejl ska inte skippas för alltid. Gamla rader får ''
+	// och matchar därmed aldrig en riktig hash.
+	`ALTER TABLE emails ADD COLUMN file_hash TEXT NOT NULL DEFAULT '';`,
 }
 
 // openDB försöker öppna databasen i WAL-läge (bäst för samtidiga läsningar under
