@@ -191,9 +191,19 @@ function renderOrders() {
   if (q) $('ordersSection').open = true; // annars rör vi inte användarens infäll-läge
 }
 
+// rowDone: raden är inte längre en aktiv väntad inleverans. Antingen lokalt
+// markerad levererad, ELLER inte längre kvar i Monitor (in_monitor=0 =
+// inlevererad/stängd enligt servern — den behåller raden bara så länge cert-arbete
+// återstår). Kategoriseringen OCH försenad-markeringen måste behandla båda fallen
+// likadant; annars ligger redan inlevererade ordrar kvar under Försenade/Väntas
+// idag/Kommande fast Monitor rapporterar dem som mottagna.
+function rowDone(r) {
+  return r.delivered || !r.in_monitor;
+}
+
 // categorize: null = göm (allt levererat och alla cert sparade — klar).
 function categorize(g, today) {
-  const active = g.rows.filter((r) => !r.delivered);
+  const active = g.rows.filter((r) => !rowDone(r));
   if (!active.length) {
     const unsaved = g.rows.some((r) => r.cert_required &&
       !r.links.some((l) => l.cert && l.cert.status === 'sparad'));
@@ -245,7 +255,7 @@ function rowStatusBadge(r) {
 
 function artRow(r) {
   const today = localToday();
-  const late = r.delivery_date && r.delivery_date < today && !r.delivered;
+  const late = r.delivery_date && r.delivery_date < today && !rowDone(r);
   const activeLinks = r.links; // avfärdade filtreras redan av servern
   const q = orderQuery.trim().toLowerCase();
   // Sök-avslöjning: en artikel-träff fäller ut raden så man ser den direkt.
