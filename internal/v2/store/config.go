@@ -30,12 +30,16 @@ const DefaultBriefTime = "06:45"
 const DefaultMonitorURL = "https://192.168.52.232:8001"
 
 type Config struct {
-	InboxDir    string `json:"inbox_dir"`
-	ApiKey      string `json:"api_key,omitempty"`
-	Theme       string `json:"theme,omitempty"`
-	Autostart   bool   `json:"autostart"`
-	SickanModel string `json:"sickan_model,omitempty"`
-	BNumberMode string `json:"b_number_mode,omitempty"`
+	InboxDir string `json:"inbox_dir"`
+	// DeliveryInboxDir är en EGEN mapp för inmejlade följesedel-foton (en
+	// Outlook-regel flyttar dem dit). Routing sker per mapp: allt här behandlas
+	// som följesedel, aldrig som cert. Tom = följesedel-flödet är av.
+	DeliveryInboxDir string `json:"delivery_inbox_dir,omitempty"`
+	ApiKey           string `json:"api_key,omitempty"`
+	Theme            string `json:"theme,omitempty"`
+	Autostart        bool   `json:"autostart"`
+	SickanModel      string `json:"sickan_model,omitempty"`
+	BNumberMode      string `json:"b_number_mode,omitempty"`
 
 	// Monitor ERP (Fas 3). Klartext-lösen i config.json är känd skuld — löses i
 	// auth-planen. Env-varianterna (MONITOR_URL/USER/PASSWORD) har företräde.

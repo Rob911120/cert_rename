@@ -124,6 +124,37 @@ func textPart(text string) emlPart {
 	}
 }
 
+func imagePart(filename, contentType string, data []byte) emlPart {
+	return emlPart{
+		contentType: fmt.Sprintf(`%s; name=%q`, contentType, filename),
+		disposition: fmt.Sprintf(`attachment; filename=%q`, filename),
+		encoding:    "base64",
+		data:        data,
+	}
+}
+
+func Test_Parse_KeepsImageAttachmentWithMediaType(t *testing.T) {
+	jpeg := []byte("\xff\xd8\xff fejk-jpeg")
+	path := buildEml(t, []emlPart{
+		textPart("Här är följesedeln"),
+		imagePart("foljesedel.jpg", "image/jpeg", jpeg),
+	})
+	c, err := Parse(path)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if len(c.Attachments) != 1 {
+		t.Fatalf("förväntade 1 bild-bilaga, fick %d", len(c.Attachments))
+	}
+	att := c.Attachments[0]
+	if att.MediaType != "image/jpeg" {
+		t.Errorf("MediaType = %q, vill ha image/jpeg", att.MediaType)
+	}
+	if !bytes.Equal(att.Data, jpeg) {
+		t.Error("bilddata skiljer sig efter parse")
+	}
+}
+
 func Test_Parse_ExtractsPdfsFromZip(t *testing.T) {
 	zipData := buildZipBytes(t, map[string][]byte{
 		"B1.pdf": fakePDF("first"),

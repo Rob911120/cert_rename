@@ -590,6 +590,7 @@ function renderSaved() {
 }
 
 let lastUnmatchedCount = 0; // för att bara tvångsöppna "Att göra" när NYA omatchade dyker upp
+let lastDnCount = 0; // samma, för nya följesedlar
 
 function renderTasks() {
   // Omatchade cert (kunde inte kopplas automatiskt) lyfts överst i "Att göra" som
@@ -597,8 +598,39 @@ function renderTasks() {
   // Arkivera. De är härledda ur overviewn, så de försvinner av sig själva så snart
   // certet kopplats/arkiverats. Samma kontroller som okopplat-kortet.
   const unmatched = ov.unmatched_certs || [];
-  const total = unmatched.length + ov.tasks.length;
+  const dnotes = ov.delivery_notes || [];
+  const total = unmatched.length + ov.tasks.length + dnotes.length;
   $('taskCount').textContent = total ? `(${total})` : '';
+
+  // Följesedlar (fotade + inmejlade): matchad order → "✓ Leverera in", annars
+  // kandidatrader att välja bland, eller markera som ej relevant.
+  const dnHtml = dnotes.map((d) => {
+    const matched = d.matched_row_id && d.matched_row_id !== '0';
+    const fields = [
+      d.supplier && 'lev: ' + esc(d.supplier),
+      d.order_number && 'order ' + esc(d.order_number),
+      d.charge && 'charge ' + esc(d.charge),
+      d.material && esc(d.material),
+      d.quantity ? d.quantity + ' ' + esc(d.unit || '') : '',
+    ].filter(Boolean).join(' · ');
+    let actionHtml;
+    if (matched) {
+      actionHtml = `<span class="meta">→ ${esc(d.matched_order_number)} ${esc(d.matched_part_number)}</span>
+        <button class="btn btn-small" data-action="dn-register" data-dn="${d.id}">✓ Leverera in</button>`;
+    } else if (d.candidates && d.candidates.length) {
+      actionHtml = `<span class="meta">${d.candidates.length} kandidater:</span>` +
+        d.candidates.map((c) => `<button class="btn btn-small" data-action="dn-match" data-dn="${d.id}" data-row="${c.delivery_row_id}" title="${esc(c.part_number)} ${esc(c.description)}">${esc(c.order_number)} · ${esc(c.part_number)}</button>`).join('');
+    } else {
+      actionHtml = `<span class="meta">ingen order matchad</span>`;
+    }
+    return `<li class="delivery-note">
+      <span>📸 <a href="/api/deliverynote/image?id=${d.id}" target="_blank" title="Visa foto">följesedel</a>
+        <span class="meta">${fields || '—'}</span></span>
+      <span class="inline-form">${actionHtml}
+        <button class="btn btn-small" data-action="dn-reject" data-dn="${d.id}" title="Inte relevant">🗑</button>
+      </span>
+    </li>`;
+  }).join('');
 
   const unmatchedHtml = unmatched.map((c) => `
     <li class="unmatched-cert">
@@ -622,12 +654,13 @@ function renderTasks() {
       <button class="btn btn-small" data-action="task-delete" data-task="${t.id}">✕</button>
     </li>`).join('');
 
-  $('taskList').innerHTML = unmatchedHtml + tasksHtml;
-  // Fäll ut "Att göra" när NYA omatchade cert dyker upp så de faktiskt syns —
-  // men respektera att användaren fällt ihop sektionen (tvångsöppna inte om
-  // antalet är oförändrat vid varje omrendering).
-  if (unmatched.length > lastUnmatchedCount) $('tasksSection').open = true;
+  $('taskList').innerHTML = dnHtml + unmatchedHtml + tasksHtml;
+  // Fäll ut "Att göra" när NYA omatchade cert ELLER följesedlar dyker upp så de
+  // faktiskt syns — men respektera att användaren fällt ihop sektionen
+  // (tvångsöppna inte om antalet är oförändrat vid varje omrendering).
+  if (unmatched.length > lastUnmatchedCount || dnotes.length > lastDnCount) $('tasksSection').open = true;
   lastUnmatchedCount = unmatched.length;
+  lastDnCount = dnotes.length;
 }
 
 $('orderSearch').addEventListener('input', (e) => { orderQuery = e.target.value; renderOrders(); });
@@ -720,6 +753,25 @@ document.addEventListener('click', async (e) => {
     await act(() => post('/api/tasks/done', { id: el.dataset.task }));
   } else if (action === 'task-delete') {
     await act(() => post('/api/tasks/delete', { id: el.dataset.task }));
+  } else if (action === 'dn-match') {
+    await act(() => post('/api/deliverynote/match', { id: el.dataset.dn, delivery_row_id: el.dataset.row }), 'Följesedel matchad');
+  } else if (action === 'dn-reject') {
+    await act(() => post('/api/deliverynote/reject', { id: el.dataset.dn }), 'Följesedel avfärdad');
+  } else if (action === 'dn-register') {
+    // Preview → bekräfta → driv Monitor-klienten (Ctrl+S bara om auto-save är på).
+    if (el.disabled) return;
+    el.disabled = true;
+    try {
+      const prev = await act(() => post('/api/deliverynote/register', { id: el.dataset.dn, confirm: false }));
+      if (!prev || !prev.preview) return;
+      const msg = `Leverera in på order ${prev.order_number}?\n` +
+        (prev.will_save ? 'Monitor öppnas och sparas automatiskt (Ctrl+S).' : 'Monitor öppnas ifyllt — du granskar och sparar själv.');
+      if (!confirm(msg)) return;
+      await act(() => post('/api/deliverynote/register', { id: el.dataset.dn, confirm: true, save: true }),
+        'Inleverans startad i Monitor');
+    } finally {
+      el.disabled = false;
+    }
   } else if (action === 'edit-cell') {
     // hanteras nedan via editcell-lyssnaren
   }

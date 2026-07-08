@@ -25,6 +25,11 @@ type fakeAI struct {
 	verifyYes    bool
 	extractErr   error
 	extractCalls int
+
+	// följesedel-vision
+	dnExtraction  *ai.DeliveryNoteExtraction
+	dnExtractErr  error
+	dnExtractCall int
 }
 
 func (f *fakeAI) MailCategory(ctx context.Context, c *eml.Content) (*ai.MailClassification, error) {
@@ -41,6 +46,17 @@ func (f *fakeAI) Classify(ctx context.Context, c *eml.Content) (*cert.Classifica
 
 func (f *fakeAI) Verify(ctx context.Context, c *eml.Content) (*cert.Verification, error) {
 	return &cert.Verification{AnyIsCert: f.verifyYes, Reason: "test"}, nil
+}
+
+func (f *fakeAI) ExtractFromImage(ctx context.Context, img []byte, mediaType string) (*ai.DeliveryNoteExtraction, error) {
+	f.dnExtractCall++
+	if f.dnExtractErr != nil {
+		return nil, f.dnExtractErr
+	}
+	if f.dnExtraction != nil {
+		return f.dnExtraction, nil
+	}
+	return &ai.DeliveryNoteExtraction{Supplier: "Testleverantör", OrderNumber: "B127562", Charge: "43136", Confidence: "high"}, nil
 }
 
 func (f *fakeAI) Extract(ctx context.Context, pdf []byte, subject, body, filename string) (*ExtractResult, error) {

@@ -85,6 +85,7 @@
   <form id="settingsForm" method="dialog">
     <h3>⚙️ Inställningar</h3>
     <label>Inkorgsmapp (.eml)<input name="inbox_dir"></label>
+    <label>Följesedel-mapp (foton, .eml)<input name="delivery_inbox_dir" placeholder="egen mapp för inmejlade följesedlar"></label>
     <label>Anthropic API-nyckel<input name="api_key" type="password" autocomplete="off"></label>
     <label class="check"><input name="autostart" type="checkbox"> Starta mailintaget vid appstart</label>
     <fieldset>
@@ -93,6 +94,7 @@
       <label>Användare<input name="monitor_user" autocomplete="off"></label>
       <label>Lösenord<input name="monitor_password" type="password" autocomplete="off" placeholder="•••• (sparat)"></label>
       <label class="check"><input name="upcoming_enabled" type="checkbox"> Daglig sync</label>
+      <label class="check"><input name="monitor_ui_auto_save" type="checkbox"> Auto-spara inleverans i Monitor (Ctrl+S)</label>
       <div class="grid3">
         <label>Tid<input name="upcoming_time" placeholder="16:30"></label>
         <label>Dagar framåt<input name="upcoming_window_days" type="number"></label>

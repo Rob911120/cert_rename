@@ -16,6 +16,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fsnotify/fsnotify"
+
 	"cert-renamer/internal/v2/ai"
 	"cert-renamer/internal/v2/app"
 	"cert-renamer/internal/v2/cert"
@@ -24,8 +26,18 @@ import (
 	"cert-renamer/internal/v2/store"
 )
 
-const PollInterval = 30 * time.Second
+const PollInterval = 30 * time.Second // fallback-poll när mappbevakning inte kan startas
 const MailPause = 5 * time.Second
+
+// BackstopInterval är säkerhetspollen som ALLTID kör bredvid fsnotify-bevakningen:
+// på nätverks-/molnsynkade mappar (OneDrive/SMB) uteblir filsystem-eventen ofta,
+// och då är det den här pollen som garanterar att filer till slut processas.
+const BackstopInterval = 60 * time.Second
+
+// SettleDelay är debounce/stabiliserings-fördröjningen: ett foto eller .eml kan
+// fortfarande skrivas när Create-eventet kommer, så vi väntar tills skrivandet
+// lugnat sig (och hoppar över filer nyare än så här i skanningen) innan process.
+const SettleDelay = 2 * time.Second
 
 // ExtractResult är extraktionen + dess faktiska kostnad (riktiga tokental —
 // fixar V1:s nollade tokens_input/output).
@@ -43,6 +55,7 @@ type AI interface {
 	Classify(ctx context.Context, c *eml.Content) (*cert.Classification, error)
 	Verify(ctx context.Context, c *eml.Content) (*cert.Verification, error)
 	Extract(ctx context.Context, pdf []byte, subject, body, filename string) (*ExtractResult, error)
+	ExtractFromImage(ctx context.Context, img []byte, mediaType string) (*ai.DeliveryNoteExtraction, error)
 }
 
 // Intake är pipelinen. All mutation går genom App (enda skrivvägen).
@@ -52,16 +65,81 @@ type Intake struct {
 	Config func() store.Config
 }
 
-// Run pollar inkorgen tills ctx avbryts. kick triggar en omedelbar tick
-// (t.ex. efter drag-drop-upload); nil stänger av kick-vägen.
+// Run bevakar cert-inkorgen (och, om satt, följesedel-inkorgen) tills ctx
+// avbryts. fsnotify ger snabb reaktion; en backstop-poll kör alltid bredvid
+// (nätverks-/molnmappar tappar events). kick triggar en omedelbar körning.
+// Kan inte fsnotify startas faller vi tillbaka på ren poll (pollLoop).
 func (in *Intake) Run(ctx context.Context, kick <-chan struct{}) {
-	in.App.Notify.Logf("🔍 Scannar %s var %s", in.Config().InboxDir, PollInterval)
+	cfg := in.Config()
+	suffix := ""
+	if cfg.DeliveryInboxDir != "" {
+		suffix = " + " + cfg.DeliveryInboxDir + " (följesedlar)"
+	}
+	in.App.Notify.Logf("🔍 Bevakar %s%s (backstop var %s)", cfg.InboxDir, suffix, BackstopInterval)
+
+	if in.processAll(ctx) {
+		return
+	}
+
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		in.App.Notify.Logf("⚠️  kunde inte starta mappbevakning (%v) — faller tillbaka på poll", err)
+		in.pollLoop(ctx, kick)
+		return
+	}
+	defer watcher.Close()
+	for _, d := range []string{cfg.InboxDir, cfg.DeliveryInboxDir} {
+		if d == "" {
+			continue
+		}
+		if err := watcher.Add(d); err != nil {
+			in.App.Notify.Logf("⚠️  kan inte bevaka %s: %v — backstop-poll täcker den", d, err)
+		}
+	}
+
+	backstop := time.NewTicker(BackstopInterval)
+	defer backstop.Stop()
+	var debounce <-chan time.Time // satt av senaste filsystem-event; nil = inaktiv
+	for {
+		select {
+		case <-ctx.Done():
+			in.App.Notify.Logf("⏹  Stoppar intag")
+			return
+		case ev, ok := <-watcher.Events:
+			if !ok {
+				return
+			}
+			if ev.Op&(fsnotify.Create|fsnotify.Write|fsnotify.Rename) != 0 {
+				debounce = time.After(SettleDelay) // vänta ut skrivandet innan process
+			}
+		case wErr, ok := <-watcher.Errors:
+			if !ok {
+				return
+			}
+			in.App.Notify.Logf("⚠️  bevakningsfel: %v", wErr)
+		case <-debounce:
+			debounce = nil
+			if in.processAll(ctx) {
+				return
+			}
+		case <-backstop.C:
+			if in.processAll(ctx) {
+				return
+			}
+		case <-kick:
+			if in.processAll(ctx) {
+				return
+			}
+		}
+	}
+}
+
+// pollLoop är fallback-beteendet (fsnotify kunde inte startas): ren poll av
+// båda mapparna var PollInterval, plus kick.
+func (in *Intake) pollLoop(ctx context.Context, kick <-chan struct{}) {
 	ticker := time.NewTicker(PollInterval)
 	defer ticker.Stop()
 	for {
-		if in.ProcessInboxOnce(ctx) {
-			return
-		}
 		select {
 		case <-ctx.Done():
 			in.App.Notify.Logf("⏹  Stoppar intag")
@@ -69,7 +147,19 @@ func (in *Intake) Run(ctx context.Context, kick <-chan struct{}) {
 		case <-ticker.C:
 		case <-kick:
 		}
+		if in.processAll(ctx) {
+			return
+		}
 	}
+}
+
+// processAll kör en runda över cert-inkorgen och (om satt) följesedel-inkorgen.
+// Returnerar true om ctx avbröts.
+func (in *Intake) processAll(ctx context.Context) bool {
+	if in.ProcessInboxOnce(ctx) {
+		return true
+	}
+	return in.ProcessDeliveryOnce(ctx)
 }
 
 // ProcessInboxOnce processar alla .eml i inkorgen en gång. Filer vars senaste
@@ -136,7 +226,8 @@ func (in *Intake) ProcessEml(ctx context.Context, emlPath string) {
 		in.removeEml(ctx, emailID, emlPath)
 		return
 	}
-	if len(content.Attachments) == 0 {
+	pdfs := pdfAttachments(content.Attachments)
+	if len(pdfs) == 0 {
 		n.Logf("   📦 inga PDF-bilagor")
 		in.App.EmailFinished(ctx, emailID, "archived", "inga PDF-bilagor")
 		in.removeEml(ctx, emailID, emlPath)
@@ -165,7 +256,7 @@ func (in *Intake) ProcessEml(ctx context.Context, emlPath string) {
 	}
 
 	anyFail := false
-	for _, att := range content.Attachments {
+	for _, att := range pdfs {
 		if ctx.Err() != nil {
 			return
 		}

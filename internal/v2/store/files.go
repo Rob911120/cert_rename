@@ -41,6 +41,46 @@ func HashPDF(data []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// HashImage är sha256-hex över bildbytes — dedupe-nyckeln för följesedel-foton
+// (delivery_notes.image_hash), så ett omsänt foto inte skapar en dubblettrad.
+func HashImage(data []byte) string {
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
+}
+
+// ImageMediaType returnerar bild-MIME-typen för ett filnamn, eller "" om det
+// inte är en stödd bild (png/jpeg/gif/webp). Porterad från V1.
+func ImageMediaType(name string) string {
+	switch strings.ToLower(filepath.Ext(name)) {
+	case ".png":
+		return "image/png"
+	case ".jpg", ".jpeg":
+		return "image/jpeg"
+	case ".gif":
+		return "image/gif"
+	case ".webp":
+		return "image/webp"
+	default:
+		return ""
+	}
+}
+
+// WriteDeliveryNoteImage skriver ett följesedel-foto till följesedel-lagret
+// under sitt stabila namn (hash-prefix + originalnamn, samma mönster som
+// certlagret). Returnerar den faktiska sökvägen.
+func WriteDeliveryNoteImage(cfg Config, storedName string, data []byte) (string, error) {
+	dir := DeliveryNotesDir(cfg)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return "", err
+	}
+	return WriteUniqueFile(dir, storedName, data)
+}
+
+// DeliveryNoteImagePath är den förväntade sökvägen för ett lagrat foto.
+func DeliveryNoteImagePath(cfg Config, storedName string) string {
+	return filepath.Join(DeliveryNotesDir(cfg), storedName)
+}
+
 // storedNameSanitizer gör ett originalfilnamn säkert som del av lagernamnet.
 var storedNameSanitizer = strings.NewReplacer(
 	"/", "_", "\\", "_", ":", "_", "*", "_", "?", "_",

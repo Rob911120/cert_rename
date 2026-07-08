@@ -105,10 +105,10 @@ function renderCosts(costs) {
 // --- Inställningar ------------------------------------------------------------
 
 // monitor_url ingår INTE — URL:en är hårdkodad och visas bara skrivskyddat.
-const CFG_FIELDS = ['inbox_dir', 'api_key', 'monitor_user',
+const CFG_FIELDS = ['inbox_dir', 'delivery_inbox_dir', 'api_key', 'monitor_user',
   'monitor_password', 'upcoming_time', 'v2_store_dir', 'v2_output_dir', 'report_email'];
 const CFG_NUMS = ['upcoming_window_days', 'upcoming_back_days'];
-const CFG_BOOLS = ['autostart', 'upcoming_enabled'];
+const CFG_BOOLS = ['autostart', 'upcoming_enabled', 'monitor_ui_auto_save'];
 
 function initSettings() {
   const dlg = document.getElementById('settingsDialog');

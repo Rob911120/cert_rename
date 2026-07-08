@@ -289,6 +289,36 @@ CREATE TABLE ai_requirements_cache (
 	// läser status='error' och ska fortsätta skippa filen. Nya fel blir nya
 	// rader (error_acked=0) och syns alltid.
 	`ALTER TABLE emails ADD COLUMN error_acked INTEGER NOT NULL DEFAULT 0;`,
+
+	// 008 — följesedlar (delivery notes): fotad papperssedel som mejlats in,
+	// vision-extraherad och surfad i Att göra. Matchning mot Monitor-order bärs
+	// av de NULLbara datafälten matched_po_id/matched_row_id (0 = ej matchad) —
+	// inget eget livscykelskede. image_hash är dedupe-nyckeln (omsänt foto ska
+	// inte skapa dubblett). Livscykel: mottagen → inlevererad | avfardad.
+	`
+CREATE TABLE delivery_notes (
+    id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+    image_hash           TEXT NOT NULL UNIQUE,
+    image_filename       TEXT NOT NULL,
+    supplier             TEXT NOT NULL DEFAULT '',
+    delivery_date        TEXT NOT NULL DEFAULT '',
+    order_number         TEXT NOT NULL DEFAULT '',
+    charge               TEXT NOT NULL DEFAULT '',
+    material             TEXT NOT NULL DEFAULT '',
+    quantity             REAL NOT NULL DEFAULT 0,
+    unit                 TEXT NOT NULL DEFAULT '',
+    delivery_note_number TEXT NOT NULL DEFAULT '',
+    waybill_number       TEXT NOT NULL DEFAULT '',
+    b_numbers            TEXT NOT NULL DEFAULT '[]',
+    confidence           TEXT NOT NULL DEFAULT '',
+    status               TEXT NOT NULL DEFAULT 'mottagen',
+    matched_po_id        INTEGER NOT NULL DEFAULT 0,
+    matched_row_id       INTEGER NOT NULL DEFAULT 0,
+    proposed_quantity    REAL NOT NULL DEFAULT 0,
+    created_at           TEXT NOT NULL
+);
+CREATE INDEX idx_delivery_notes_status ON delivery_notes(status);
+`,
 }
 
 // openDB försöker öppna databasen i WAL-läge (bäst för samtidiga läsningar under

@@ -33,6 +33,38 @@ type Content struct {
 type Attachment struct {
 	Filename string
 	Data     []byte
+	// MediaType är den kanoniska MIME-typen: "application/pdf" för cert-bilagor
+	// (inkl. de som plockats ur en zip) och "image/png"/"image/jpeg"/… för
+	// följesedel-foton. Tom för övrigt. Låter intaget routa PDF → cert-vägen och
+	// bild → följesedel-vägen utan att gissa på filändelsen.
+	MediaType string
+}
+
+// imageMediaType returnerar den kanoniska bild-MIME-typen för en del utifrån
+// dess Content-Type och/eller filnamn, eller "" om det inte är en (stödd) bild.
+// Bara de typer vision-extraktionen accepterar (png/jpeg/gif/webp) räknas.
+func imageMediaType(mediaType, filename string) string {
+	switch strings.ToLower(strings.TrimSpace(mediaType)) {
+	case "image/png":
+		return "image/png"
+	case "image/jpeg", "image/jpg":
+		return "image/jpeg"
+	case "image/gif":
+		return "image/gif"
+	case "image/webp":
+		return "image/webp"
+	}
+	switch strings.ToLower(filepath.Ext(filename)) {
+	case ".png":
+		return "image/png"
+	case ".jpg", ".jpeg":
+		return "image/jpeg"
+	case ".gif":
+		return "image/gif"
+	case ".webp":
+		return "image/webp"
+	}
+	return ""
 }
 
 // Parse läser .eml-filen och returnerar struktur + bilagor.
@@ -123,11 +155,15 @@ func walkParts(r io.Reader, boundary string, out *Content) error {
 		}
 		if strings.EqualFold(mediaType, "application/pdf") ||
 			strings.HasSuffix(strings.ToLower(filename), ".pdf") {
-			out.Attachments = append(out.Attachments, Attachment{Filename: filename, Data: data})
+			out.Attachments = append(out.Attachments, Attachment{Filename: filename, Data: data, MediaType: "application/pdf"})
 			continue
 		}
 		if isZipAttachment(mediaType, filename) {
 			out.Attachments = append(out.Attachments, extractPDFsFromZip(data)...)
+			continue
+		}
+		if im := imageMediaType(mediaType, filename); im != "" {
+			out.Attachments = append(out.Attachments, Attachment{Filename: filename, Data: data, MediaType: im})
 			continue
 		}
 		if mediaType == "text/plain" && out.Body == "" {
@@ -195,7 +231,7 @@ func extractPDFsFromZip(data []byte) []Attachment {
 			log.Printf("eml: zip read %s: %v", f.Name, err)
 			continue
 		}
-		out = append(out, Attachment{Filename: filepath.Base(f.Name), Data: b})
+		out = append(out, Attachment{Filename: filepath.Base(f.Name), Data: b, MediaType: "application/pdf"})
 	}
 	return out
 }

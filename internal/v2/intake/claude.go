@@ -37,6 +37,11 @@ func (c *Claude) Verify(ctx context.Context, m *eml.Content) (*cert.Verification
 	return ai.Verify(ctx, c.Base, c.Client, m)
 }
 
+// ExtractFromImage kör vision-extraktionen av en följesedel-bild (sonnet).
+func (c *Claude) ExtractFromImage(ctx context.Context, img []byte, mediaType string) (*ai.DeliveryNoteExtraction, error) {
+	return ai.ExtractFromImage(ctx, c.Base, c.Client, img, mediaType)
+}
+
 // Extract kör V2:s kolumnkalibrerade extraktion (ai.ExtractV2) — samma port,
 // samma signatur som V1, men fyller de 16 extra slag-/kemi-/märkningsfälten.
 func (c *Claude) Extract(ctx context.Context, pdf []byte, subject, body, filename string) (*ExtractResult, error) {

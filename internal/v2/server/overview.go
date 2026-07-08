@@ -196,9 +196,13 @@ type overviewJSON struct {
 	// koppla. Härledda varje overview → försvinner av sig själva när de kopplats.
 	UnmatchedCerts []unlinkedJSON `json:"unmatched_certs"`
 	SavedRecent    []certJSON     `json:"saved_recent"`
-	Archived      []certJSON       `json:"archived"`
-	Tasks         []*store.Task    `json:"tasks"`
-	Errors        []string         `json:"errors"`
+	Archived       []certJSON     `json:"archived"`
+	Tasks          []*store.Task  `json:"tasks"`
+	// DeliveryNotes: mottagna följesedlar (foton) som väntar på inleverans.
+	// Surfas i "Att göra" med matchad order eller kandidater för manuellt val.
+	// Inlevererade/avfärdade faller av av sig själva (bara status=mottagen listas).
+	DeliveryNotes []deliveryNoteJSON `json:"delivery_notes"`
+	Errors        []string           `json:"errors"`
 }
 
 // rowHasPendingCert säger om radens (aktiva) länkar bär cert-arbete som återstår:
@@ -481,6 +485,7 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 	} else {
 		resp.Tasks = []*store.Task{}
 	}
+	resp.DeliveryNotes = s.deliveryNotesJSON(ctx)
 	if errs, _ := s.Repo.ListEmailErrors(ctx); errs != nil {
 		resp.Errors = errs
 	} else {

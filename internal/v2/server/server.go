@@ -355,6 +355,11 @@ func NewMux(s *Server) *http.ServeMux {
 
 	mux.HandleFunc("POST /api/row/delivered", s.handleRowDelivered)
 
+	mux.HandleFunc("GET /api/deliverynote/image", s.handleDeliveryNoteImage)
+	mux.HandleFunc("POST /api/deliverynote/match", s.handleDeliveryNoteMatch)
+	mux.HandleFunc("POST /api/deliverynote/register", s.handleDeliveryNoteRegister)
+	mux.HandleFunc("POST /api/deliverynote/reject", s.handleDeliveryNoteReject)
+
 	mux.HandleFunc("POST /api/note", s.handleNoteAdd)
 	mux.HandleFunc("POST /api/note/delete", s.handleNoteDelete)
 
