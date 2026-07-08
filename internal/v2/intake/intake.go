@@ -129,13 +129,13 @@ func (in *Intake) ProcessEml(ctx context.Context, emlPath string) {
 	if category != ai.CategoryCertificate {
 		n.Logf("   📁 kategori=%s — inte cert, tas bort", category)
 		in.App.EmailFinished(ctx, emailID, "archived", "kategori: "+category)
-		_ = os.Remove(emlPath)
+		in.removeEml(ctx, emailID, emlPath)
 		return
 	}
 	if len(content.Attachments) == 0 {
 		n.Logf("   📦 inga PDF-bilagor")
 		in.App.EmailFinished(ctx, emailID, "archived", "inga PDF-bilagor")
-		_ = os.Remove(emlPath)
+		in.removeEml(ctx, emailID, emlPath)
 		return
 	}
 
@@ -156,7 +156,7 @@ func (in *Intake) ProcessEml(ctx context.Context, emlPath string) {
 		}
 		n.Logf("   📦 inte cert-mejl: %s", ver.Reason)
 		in.App.EmailFinished(ctx, emailID, "archived", "inte ett cert-mejl: "+ver.Reason)
-		_ = os.Remove(emlPath)
+		in.removeEml(ctx, emailID, emlPath)
 		return
 	}
 
@@ -174,7 +174,19 @@ func (in *Intake) ProcessEml(ctx context.Context, emlPath string) {
 		return // kvar i inkorgen; lyckade bilagor är redan dedupe-skyddade
 	}
 	in.App.EmailFinished(ctx, emailID, "completed", "")
-	_ = os.Remove(emlPath)
+	in.removeEml(ctx, emailID, emlPath)
+}
+
+// removeEml raderar en färdigbehandlad .eml. Misslyckas raderingen (t.ex.
+// skrivskyddad fil på Windows) sätts e-postens status till error så att
+// skip-logiken i ProcessInboxOnce tar den — annars skulle mejlet köras genom
+// hela AI-pipelinen igen var 30:e sekund så länge filen ligger kvar.
+func (in *Intake) removeEml(ctx context.Context, emailID int64, path string) {
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		in.App.Notify.Logf("   ⚠️  kunde inte radera %s — hoppar över den framöver; radera manuellt: %v",
+			filepath.Base(path), err)
+		in.App.EmailFinished(ctx, emailID, "error", fmt.Sprintf("färdigbehandlad men kunde inte raderas: %v", err))
+	}
 }
 
 // IngestPDF tar in en direktuppladdad PDF (drag-drop) — samma väg som en

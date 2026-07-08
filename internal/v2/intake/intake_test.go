@@ -231,6 +231,35 @@ func TestExtractErrorKeepsFileAndSkipsRetry(t *testing.T) {
 	}
 }
 
+// En färdigbehandlad .eml som inte kan raderas (t.ex. skrivskyddad på Windows)
+// ska stämplas error så skip-logiken tar den — annars körs hela AI-pipelinen
+// om var 30:e sekund för alltid. En redan försvunnen fil är däremot inget fel.
+func TestUnremovableEmlIsMarkedError(t *testing.T) {
+	fake := &fakeAI{classifyYes: true, verifyYes: true}
+	in, cfg := testIntake(t, fake)
+	ctx := context.Background()
+
+	// En "fil" som inte kan raderas: en icke-tom katalog felar även som root.
+	locked := filepath.Join(cfg.InboxDir, "låst.eml")
+	if err := os.MkdirAll(filepath.Join(locked, "x"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	id := in.App.EmailStarted(ctx, "låst.eml")
+	in.App.EmailFinished(ctx, id, "completed", "")
+	in.removeEml(ctx, id, locked)
+	if s := in.App.LatestEmailStatus(ctx, "låst.eml"); s != "error" {
+		t.Errorf("oraderbar fil: status = %q, vill ha error", s)
+	}
+
+	// Redan borta = ofarligt, statusen ska stå kvar.
+	id2 := in.App.EmailStarted(ctx, "borta.eml")
+	in.App.EmailFinished(ctx, id2, "completed", "")
+	in.removeEml(ctx, id2, filepath.Join(cfg.InboxDir, "borta.eml"))
+	if s := in.App.LatestEmailStatus(ctx, "borta.eml"); s != "completed" {
+		t.Errorf("redan raderad fil: status = %q, vill ha completed", s)
+	}
+}
+
 func TestVerifyConflictBecomesError(t *testing.T) {
 	// classify säger ja, verify säger nej → fel-rad, filen kvar
 	fake := &fakeAI{classifyYes: true, verifyYes: false}
