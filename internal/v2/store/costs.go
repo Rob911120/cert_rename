@@ -36,7 +36,9 @@ type Pricing struct {
 var (
 	SonnetPricing = Pricing{Input: 3, Output: 15, CacheCreation: 3.75, CacheRead: 0.30}
 	HaikuPricing  = Pricing{Input: 1, Output: 5, CacheCreation: 1.25, CacheRead: 0.10}
-	OpusPricing   = Pricing{Input: 15, Output: 75, CacheCreation: 18.75, CacheRead: 1.50}
+	// Opus 4.5+ (inkl. claude-opus-4-8) kostar $5/$25 per MTok — den gamla
+	// 15/75-prislistan (Opus 4.1) överdrev kostnadsbadgen 3x.
+	OpusPricing = Pricing{Input: 5, Output: 25, CacheCreation: 6.25, CacheRead: 0.50}
 )
 
 // Usd returnerar totalt belopp i USD för givet token-räkne-set.

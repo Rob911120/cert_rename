@@ -651,12 +651,19 @@ func (tb *Toolbox) composeDeviationMail(input json.RawMessage) (string, error) {
 	subject := fmt.Sprintf("Avvikelse %s — %s", label, suffix)
 	body := fmt.Sprintf("Hej,\n\nFöljande positioner på %s %s:\n\n%s\n\nMvh\nRob",
 		label, intro, strings.Join(lines, "\n"))
-	mailto := "mailto:" + to + "?subject=" + url.QueryEscape(subject) + "&body=" + url.QueryEscape(body)
+	mailto := "mailto:" + to + "?subject=" + mailtoEscape(subject) + "&body=" + mailtoEscape(body)
 	out, _ := json.Marshal(map[string]any{
 		"to": to, "subject": subject, "body": body,
 		"mailto_url": mailto, "positions": lines,
 	})
 	return string(out), nil
+}
+
+// mailtoEscape procentkodar text för en mailto-URL. url.QueryEscape kodar
+// mellanslag som '+', men mailto (RFC 6068) avkodar inte '+' — mailklienten
+// visar då "Hej,+Följande+positioner…". Mellanslag måste vara %20.
+func mailtoEscape(s string) string {
+	return strings.ReplaceAll(url.QueryEscape(s), "+", "%20")
 }
 
 func (tb *Toolbox) rememberRule(input json.RawMessage) (string, error) {

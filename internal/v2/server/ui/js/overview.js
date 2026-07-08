@@ -13,6 +13,24 @@ const openRows = new Set(); // utfällda artikelrader (per delivery_row_id, som 
 let ov = null; // senaste overview-svaret
 let orderQuery = ''; // fritextfiltret från toppbarens sökruta (rå, trimmas i renderOrders)
 
+// localToday: dagens datum i LOKAL tid som YYYY-MM-DD. toISOString() ger
+// UTC-dygnet, vilket felbucketar Försenade/Idag/Kommande mellan midnatt och
+// 01/02 svensk tid.
+function localToday() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+// fmtLocal: RFC3339-UTC-stämpel → "YYYY-MM-DD HH:MM" i lokal tid. Rå slice av
+// UTC-strängen visade tider 1–2 h fel året runt.
+function fmtLocal(ts) {
+  if (!ts) return '';
+  const d = new Date(ts);
+  if (isNaN(d)) return ts;
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} `
+    + `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
 // ---------------------------------------------------------------------------
 // Init
 // ---------------------------------------------------------------------------
@@ -31,7 +49,7 @@ async function load() {
     return;
   }
   setWorkerState(ov.running);
-  $('lastSync').textContent = ov.last_sync ? 'sync ' + ov.last_sync.slice(0, 16).replace('T', ' ') : '';
+  $('lastSync').textContent = ov.last_sync ? 'sync ' + fmtLocal(ov.last_sync) : '';
   renderBanner();
   renderUnlinked();
   renderOrders();
@@ -125,7 +143,7 @@ function orderMatches(g, q) {
 }
 
 function renderOrders() {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localToday();
   const q = orderQuery.trim().toLowerCase();
   const source = q ? ov.orders.filter((g) => orderMatches(g, q)) : ov.orders;
   const byCat = { forsenade: [], idag: [], kommande: [], levererade: [] };
@@ -203,7 +221,7 @@ function rowStatusBadge(r) {
 }
 
 function artRow(r) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localToday();
   const late = r.delivery_date && r.delivery_date < today && !r.delivered;
   const activeLinks = r.links; // avfärdade filtreras redan av servern
   const q = orderQuery.trim().toLowerCase();
@@ -475,7 +493,7 @@ function nameComponentsRow(c) {
 function nameLine(c) {
   if (c.status === 'sparad') {
     return `<div class="nameline">🔒 <span class="mono">${esc(c.final_filename)}</span>
-      <span class="muted small">sparad ${esc((c.saved_at || '').slice(0, 16).replace('T', ' '))}</span></div>`;
+      <span class="muted small">sparad ${esc(fmtLocal(c.saved_at))}</span></div>`;
   }
   const overridden = !!c.name_override;
   return `
@@ -516,7 +534,7 @@ function renderSaved() {
   $('savedList').innerHTML = list.map((c) => `
     <div class="card">
       <span class="mono">💾 ${esc(c.final_filename)}</span>
-      <span class="muted small"> · ${esc(c.original_filename)} · ${esc((c.saved_at || '').slice(0, 16).replace('T', ' '))}</span>
+      <span class="muted small"> · ${esc(c.original_filename)} · ${esc(fmtLocal(c.saved_at))}</span>
       <a class="small" href="/api/pdf?cert_id=${c.id}" target="_blank">original-PDF</a>
     </div>`).join('');
 }

@@ -35,10 +35,13 @@ func EnglishVerdict(reqEnglish, certIsEnglish bool) string {
 
 // CertTypeVerdict jämför beställd certnivå mot certets typ, normaliserat
 // (trim + skiftlägesokänsligt, så "3.1" == "3.1 "). Någon sida tom → "unknown".
+// Extraktionens sentinel "unknown" (prompten: "3.1"/"2.2"/"3.2"/"unknown")
+// betyder "kunde inte avgöras" och är ingen konkret certtyp — den ska ge
+// "unknown"-dom, inte en falsk mismatch.
 func CertTypeVerdict(reqCertType, certCertType string) string {
 	req := strings.TrimSpace(reqCertType)
 	cert := strings.TrimSpace(certCertType)
-	if req == "" || cert == "" {
+	if req == "" || cert == "" || strings.EqualFold(req, "unknown") || strings.EqualFold(cert, "unknown") {
 		return VerdictUnknown
 	}
 	if strings.EqualFold(req, cert) {

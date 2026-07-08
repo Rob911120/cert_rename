@@ -38,6 +38,9 @@ func TestCertTypeVerdict(t *testing.T) {
 		{"krav tomt", "", "3.1", VerdictUnknown},
 		{"cert tomt", "3.1", "", VerdictUnknown},
 		{"båda tomma", "", "", VerdictUnknown},
+		{"cert-sentinel unknown", "3.1", "unknown", VerdictUnknown},
+		{"cert-sentinel Unknown skiftläge", "3.1", "Unknown", VerdictUnknown},
+		{"krav-sentinel unknown", "unknown", "3.1", VerdictUnknown},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

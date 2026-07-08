@@ -16,7 +16,7 @@ import (
 // har en regel per kolumn (inkl. de nya strukturerade fälten) och en bantad
 // checklista sist — de generella kontroller som nu blivit egna kolumner (engelska,
 // läsbarhet, maskering, ASME/ASTM) är borttagna från checklistan.
-const extractV2SystemPrompt = `Du läser ett stålcertifikat (EN 10204). Ditt jobb är att fylla kolumnerna nedan. Fyll så många du kan. Lämna tomt om du inte kan svara med säkerhet — gissa aldrig. För talfält betyder utelämnat/0 "ej angivet på certet". Returnera ALLTID via verktyget submit_extraction_v2.
+const extractV2SystemPrompt = `Du läser ett stålcertifikat (EN 10204). Ditt jobb är att fylla kolumnerna nedan. Fyll så många du kan. Lämna tomt om du inte kan svara med säkerhet — gissa aldrig. UTELÄMNA talfält som inte framgår av certifikatet — skriv ALDRIG 0 som ersättning för "ej angivet": 0 är ett giltigt mätvärde (t.ex. slagprov vid 0°C). Enda undantaget är impact_energy_j, där 0/utelämnad betyder "ej provat". Returnera ALLTID via verktyget submit_extraction_v2.
 
 Filnamns-ledtråd: bilagans originalfilnamn är ofta döpt efter den avsedda chargen. Om certifikatet listar flera rader/heats/tjocklekar: välj raden som matchar bilagans filnamn (t.ex. filnamn "S355-20-68667E3" → charge "68667E3") och hämta dimension, material, kemi (C/P/S/CEV) och slagseghet (impact) från SAMMA rad.
 

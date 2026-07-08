@@ -85,7 +85,7 @@ export function setWorkerState(running) {
 const PRICING = {
   sonnet: { input: 3, output: 15, cache_creation: 3.75, cache_read: 0.30 },
   haiku:  { input: 1, output: 5,  cache_creation: 1.25, cache_read: 0.10 },
-  opus:   { input: 15, output: 75, cache_creation: 18.75, cache_read: 1.50 },
+  opus:   { input: 5, output: 25, cache_creation: 6.25, cache_read: 0.50 },
 };
 
 function renderCosts(costs) {
