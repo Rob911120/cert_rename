@@ -23,6 +23,11 @@ func callTool[T any](ctx context.Context, client *anthropic.Client, params anthr
 	if err != nil {
 		return nil, anthropic.Usage{}, err
 	}
+	// Ett max_tokens-trunkerat svar kan bära ett ofullständigt (men råkat
+	// giltigt) tool-input — hellre ett tydligt fel än en tyst tom extraktion.
+	if resp.StopReason == anthropic.StopReasonMaxTokens {
+		return nil, resp.Usage, fmt.Errorf("svaret trunkerades (max_tokens) — inget komplett verktygssvar")
+	}
 	for _, block := range resp.Content {
 		if block.Type == "tool_use" {
 			tu := block.AsToolUse()

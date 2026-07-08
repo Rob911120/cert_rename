@@ -86,8 +86,15 @@ func (s *Server) Config() store.Config {
 
 func (s *Server) setConfig(cfg store.Config) {
 	s.mu.Lock()
+	// Släpp Monitor-klienten BARA när uppgifterna faktiskt ändrats: varje ny
+	// login loggar ut Robs interaktiva Monitor-session, så ett orelaterat
+	// config-spar (temabyte, inbox) får inte tvinga fram en om-login.
+	if cfg.MonitorURL != s.cfg.MonitorURL ||
+		cfg.MonitorUser != s.cfg.MonitorUser ||
+		cfg.MonitorPassword != s.cfg.MonitorPassword {
+		s.mon = nil
+	}
 	s.cfg = cfg
-	s.mon = nil // tvinga om-login om Monitor-uppgifterna ändrats
 	s.mu.Unlock()
 }
 
@@ -140,15 +147,15 @@ func (s *Server) flushOverview() {
 }
 
 // RecordUsage ackumulerar tokenkostnad (delar costs.json med V1) och
-// broadcastar summan.
+// broadcastar summan. SaveCosts körs under låset: två samtidiga anrop skriver
+// annars samma costs.json.tmp om varandra (interleavad tmp → korrupt fil).
 func (s *Server) RecordUsage(model string, in, out, cacheCreate, cacheRead int64) {
 	s.costsMu.Lock()
 	s.costs.Add(model, in, out, cacheCreate, cacheRead)
-	snapshot := s.costs
-	s.costsMu.Unlock()
-	if err := store.SaveCosts(snapshot); err != nil {
+	if err := store.SaveCosts(s.costs); err != nil {
 		s.Slog.Warn("SaveCosts", "err", err)
 	}
+	s.costsMu.Unlock()
 	s.broadcastCosts()
 }
 

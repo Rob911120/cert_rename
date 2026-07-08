@@ -52,6 +52,8 @@ func writeError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, domain.ErrNotFound):
 		http.Error(w, err.Error(), http.StatusNotFound)
+	case errors.Is(err, domain.ErrInvalid):
+		http.Error(w, err.Error(), http.StatusBadRequest)
 	case errors.Is(err, domain.ErrFrozen), errors.Is(err, domain.ErrTransition):
 		http.Error(w, err.Error(), http.StatusConflict)
 	case errors.As(err, &warnings):
@@ -364,7 +366,14 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 			}
 			switch strings.ToLower(filepath.Ext(name)) {
 			case ".eml":
-				if _, err := store.WriteUniqueFile(s.Config().InboxDir, name, data); err != nil {
+				inbox := s.Config().InboxDir
+				if inbox == "" {
+					// Utan guard hamnar filen i processens arbetskatalog och
+					// processas aldrig — men UI:t hade rapporterat "Mottaget".
+					http.Error(w, "ingen inkorgsmapp konfigurerad — öppna ⚙️ Inställningar", http.StatusBadRequest)
+					return
+				}
+				if _, err := store.WriteUniqueFile(inbox, name, data); err != nil {
 					writeError(w, err)
 					return
 				}
@@ -440,6 +449,11 @@ func (s *Server) handleConfigPost(w http.ResponseWriter, r *http.Request) {
 	}
 	s.setConfig(cfg)
 	s.Logf("⚙️  konfiguration sparad")
+	// Pågående intags-worker behåller sin gamla Claude-klient — säg det i
+	// stället för att tyst fortsätta med fel nyckel.
+	if cfg.ApiKey != prev.ApiKey && s.workerRunning() {
+		s.Logf("ℹ️  API-nyckeln byttes — stoppa och starta intaget (▶) för att den nya ska användas")
+	}
 	writeJSON(w, cfg)
 }
 

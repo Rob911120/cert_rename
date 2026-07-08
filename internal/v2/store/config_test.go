@@ -27,3 +27,34 @@ func TestNormalizeMonitorURL(t *testing.T) {
 		}
 	}
 }
+
+// SaveConfig får inte persistera env-överstyrda värden (env > config.json är
+// dokumenterad precedens) och ska skriva atomiskt utan att tappa övriga fält.
+func TestSaveConfigExcludesEnvOverrides(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("APPDATA", "") // windows: falla tillbaka på HOME-varianten
+
+	if err := SaveConfig(Config{InboxDir: "/inbox", MonitorPassword: "filhemlis"}); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("MONITOR_PASSWORD", "envhemlis")
+	cfg := LoadConfig()
+	if cfg.MonitorPassword != "envhemlis" {
+		t.Fatalf("env ska ha företräde vid load: %q", cfg.MonitorPassword)
+	}
+
+	// Spara den EFFEKTIVA configen (som handleConfigPost gör) — env-värdet
+	// får inte läcka in i filen, övriga ändringar ska med.
+	cfg.Theme = "dark"
+	if err := SaveConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("MONITOR_PASSWORD", "")
+	reloaded := LoadConfig()
+	if reloaded.MonitorPassword != "filhemlis" {
+		t.Errorf("env-värdet persisterades till config.json: %q", reloaded.MonitorPassword)
+	}
+	if reloaded.Theme != "dark" || reloaded.InboxDir != "/inbox" {
+		t.Errorf("övriga fält tappades vid spar: %+v", reloaded)
+	}
+}

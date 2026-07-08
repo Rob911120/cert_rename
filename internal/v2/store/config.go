@@ -195,6 +195,45 @@ func LoadConfig() Config {
 }
 
 func SaveConfig(c Config) error {
-	data, _ := json.MarshalIndent(c, "", "  ")
-	return os.WriteFile(ConfigPath(), data, 0644)
+	// Env-överstyrda fält får ALDRIG persisteras: env > config.json är den
+	// dokumenterade precedensen, och den effektiva configen bär env-värdena.
+	// Läs tillbaka filens egna värden för fält som just nu styrs av env.
+	var onDisk Config
+	if data, err := os.ReadFile(ConfigPath()); err == nil {
+		_ = json.Unmarshal(data, &onDisk)
+	}
+	if os.Getenv("MONITOR_URL") != "" {
+		c.MonitorURL = onDisk.MonitorURL
+	}
+	if os.Getenv("MONITOR_USER") != "" {
+		c.MonitorUser = onDisk.MonitorUser
+	}
+	if os.Getenv("MONITOR_PASSWORD") != "" {
+		c.MonitorPassword = onDisk.MonitorPassword
+	}
+	if os.Getenv("UPCOMING_ENABLED") != "" {
+		c.UpcomingEnabled = onDisk.UpcomingEnabled
+	}
+	if os.Getenv("UPCOMING_TIME") != "" {
+		c.UpcomingTime = onDisk.UpcomingTime
+	}
+	if os.Getenv("UPCOMING_WINDOW_DAYS") != "" {
+		c.UpcomingWindowDays = onDisk.UpcomingWindowDays
+	}
+	if os.Getenv("UPCOMING_BACK_DAYS") != "" {
+		c.UpcomingBackDays = onDisk.UpcomingBackDays
+	}
+	data, err := json.MarshalIndent(c, "", "  ")
+	if err != nil {
+		return err
+	}
+	// Atomiskt (tmp + rename, samma mönster som SaveCosts): en krasch mitt i
+	// en truncate-write skulle annars lämna en korrupt config som LoadConfig
+	// tyst sväljer — appen "glömmer" inbox och API-nyckel.
+	p := ConfigPath()
+	tmp := p + ".tmp"
+	if err := os.WriteFile(tmp, data, 0644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, p)
 }

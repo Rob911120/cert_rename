@@ -15,6 +15,9 @@ var (
 	ErrFrozen = errors.New("certet är sparat och kan inte ändras")
 	// ErrTransition: otillåten statusövergång (→ 409).
 	ErrTransition = errors.New("otillåten statusövergång")
+	// ErrInvalid: ogiltig användarinput (→ 400) — okänt fält, tom notering
+	// m.m. Utan typningen mappades sådana fel till 500.
+	ErrInvalid = errors.New("ogiltig indata")
 )
 
 // ValidationWarnings är Spara-flödets mjuka valideringsfel (→ 422): Rob får
@@ -58,7 +61,7 @@ func ApplyCorrection(c *Cert, field, value, who, ts string) error {
 			c.CorrectedBNumbers = splitList(value)
 		}
 	default:
-		return fmt.Errorf("okänt rättelsefält %q", field)
+		return fmt.Errorf("%w: okänt rättelsefält %q", ErrInvalid, field)
 	}
 	c.CorrectionLog = append(c.CorrectionLog, Correction{TS: ts, Who: who, Field: field, Old: old, New: value})
 	return nil

@@ -190,7 +190,7 @@ func (a *App) ConfirmLink(ctx context.Context, certID, deliveryRowID int64, orde
 			orderNumber = normalizeOrderNumber(row.OrderNumber)
 		}
 		if orderNumber == "" {
-			return fmt.Errorf("varken orderrad eller B-nummer angivet")
+			return fmt.Errorf("%w: varken orderrad eller B-nummer angivet", domain.ErrInvalid)
 		}
 		targets := []int64{deliveryRowID}
 		if deliveryRowID == 0 {
@@ -415,11 +415,11 @@ func (a *App) MarkDelivered(ctx context.Context, deliveryRowIDs []int64, deliver
 // AddNote lägger en notering på en orderrad eller ett cert.
 func (a *App) AddNote(ctx context.Context, kind string, refID int64, orderNumber, partNumber, author, text string) (*store.Note, error) {
 	if kind != "order_row" && kind != "cert" {
-		return nil, fmt.Errorf("okänd noteringstyp %q", kind)
+		return nil, fmt.Errorf("%w: okänd noteringstyp %q", domain.ErrInvalid, kind)
 	}
 	text = strings.TrimSpace(text)
 	if text == "" {
-		return nil, fmt.Errorf("tom notering")
+		return nil, fmt.Errorf("%w: tom notering", domain.ErrInvalid)
 	}
 	n := &store.Note{
 		Kind: kind, RefID: refID, OrderNumber: orderNumber, PartNumber: partNumber,
